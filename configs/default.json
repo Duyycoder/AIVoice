@@ -1,0 +1,13 @@
+{
+  "engine": "clone",
+  "model": "models/xtts_v2",
+  "ref_audio": "data/voices/ref_voice.wav",
+  "speed": 1.0,
+  "voice": "en",
+  "phonemize": false,
+  "normalize": true,
+  "target_lufs": -14.0,
+  "fade_in": 0.1,
+  "fade_out": 0.1,
+  "silence_duration": 0.3
+}

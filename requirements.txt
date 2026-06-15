@@ -1,0 +1,24 @@
+# ==============================================================================
+# AIVoice TTS Framework Dependencies
+# ==============================================================================
+
+# Core Machine Learning & Deep Learning Libraries
+torch>=2.1.1
+torchaudio>=2.1.1
+transformers>=4.36.0
+
+# TTS Generation Engines
+edge-tts>=7.2.8        # Microsoft Edge online TTS
+piper-tts>=1.2.0       # Piper offline ONNX TTS
+coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS
+
+# Audio File Manipulation & Digital Signal Processing
+soundfile>=0.12.1      # Read/write WAV files
+numpy>=1.24.0          # Numerical operations on audio arrays
+librosa>=0.10.0        # Audio feature analysis and processing
+pyloudnorm>=0.1.1      # LUFS volume normalization (required by src/utils/audio.py)
+
+# General Utilities & CLI Helpers
+python-dotenv>=1.0.0   # Environment variables loading
+tqdm>=4.66.0           # CLI progress bars
+requests>=2.31.0       # Model download assistant (used in download_models.py)

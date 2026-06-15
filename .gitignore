@@ -1,0 +1,33 @@
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# Output wav files in root
+/*.wav
+
+# Data outputs (generated audio files)
+data/outputs/
+
+# Large Model weights (ONNX, PyTorch weights, etc.)
+models/
+
+# OS specific files
+.DS_Store
+Thumbs.db
