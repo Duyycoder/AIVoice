@@ -144,6 +144,10 @@ def apply_audio_post_processing(
                 # Normalize only if we get a finite loudness reading
                 if np.isfinite(loudness):
                     data = pyln.normalize.loudness(data, loudness, target_lufs)
+                    # Limit peaks to 0.98 to prevent digital clipping distortion and pyloudnorm warnings
+                    peak = np.max(np.abs(data))
+                    if peak > 0.98:
+                        data = (data / peak) * 0.98
                 else:
                     # Fallback to standard peak normalization
                     peak = np.max(np.abs(data))
