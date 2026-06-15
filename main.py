@@ -6,6 +6,19 @@ import time
 import glob
 import json
 
+# Add PyTorch's bundled CUDA/cuDNN DLLs to Windows DLL search path
+# so that onnxruntime-gpu can find them without system-wide CUDA installation.
+if sys.platform == "win32":
+    try:
+        import torch
+        torch_lib_dir = os.path.join(os.path.dirname(torch.__file__), "lib")
+        if os.path.exists(torch_lib_dir):
+            os.environ["PATH"] = torch_lib_dir + os.pathsep + os.environ.get("PATH", "")
+            if hasattr(os, "add_dll_directory"):
+                os.add_dll_directory(torch_lib_dir)
+    except ImportError:
+        pass
+
 def process_single_file(input_path: str, output_path: str, engine, args) -> dict:
     """Process a single .md file through the TTS pipeline.
     

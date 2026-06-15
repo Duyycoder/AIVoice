@@ -13,8 +13,9 @@
    * [Các Ví Dụ Lệnh Thực Tế](#các-ví-dụ-lệnh-thực-tế)
 4. [⚙️ Chi Tiết Hậu Xử Lý Âm Thanh & Phiên Âm](#️-chi-tiết-hậu-xử-lý-âm-thanh--phiên-âm)
 5. [🖥️ Chẩn Đoán GPU & Cấu Hình NVIDIA CUDA](#️-chẩn-đoán-gpu--cấu-hình-nvidia-cuda)
-6. [🔌 Hướng Dẫn Mở Rộng Động Cơ Mới (Developer Guide)](#-hướng-dẫn-mở-rộng-động-cơ-mới-developer-guide)
-7. [🧪 Hệ Thống Kiểm Thử Tự Động](#-hệ-thống-kiểm-thử-tự-động)
+6. [🔍 Lỗi Thường Gặp & Cách Khắc Phục (Troubleshooting)](#-lỗi-thường-gặp--cách-khắc-phục-troubleshooting)
+7. [🔌 Hướng Dẫn Mở Rộng Động Cơ Mới (Developer Guide)](#-hướng-dẫn-mở-rộng-động-cơ-mới-developer-guide)
+8. [🧪 Hệ Thống Kiểm Thử Tự Động](#-hệ-thống-kiểm-thử-tự-động)
 
 ---
 
@@ -80,6 +81,13 @@ python -m pip install --upgrade pip
 # Cài đặt các thư viện từ requirements.txt
 pip install -r requirements.txt
 ```
+
+> [!TIP]
+> Nếu bạn muốn sử dụng tính năng phiên âm ngữ âm IPA tiếng Việt (`--phonemize`), hãy cài đặt thêm các thư viện ngữ âm tùy chọn sau:
+> ```powershell
+> pip install git+https://github.com/vunb/viphoneme.git
+> pip install git+https://github.com/vunb/vinorm.git
+> ```
 
 ### 3. Tải Xuống Các Mô HÌnh Lớn (Models Download)
 Khung làm việc hoạt động theo tiêu chí **Offline First** (chạy ngoại tuyến trước). Để tải xuống các mô hình cần thiết vào đúng cấu trúc thư mục `models/` nhằm tránh tự động tải từ Internet trong lúc sinh âm thanh:
@@ -259,6 +267,32 @@ Nhờ áp dụng nguyên lý **Clean Architecture**, bạn có thể dễ dàng 
        from src.engines.google import GoogleEngine
        engine = GoogleEngine(args.model)
    ```
+
+---
+
+## 🔍 Lỗi Thường Gặp & Cách Khắc Phục (Troubleshooting)
+
+### 1. Lỗi `ImportError: DLL load failed` hoặc lỗi FFmpeg/torchaudio
+* **Nguyên nhân:** Trên Windows, việc cài đặt `torchaudio` thường yêu cầu các thư viện C++ bổ sung hoặc FFmpeg DLL để giải mã âm thanh WAV.
+* **Cách khắc phục:** Khung làm việc AIVoice đã tích hợp sẵn cơ chế **monkeypatch** tự động trong [src/engines/clone.py](file:///F:/programfiles/AIVoice/src/engines/clone.py). Lớp này ghi đè hàm `torchaudio.load` và `torchaudio.save` bằng thư viện `soundfile` thuần Python. Nhờ đó, bạn **không cần cài đặt FFmpeg** hay cấu hình biến môi trường phức tạp mà hệ thống vẫn nhân bản giọng nói hoàn hảo.
+
+### 2. Lỗi thiếu `Microsoft Visual C++ 14.0` khi cài đặt `coqui-tts`
+* **Nguyên nhân:** Thư viện XTTSv2 chứa một số mô-đun yêu cầu biên dịch C++ (ví dụ: `vits` tokenizer hoặc `mecab`).
+* **Cách khắc phục:** Tải xuống và cài đặt [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/). Trong trình cài đặt, hãy tích chọn mục **C++ build tools** (hoặc "Desktop development with C++") rồi tiến hành cài đặt và khởi động lại máy.
+
+### 3. Lỗi tải mô hình bị treo hoặc tải chậm (Hugging Face)
+* **Nguyên nhân:** Mạng kết nối trực tiếp đến Hugging Face đôi khi bị bóp băng thông hoặc tường lửa chặn tải file lớn (>2GB).
+* **Cách khắc phục:** Sử dụng script tải chuyên dụng được cung cấp sẵn:
+  ```powershell
+  python download_models.py --engine all
+  ```
+  Công cụ này sử dụng gói `tqdm` để hiển thị thanh tiến trình tải xuống chi tiết và lưu trực tiếp vào thư mục mô hình cục bộ, đảm bảo tính ổn định tối đa.
+
+### 4. Lỗi hiển thị hoặc lỗi chữ tiếng Việt có dấu khi gọi Piper (Subprocess)
+* **Nguyên nhân:** Bảng mã mặc định của Command Prompt Windows (cmd.exe) thường là CP932 hoặc CP1252, không hỗ trợ tốt UTF-8.
+* **Cách khắc phục:**
+  * Hệ thống đã tự động cấu hình biến môi trường `PYTHONIOENCODING=utf-8` và thiết lập `encoding='utf-8'` khi gọi Piper dưới dạng tiến trình con (subprocess).
+  * Khuyên dùng **PowerShell** hoặc **Windows Terminal** hiện đại thay cho `cmd.exe` truyền thống để hiển thị đúng ký tự tiếng Việt.
 
 ---
 

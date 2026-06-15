@@ -22,3 +22,7 @@ pyloudnorm>=0.1.1      # LUFS volume normalization (required by src/utils/audio.
 python-dotenv>=1.0.0   # Environment variables loading
 tqdm>=4.66.0           # CLI progress bars
 requests>=2.31.0       # Model download assistant (used in download_models.py)
+
+# Optional Dependencies (For Vietnamese phonemization support, see README)
+# git+https://github.com/vunb/viphoneme.git
+# git+https://github.com/vunb/vinorm.git
