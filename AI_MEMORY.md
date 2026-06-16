@@ -19,7 +19,7 @@ The system follows an Object-Oriented, Plugin-style architecture under `src/`.
 * **PiperEngine (`src/engines/piper.py`):** For fast, lightweight Vietnamese reading (e.g., `vi_VN-vais1000-medium` or `vi_VN-vivos-x_low`).
 * **CloneEngine (`src/engines/clone.py`):** For zero-shot voice cloning using XTTSv2 (Coqui TTS). Requires `--ref_audio`.
 * **EdgeEngine (`src/engines/edge.py`):** Microsoft Edge online TTS for high-quality cloud-generated Vietnamese voices.
-* **RVCEngine (`src/engines/rvc_engine.py`):** Retrieval-based Voice Conversion for Voice-to-Voice post-processing to convert synthesized voice to target voice.
+* **RVCEngine (`src/engines/rvc_engine.py`):** Retrieval-based Voice Conversion for Voice-to-Voice post-processing, or used as a standalone engine (`rvc`) to convert existing audio recordings directly.
 
 ## 4. Helper Modules
 * `src/utils/text.py`: Strips markdown and splits text into chunks.
@@ -29,9 +29,9 @@ The system follows an Object-Oriented, Plugin-style architecture under `src/`.
 
 ## 5. CLI Arguments (Customization Interface)
 The `main.py` exposes these arguments via `argparse`:
-* `--input`: Path to the input `.md` or `.txt` file.
-* `--input_dir`: Path to input directory for batch processing.
-* `--engine`: Selection of the engine (`piper`, `clone`, `edge`).
+* `--input`: Path to the input `.md` or `.txt` file (or audio file `.mp3`, `.wav`, etc. when using the `rvc` engine).
+* `--input_dir`: Path to input directory for batch processing (or directory with audio files when using the `rvc` engine).
+* `--engine`: Selection of the engine (`piper`, `clone`, `edge`, `rvc`).
 * `--model`: Local path to specific model weights (e.g., `models/piper/vi_VN-vais1000-medium.onnx`).
 * `--speed`: Float value to control speech rate (e.g., `1.0`, `1.2`).
 * `--voice`: Name of the voice (e.g., `vi-VN-NamMinhNeural` or lang code `vi`, `en`).

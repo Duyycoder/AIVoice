@@ -196,6 +196,64 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
     return result
 
 
+def process_single_audio_rvc(input_path: str, output_path: str, args) -> dict:
+    """Process a single audio recording file through the RVC pipeline.
+    
+    Returns a dict with status info for the summary table.
+    """
+    result = {
+        "input": os.path.basename(input_path),
+        "output": output_path,
+        "chunks": 1,
+        "status": "FAILED",
+        "duration_s": 0.0,
+    }
+    
+    start_time = time.time()
+    
+    if not args.rvc_model:
+        print("Error: --rvc_model is required for RVC voice conversion engine.", file=sys.stderr)
+        return result
+        
+    # Ensure output directory exists
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        
+    print(f"\nProcessing audio file '{os.path.basename(input_path)}' with RVC...")
+    print("Applying RVC voice conversion (Voice-to-Voice)...")
+    from src.engines.rvc_engine import apply_rvc
+    
+    success = apply_rvc(
+        input_wav_path=input_path,
+        output_wav_path=output_path,
+        model_path=args.rvc_model,
+        index_path=args.rvc_index,
+        pitch_shift=args.rvc_pitch
+    )
+    
+    if success:
+        # Apply audio post-processing if successful
+        from src.utils.audio import apply_audio_post_processing
+        if args.normalize or args.fade_in > 0 or args.fade_out > 0:
+            print(f"Applying post-processing (Normalize to LUFS: {args.target_lufs if args.normalize else 'No'}, Fade In: {args.fade_in}s, Fade Out: {args.fade_out}s)...")
+            apply_audio_post_processing(
+                output_path,
+                target_lufs=args.target_lufs if args.normalize else None,
+                fade_in_duration=args.fade_in,
+                fade_out_duration=args.fade_out
+            )
+        result["status"] = "SUCCESS"
+        print(f"SUCCESS: Audio saved to: {output_path}")
+    else:
+        print("Error: RVC voice conversion failed.", file=sys.stderr)
+        result["status"] = "FAILED (RVC Error)"
+        
+    elapsed = time.time() - start_time
+    result["duration_s"] = elapsed
+    return result
+
+
 def print_summary_table(results: list[dict]):
     """Print a formatted summary table of batch processing results."""
     print("\n" + "=" * 80)
@@ -244,19 +302,22 @@ def run_interactive_wizard(config_data: dict) -> list[str]:
     print("  1. edge (TTS - Microsoft Edge Online)")
     print("  2. piper (Piper ONNX - Offline)")
     print("  3. clone (Voice Cloning XTTSv2 - Offline)")
-    print("  4. batch (Xử lý hàng loạt toàn bộ file trong thư mục)")
+    print("  4. rvc (Voice-to-Voice RVC - Offline)")
+    print("  5. batch (Xử lý hàng loạt toàn bộ file trong thư mục)")
     
     d_engine = config_data.get("engine", "edge")
     engine_choices = {
         "1": "edge", "edge": "edge",
         "2": "piper", "piper": "piper",
         "3": "clone", "clone": "clone",
-        "4": "batch", "batch": "batch"
+        "4": "rvc", "rvc": "rvc",
+        "5": "batch", "batch": "batch"
     }
     
     d_engine_idx = "1"
     if d_engine == "piper": d_engine_idx = "2"
     elif d_engine == "clone": d_engine_idx = "3"
+    elif d_engine == "rvc": d_engine_idx = "4"
     
     engine_sel = input(f"Chọn [Mặc định: {d_engine_idx} ({d_engine})]: ").strip().lower()
     if not engine_sel:
@@ -271,11 +332,14 @@ def run_interactive_wizard(config_data: dict) -> list[str]:
         print("  1. edge (TTS - Microsoft Edge Online)")
         print("  2. piper (Piper ONNX - Offline)")
         print("  3. clone (Voice Cloning XTTSv2 - Offline)")
+        print("  4. rvc (Voice-to-Voice RVC - Offline)")
         batch_engine_sel = input("Chọn [Mặc định: 1 (edge)]: ").strip()
         if batch_engine_sel == "2":
             engine_choice = "piper"
         elif batch_engine_sel == "3":
             engine_choice = "clone"
+        elif batch_engine_sel == "4":
+            engine_choice = "rvc"
         else:
             engine_choice = "edge"
             
@@ -333,148 +397,283 @@ def run_interactive_wizard(config_data: dict) -> list[str]:
                 
         if model_choice:
             cmd_args.extend(["--model", model_choice])
+            
+    elif engine_choice == "rvc":
+        print("\n[2] Chọn RVC Model:")
+        rvc_dir = os.path.join("models", "rvc")
+        available_rvc_models = []
+        if os.path.exists(rvc_dir):
+            available_rvc_models = [os.path.join(rvc_dir, f) for f in os.listdir(rvc_dir) if f.endswith(".pth")]
+            
+        for idx, m in enumerate(available_rvc_models):
+            print(f"  {idx + 1}. {m}")
+        print(f"  {len(available_rvc_models) + 1}. Tự nhập đường dẫn khác...")
+        
+        d_rvc_model = config_data.get("rvc_model", "models/rvc/ElevenLabs_Adam_FR.pth")
+        d_model_idx = ""
+        for idx, m in enumerate(available_rvc_models):
+            if os.path.abspath(m) == os.path.abspath(d_rvc_model) or m == d_rvc_model:
+                d_model_idx = str(idx + 1)
+                break
+        if not d_model_idx and available_rvc_models:
+            d_model_idx = "1"
+            d_rvc_model = available_rvc_models[0]
+            
+        default_prompt = f"Chọn [Mặc định: {d_model_idx} ({d_rvc_model})]" if d_rvc_model else "Chọn RVC model"
+        model_sel = input(f"{default_prompt}: ").strip()
+        
+        if not model_sel:
+            rvc_model_choice = d_rvc_model
+        elif model_sel.isdigit() and 1 <= int(model_sel) <= len(available_rvc_models):
+            rvc_model_choice = available_rvc_models[int(model_sel) - 1]
+        else:
+            if model_sel.isdigit() and int(model_sel) == len(available_rvc_models) + 1:
+                rvc_model_choice = input("Nhập đường dẫn RVC model (.pth): ").strip()
+            else:
+                rvc_model_choice = model_sel
+                
+        if rvc_model_choice:
+            cmd_args.extend(["--rvc_model", rvc_model_choice])
+            
+        # Select RVC Index
+        print("\nChọn RVC Index (Tùy chọn):")
+        available_indexes = []
+        if os.path.exists(rvc_dir):
+            available_indexes = [os.path.join(rvc_dir, f) for f in os.listdir(rvc_dir) if f.endswith(".index")]
+            
+        for idx, ind in enumerate(available_indexes):
+            print(f"  {idx + 1}. {ind}")
+        print(f"  {len(available_indexes) + 1}. Tự nhập đường dẫn index khác...")
+        print(f"  {len(available_indexes) + 2}. Không sử dụng index")
+        
+        d_rvc_index = config_data.get("rvc_index", "")
+        d_index_idx = ""
+        if d_rvc_index:
+            for idx, ind in enumerate(available_indexes):
+                if os.path.abspath(ind) == os.path.abspath(d_rvc_index) or ind == d_rvc_index:
+                    d_index_idx = str(idx + 1)
+                    break
+        if not d_index_idx and available_indexes:
+            # Match by name if possible
+            base_name_model = os.path.splitext(os.path.basename(rvc_model_choice))[0]
+            for idx, ind in enumerate(available_indexes):
+                if base_name_model in os.path.basename(ind):
+                    d_index_idx = str(idx + 1)
+                    d_rvc_index = ind
+                    break
+            if not d_index_idx:
+                d_index_idx = str(len(available_indexes) + 2)
+                d_rvc_index = ""
+                
+        default_prompt = f"Chọn [Mặc định: {d_index_idx} ({d_rvc_index if d_rvc_index else 'Không sử dụng'})]"
+        index_sel = input(f"{default_prompt}: ").strip()
+        
+        if not index_sel:
+            rvc_index_choice = d_rvc_index
+        elif index_sel.isdigit() and 1 <= int(index_sel) <= len(available_indexes):
+            rvc_index_choice = available_indexes[int(index_sel) - 1]
+        elif index_sel.isdigit() and int(index_sel) == len(available_indexes) + 1:
+            rvc_index_choice = input("Nhập đường dẫn RVC Index (.index): ").strip()
+        else:
+            rvc_index_choice = ""
+            
+        if rvc_index_choice:
+            cmd_args.extend(["--rvc_index", rvc_index_choice])
+            
+        # Pitch shift
+        d_rvc_pitch = config_data.get("rvc_pitch", 0)
+        rvc_pitch_sel = input(f"\nNhập thông số pitch shift (Số nguyên, mặc định: {d_rvc_pitch}): ").strip()
+        rvc_pitch_choice = int(rvc_pitch_sel) if rvc_pitch_sel else d_rvc_pitch
+        cmd_args.extend(["--rvc_pitch", str(rvc_pitch_choice)])
 
     # 3. Select Input
     print("\n[3] Chọn Input:")
-    if is_batch:
-        d_input_dir = "data/inputs"
-        input_dir_sel = input(f"Nhập đường dẫn thư mục chứa files [Mặc định: {d_input_dir}]: ").strip()
-        input_dir_choice = input_dir_sel if input_dir_sel else d_input_dir
-        cmd_args.extend(["--input_dir", input_dir_choice])
-    else:
-        input_dir = "data/inputs"
-        available_inputs = []
-        if os.path.exists(input_dir):
-            available_inputs = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith(".md") or f.endswith(".txt")]
-            
-        for idx, inp in enumerate(available_inputs):
-            print(f"  {idx + 1}. {inp}")
-        print(f"  {len(available_inputs) + 1}. Tự nhập đường dẫn file khác...")
-        
-        d_input = available_inputs[0] if available_inputs else ""
-        d_input_idx = "1" if available_inputs else ""
-        
-        default_prompt = f"Chọn [Mặc định: {d_input_idx} ({d_input})]" if d_input else "Nhập đường dẫn file input"
-        input_sel = input(f"{default_prompt}: ").strip()
-        
-        if not input_sel:
-            input_choice = d_input
-        elif input_sel.isdigit() and 1 <= int(input_sel) <= len(available_inputs):
-            input_choice = available_inputs[int(input_sel) - 1]
+    AUDIO_EXTENSIONS = (".mp3", ".wav", ".m4a", ".flac", ".ogg")
+    
+    if engine_choice == "rvc":
+        if is_batch:
+            d_input_dir = "data/recordings"
+            if not os.path.exists(d_input_dir):
+                os.makedirs(d_input_dir, exist_ok=True)
+            input_dir_sel = input(f"Nhập đường dẫn thư mục chứa files ghi âm [Mặc định: {d_input_dir}]: ").strip()
+            input_dir_choice = input_dir_sel if input_dir_sel else d_input_dir
+            cmd_args.extend(["--input_dir", input_dir_choice])
         else:
-            if input_sel.isdigit() and int(input_sel) == len(available_inputs) + 1:
-                input_choice = input("Nhập đường dẫn file: ").strip()
-            else:
-                input_choice = input_sel
+            input_dir = "data/recordings"
+            if not os.path.exists(input_dir):
+                os.makedirs(input_dir, exist_ok=True)
                 
-        cmd_args.extend(["--input", input_choice])
+            available_inputs = []
+            for d in [input_dir, "data/inputs"]:
+                if os.path.exists(d):
+                    for f in os.listdir(d):
+                        if f.lower().endswith(AUDIO_EXTENSIONS):
+                            available_inputs.append(os.path.join(d, f))
+            
+            if available_inputs:
+                for idx, inp in enumerate(available_inputs):
+                    print(f"  {idx + 1}. {inp}")
+                print(f"  {len(available_inputs) + 1}. Tự nhập đường dẫn file khác...")
+                
+                d_input = available_inputs[0]
+                d_input_idx = "1"
+                default_prompt = f"Chọn [Mặc định: {d_input_idx} ({d_input})]"
+                input_sel = input(f"{default_prompt}: ").strip()
+                
+                if not input_sel:
+                    input_choice = d_input
+                elif input_sel.isdigit() and 1 <= int(input_sel) <= len(available_inputs):
+                    input_choice = available_inputs[int(input_sel) - 1]
+                else:
+                    if input_sel.isdigit() and int(input_sel) == len(available_inputs) + 1:
+                        input_choice = input("Nhập đường dẫn file ghi âm: ").strip()
+                    else:
+                        input_choice = input_sel
+            else:
+                input_choice = input(f"Nhập đường dẫn file ghi âm (e.g. .mp3, .wav): ").strip()
+                
+            cmd_args.extend(["--input", input_choice])
+    else:
+        if is_batch:
+            d_input_dir = "data/inputs"
+            input_dir_sel = input(f"Nhập đường dẫn thư mục chứa files [Mặc định: {d_input_dir}]: ").strip()
+            input_dir_choice = input_dir_sel if input_dir_sel else d_input_dir
+            cmd_args.extend(["--input_dir", input_dir_choice])
+        else:
+            input_dir = "data/inputs"
+            available_inputs = []
+            if os.path.exists(input_dir):
+                available_inputs = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith(".md") or f.endswith(".txt")]
+                
+            for idx, inp in enumerate(available_inputs):
+                print(f"  {idx + 1}. {inp}")
+            print(f"  {len(available_inputs) + 1}. Tự nhập đường dẫn file khác...")
+            
+            d_input = available_inputs[0] if available_inputs else ""
+            d_input_idx = "1" if available_inputs else ""
+            
+            default_prompt = f"Chọn [Mặc định: {d_input_idx} ({d_input})]" if d_input else "Nhập đường dẫn file input"
+            input_sel = input(f"{default_prompt}: ").strip()
+            
+            if not input_sel:
+                input_choice = d_input
+            elif input_sel.isdigit() and 1 <= int(input_sel) <= len(available_inputs):
+                input_choice = available_inputs[int(input_sel) - 1]
+            else:
+                if input_sel.isdigit() and int(input_sel) == len(available_inputs) + 1:
+                    input_choice = input("Nhập đường dẫn file: ").strip()
+                else:
+                    input_choice = input_sel
+                    
+            cmd_args.extend(["--input", input_choice])
 
     # 4. Select Voice (giọng)
-    print("\n[4] Chọn Giọng (Voice) / Ngôn ngữ:")
-    if engine_choice == "edge":
-        print("  1. vi-VN-NamMinhNeural (Nam Minh - Giọng nam)")
-        print("  2. vi-VN-HoaiMyNeural (Hoài My - Giọng nữ)")
-        print("  3. Tự nhập tên giọng nói khác...")
-        d_voice = config_data.get("voice", "vi-VN-NamMinhNeural")
-        d_voice_idx = "1" if d_voice == "vi-VN-NamMinhNeural" else ("2" if d_voice == "vi-VN-HoaiMyNeural" else "3")
-        voice_sel = input(f"Chọn [Mặc định: {d_voice_idx} ({d_voice})]: ").strip()
-        if not voice_sel:
-            voice_choice = d_voice
-        elif voice_sel == "1":
-            voice_choice = "vi-VN-NamMinhNeural"
-        elif voice_sel == "2":
-            voice_choice = "vi-VN-HoaiMyNeural"
-        else:
-            if voice_sel == "3":
-                voice_choice = input("Nhập tên giọng nói Edge-TTS: ").strip()
+    if engine_choice != "rvc":
+        print("\n[4] Chọn Giọng (Voice) / Ngôn ngữ:")
+        if engine_choice == "edge":
+            print("  1. vi-VN-NamMinhNeural (Nam Minh - Giọng nam)")
+            print("  2. vi-VN-HoaiMyNeural (Hoài My - Giọng nữ)")
+            print("  3. Tự nhập tên giọng nói khác...")
+            d_voice = config_data.get("voice", "vi-VN-NamMinhNeural")
+            d_voice_idx = "1" if d_voice == "vi-VN-NamMinhNeural" else ("2" if d_voice == "vi-VN-HoaiMyNeural" else "3")
+            voice_sel = input(f"Chọn [Mặc định: {d_voice_idx} ({d_voice})]: ").strip()
+            if not voice_sel:
+                voice_choice = d_voice
+            elif voice_sel == "1":
+                voice_choice = "vi-VN-NamMinhNeural"
+            elif voice_sel == "2":
+                voice_choice = "vi-VN-HoaiMyNeural"
+            else:
+                if voice_sel == "3":
+                    voice_choice = input("Nhập tên giọng nói Edge-TTS: ").strip()
+                else:
+                    voice_choice = voice_sel
+            cmd_args.extend(["--voice", voice_choice])
+            
+        elif engine_choice == "clone":
+            print("  1. vi (Tiếng Việt)")
+            print("  2. en (Tiếng Anh)")
+            print("  3. zh-cn (Tiếng Trung)")
+            print("  4. ja (Tiếng Nhật)")
+            print("  5. ko (Tiếng Hàn)")
+            print("  6. fr (Tiếng Pháp)")
+            print("  7. es (Tiếng Tây Ban Nha)")
+            print("  8. de (Tiếng Đức)")
+            print("  9. Tự nhập mã ngôn ngữ khác...")
+            
+            d_voice = config_data.get("voice", "en")
+            lang_map = {
+                "1": "vi", "2": "en", "3": "zh-cn", "4": "ja", 
+                "5": "ko", "6": "fr", "7": "es", "8": "de"
+            }
+            
+            d_voice_idx = "9"
+            for idx, lcode in lang_map.items():
+                if d_voice == lcode:
+                    d_voice_idx = idx
+                    break
+                    
+            voice_sel = input(f"Chọn [Mặc định: {d_voice_idx} ({d_voice})]: ").strip()
+            if not voice_sel:
+                voice_choice = d_voice
+            elif voice_sel in lang_map:
+                voice_choice = lang_map[voice_sel]
+            elif voice_sel == "9":
+                voice_choice = input("Nhập mã ngôn ngữ (e.g. ja, ko): ").strip()
             else:
                 voice_choice = voice_sel
-        cmd_args.extend(["--voice", voice_choice])
-        
-    elif engine_choice == "clone":
-        print("  1. vi (Tiếng Việt)")
-        print("  2. en (Tiếng Anh)")
-        print("  3. zh-cn (Tiếng Trung)")
-        print("  4. ja (Tiếng Nhật)")
-        print("  5. ko (Tiếng Hàn)")
-        print("  6. fr (Tiếng Pháp)")
-        print("  7. es (Tiếng Tây Ban Nha)")
-        print("  8. de (Tiếng Đức)")
-        print("  9. Tự nhập mã ngôn ngữ khác...")
-        
-        d_voice = config_data.get("voice", "en")
-        lang_map = {
-            "1": "vi", "2": "en", "3": "zh-cn", "4": "ja", 
-            "5": "ko", "6": "fr", "7": "es", "8": "de"
-        }
-        
-        d_voice_idx = "9"
-        for idx, lcode in lang_map.items():
-            if d_voice == lcode:
-                d_voice_idx = idx
-                break
                 
-        voice_sel = input(f"Chọn [Mặc định: {d_voice_idx} ({d_voice})]: ").strip()
-        if not voice_sel:
-            voice_choice = d_voice
-        elif voice_sel in lang_map:
-            voice_choice = lang_map[voice_sel]
-        elif voice_sel == "9":
-            voice_choice = input("Nhập mã ngôn ngữ (e.g. ja, ko): ").strip()
-        else:
-            voice_choice = voice_sel
+            cmd_args.extend(["--voice", voice_choice])
             
-        cmd_args.extend(["--voice", voice_choice])
-        
-        # Scan for wav files in data/voices
-        voices_dir = os.path.join("data", "voices")
-        wav_files = []
-        if os.path.exists(voices_dir):
-            wav_files = [f for f in os.listdir(voices_dir) if f.endswith(".wav")]
-        if wav_files:
-            print("\nChọn File Âm Thanh Mẫu (Reference Audio):")
-            for idx, w in enumerate(wav_files):
-                print(f"  {idx + 1}. {os.path.join(voices_dir, w)}")
-            print(f"  {len(wav_files) + 1}. Tự nhập đường dẫn file khác...")
-            
-            d_ref_audio = config_data.get("ref_audio", "data/voices/ref_voice.wav")
-            d_ref_idx = ""
-            for idx, w in enumerate(wav_files):
-                full_path = os.path.join(voices_dir, w)
-                if full_path == d_ref_audio or w == d_ref_audio:
-                    d_ref_idx = str(idx + 1)
-                    break
-            if not d_ref_idx:
-                d_ref_idx = "1"
-                d_ref_audio = os.path.join(voices_dir, wav_files[0])
+            # Scan for wav files in data/voices
+            voices_dir = os.path.join("data", "voices")
+            wav_files = []
+            if os.path.exists(voices_dir):
+                wav_files = [f for f in os.listdir(voices_dir) if f.endswith(".wav")]
+            if wav_files:
+                print("\nChọn File Âm Thanh Mẫu (Reference Audio):")
+                for idx, w in enumerate(wav_files):
+                    print(f"  {idx + 1}. {os.path.join(voices_dir, w)}")
+                print(f"  {len(wav_files) + 1}. Tự nhập đường dẫn file khác...")
                 
-            ref_audio_sel = input(f"Chọn [Mặc định: {d_ref_idx} ({d_ref_audio})]: ").strip()
-            if not ref_audio_sel:
-                ref_audio_choice = d_ref_audio
-            elif ref_audio_sel.isdigit() and 1 <= int(ref_audio_sel) <= len(wav_files):
-                ref_audio_choice = os.path.join(voices_dir, wav_files[int(ref_audio_sel) - 1])
-            else:
-                if ref_audio_sel.isdigit() and int(ref_audio_sel) == len(wav_files) + 1:
-                    ref_audio_choice = input("Nhập đường dẫn file âm thanh mẫu: ").strip()
+                d_ref_audio = config_data.get("ref_audio", "data/voices/ref_voice.wav")
+                d_ref_idx = ""
+                for idx, w in enumerate(wav_files):
+                    full_path = os.path.join(voices_dir, w)
+                    if full_path == d_ref_audio or w == d_ref_audio:
+                        d_ref_idx = str(idx + 1)
+                        break
+                if not d_ref_idx:
+                    d_ref_idx = "1"
+                    d_ref_audio = os.path.join(voices_dir, wav_files[0])
+                    
+                ref_audio_sel = input(f"Chọn [Mặc định: {d_ref_idx} ({d_ref_audio})]: ").strip()
+                if not ref_audio_sel:
+                    ref_audio_choice = d_ref_audio
+                elif ref_audio_sel.isdigit() and 1 <= int(ref_audio_sel) <= len(wav_files):
+                    ref_audio_choice = os.path.join(voices_dir, wav_files[int(ref_audio_sel) - 1])
                 else:
-                    ref_audio_choice = ref_audio_sel
-        else:
-            d_ref_audio = config_data.get("ref_audio", "data/voices/ref_voice.wav")
-            ref_audio_sel = input(f"Nhập đường dẫn file âm thanh mẫu [Mặc định: {d_ref_audio}]: ").strip()
-            ref_audio_choice = ref_audio_sel if ref_audio_sel else d_ref_audio
+                    if ref_audio_sel.isdigit() and int(ref_audio_sel) == len(wav_files) + 1:
+                        ref_audio_choice = input("Nhập đường dẫn file âm thanh mẫu: ").strip()
+                    else:
+                        ref_audio_choice = ref_audio_sel
+            else:
+                d_ref_audio = config_data.get("ref_audio", "data/voices/ref_voice.wav")
+                ref_audio_sel = input(f"Nhập đường dẫn file âm thanh mẫu [Mặc định: {d_ref_audio}]: ").strip()
+                ref_audio_choice = ref_audio_sel if ref_audio_sel else d_ref_audio
+                
+            cmd_args.extend(["--ref_audio", ref_audio_choice])
             
-        cmd_args.extend(["--ref_audio", ref_audio_choice])
-        
-    elif engine_choice == "piper":
-        print("  Gợi ý chọn Speaker ID (dành cho model nhiều giọng đọc - Multi-speaker):")
-        print("    - Nhấn Enter nếu model là Single-speaker (Mặc định: 0)")
-        print("    - Hoặc nhập số ID người nói (e.g. 0, 1, 2...)")
-        d_voice = config_data.get("voice")
-        if not d_voice or not str(d_voice).isdigit():
-            d_voice = "0"
-        voice_sel = input(f"Chọn Speaker ID [Mặc định: {d_voice}]: ").strip()
-        voice_choice = voice_sel if voice_sel else d_voice
-        cmd_args.extend(["--voice", voice_choice])
+        elif engine_choice == "piper":
+            print("  Gợi ý chọn Speaker ID (dành cho model nhiều giọng đọc - Multi-speaker):")
+            print("    - Nhấn Enter nếu model là Single-speaker (Mặc định: 0)")
+            print("    - Hoặc nhập số ID người nói (e.g. 0, 1, 2...)")
+            d_voice = config_data.get("voice")
+            if not d_voice or not str(d_voice).isdigit():
+                d_voice = "0"
+            voice_sel = input(f"Chọn Speaker ID [Mặc định: {d_voice}]: ").strip()
+            voice_choice = voice_sel if voice_sel else d_voice
+            cmd_args.extend(["--voice", voice_choice])
 
     # 5. Output file / folder
     print("\n[5] Tên đầu ra / Thư mục đầu ra:")
@@ -498,79 +697,79 @@ def run_interactive_wizard(config_data: dict) -> list[str]:
             cmd_args.extend(["--output_name", out_name])
 
     # 6. AI Emotion/Spice (Spice & Clone)
-    print("\n[6] Thêm cảm xúc/hài hước bằng AI (Spice & Clone):")
-    d_spice_text = config_data.get("spice_text", False)
-    spice_sel = input(f"  Bạn có muốn thêm cảm xúc/hóm hỉnh vào văn bản bằng LLM cục bộ không? (y/n) [Mặc định: {'y' if d_spice_text else 'n'}]: ").strip().lower()
-    
-    spice_choice = None
-    if spice_sel:
-        spice_choice = spice_sel in ["y", "yes", "true"]
-    
-    actual_spice = spice_choice if spice_choice is not None else d_spice_text
-    
-    if actual_spice:
-        if spice_choice is not None or d_spice_text:
-            cmd_args.append("--spice_text")
+    if engine_choice != "rvc":
+        print("\n[6] Thêm cảm xúc/hài hước bằng AI (Spice & Clone):")
+        d_spice_text = config_data.get("spice_text", False)
+        spice_sel = input(f"  Bạn có muốn thêm cảm xúc/hóm hỉnh vào văn bản bằng LLM cục bộ không? (y/n) [Mặc định: {'y' if d_spice_text else 'n'}]: ").strip().lower()
         
-        d_llm_model = config_data.get("llm_model", "")
-        default_prompt = f" [Mặc định: {d_llm_model}]" if d_llm_model else ""
-        llm_model_sel = input(f"  Nhập đường dẫn đến file model GGUF{default_prompt}: ").strip()
-        llm_model_choice = llm_model_sel if llm_model_sel else d_llm_model
-        if llm_model_choice:
-            cmd_args.extend(["--llm_model", llm_model_choice])
-    else:
-        if spice_choice is not None:
-            cmd_args.append("--no-spice_text")
+        spice_choice = None
+        if spice_sel:
+            spice_choice = spice_sel in ["y", "yes", "true"]
+        
+        actual_spice = spice_choice if spice_choice is not None else d_spice_text
+        
+        if actual_spice:
+            if spice_choice is not None or d_spice_text:
+                cmd_args.append("--spice_text")
+            
+            d_llm_model = config_data.get("llm_model", "")
+            default_prompt = f" [Mặc định: {d_llm_model}]" if d_llm_model else ""
+            llm_model_sel = input(f"  Nhập đường dẫn đến file model GGUF{default_prompt}: ").strip()
+            llm_model_choice = llm_model_sel if llm_model_sel else d_llm_model
+            if llm_model_choice:
+                cmd_args.extend(["--llm_model", llm_model_choice])
+        else:
+            if spice_choice is not None:
+                cmd_args.append("--no-spice_text")
 
     # 7. Voice-to-Voice (RVC) Post-Processing
-    print("\n[7] Hậu kỳ Voice-to-Voice (RVC):")
-    d_rvc_model = config_data.get("rvc_model", "")
-    rvc_sel = input(f"  Bạn có muốn áp dụng RVC để đổi giọng (Voice-to-Voice) không? (y/n) [Mặc định: {'y' if d_rvc_model else 'n'}]: ").strip().lower()
-    
-    rvc_choice = None
-    if rvc_sel:
-        rvc_choice = rvc_sel in ["y", "yes", "true"]
+    if engine_choice != "rvc":
+        print("\n[7] Hậu kỳ Voice-to-Voice (RVC):")
+        d_rvc_model = config_data.get("rvc_model", "")
+        rvc_sel = input(f"  Bạn có muốn áp dụng RVC để đổi giọng (Voice-to-Voice) không? (y/n) [Mặc định: {'y' if d_rvc_model else 'n'}]: ").strip().lower()
         
-    actual_rvc = rvc_choice if rvc_choice is not None else bool(d_rvc_model)
-    
-    if actual_rvc:
-        # Prompt for RVC Model Path
-        default_prompt = f" [Mặc định: {d_rvc_model}]" if d_rvc_model else ""
-        rvc_model_sel = input(f"  Nhập đường dẫn file RVC (.pth){default_prompt}: ").strip()
-        rvc_model_choice = rvc_model_sel if rvc_model_sel else d_rvc_model
-        if rvc_model_choice:
-            cmd_args.extend(["--rvc_model", rvc_model_choice])
+        rvc_choice = None
+        if rvc_sel:
+            rvc_choice = rvc_sel in ["y", "yes", "true"]
             
-            # Prompt for RVC Index Path (optional)
-            d_rvc_index = config_data.get("rvc_index", "")
-            default_index_prompt = f" [Mặc định: {d_rvc_index}]" if d_rvc_index else ""
-            rvc_index_sel = input(f"  Nhập đường dẫn file RVC Index (.index - Tùy chọn){default_index_prompt}: ").strip()
-            rvc_index_choice = rvc_index_sel if rvc_index_sel else d_rvc_index
-            if rvc_index_choice:
-                cmd_args.extend(["--rvc_index", rvc_index_choice])
+        actual_rvc = rvc_choice if rvc_choice is not None else bool(d_rvc_model)
+        
+        if actual_rvc:
+            default_prompt = f" [Mặc định: {d_rvc_model}]" if d_rvc_model else ""
+            rvc_model_sel = input(f"  Nhập đường dẫn file RVC (.pth){default_prompt}: ").strip()
+            rvc_model_choice = rvc_model_sel if rvc_model_sel else d_rvc_model
+            if rvc_model_choice:
+                cmd_args.extend(["--rvc_model", rvc_model_choice])
                 
-            # Prompt for Pitch Shift
-            d_rvc_pitch = config_data.get("rvc_pitch", 0)
-            rvc_pitch_sel = input(f"  Nhập thông số pitch shift (Số nguyên, mặc định: {d_rvc_pitch}): ").strip()
-            rvc_pitch_choice = int(rvc_pitch_sel) if rvc_pitch_sel else d_rvc_pitch
-            cmd_args.extend(["--rvc_pitch", str(rvc_pitch_choice)])
-            
+                d_rvc_index = config_data.get("rvc_index", "")
+                default_index_prompt = f" [Mặc định: {d_rvc_index}]" if d_rvc_index else ""
+                rvc_index_sel = input(f"  Nhập đường dẫn file RVC Index (.index - Tùy chọn){default_index_prompt}: ").strip()
+                rvc_index_choice = rvc_index_sel if rvc_index_sel else d_rvc_index
+                if rvc_index_choice:
+                    cmd_args.extend(["--rvc_index", rvc_index_choice])
+                    
+                d_rvc_pitch = config_data.get("rvc_pitch", 0)
+                rvc_pitch_sel = input(f"  Nhập thông số pitch shift (Số nguyên, mặc định: {d_rvc_pitch}): ").strip()
+                rvc_pitch_choice = int(rvc_pitch_sel) if rvc_pitch_sel else d_rvc_pitch
+                cmd_args.extend(["--rvc_pitch", str(rvc_pitch_choice)])
+                
     # 8. Advanced options
     print("\n[8] Các thông số nâng cao (Ấn Enter để chọn giá trị mặc định):")
     
-    d_speed = config_data.get("speed", 1.0)
-    speed_sel = input(f"  Tốc độ đọc (speed) [Mặc định: {d_speed}]: ").strip()
-    if speed_sel:
-        cmd_args.extend(["--speed", speed_sel])
-        
-    d_phonemize = config_data.get("phonemize", False)
-    phonemize_sel = input(f"  Bật chuyển tự phiên âm IPA (phonemize) (y/n) [Mặc định: {'y' if d_phonemize else 'n'}]: ").strip().lower()
-    if phonemize_sel:
-        if phonemize_sel in ["y", "yes", "true"]:
-            cmd_args.append("--phonemize")
-        else:
-            cmd_args.append("--no-phonemize")
+    if engine_choice != "rvc":
+        d_speed = config_data.get("speed", 1.0)
+        speed_sel = input(f"  Tốc độ đọc (speed) [Mặc định: {d_speed}]: ").strip()
+        if speed_sel:
+            cmd_args.extend(["--speed", speed_sel])
             
+        d_phonemize = config_data.get("phonemize", False)
+        phonemize_sel = input(f"  Bật chuyển tự phiên âm IPA (phonemize) (y/n) [Mặc định: {'y' if d_phonemize else 'n'}]: ").strip().lower()
+        if phonemize_sel:
+            if phonemize_sel in ["y", "yes", "true"]:
+                cmd_args.append("--phonemize")
+            else:
+                cmd_args.append("--no-phonemize")
+                
     d_normalize = config_data.get("normalize", True)
     normalize_sel = input(f"  Bật chuẩn hóa âm lượng (normalize) (y/n) [Mặc định: {'y' if d_normalize else 'n'}]: ").strip().lower()
     if normalize_sel:
@@ -594,10 +793,11 @@ def run_interactive_wizard(config_data: dict) -> list[str]:
     if fade_out_sel:
         cmd_args.extend(["--fade_out", fade_out_sel])
         
-    d_silence_duration = config_data.get("silence_duration", 0.3)
-    silence_duration_sel = input(f"  Khoảng lặng giữa các đoạn (silence duration) [Mặc định: {d_silence_duration}]: ").strip()
-    if silence_duration_sel:
-        cmd_args.extend(["--silence_duration", silence_duration_sel])
+    if engine_choice != "rvc":
+        d_silence_duration = config_data.get("silence_duration", 0.3)
+        silence_duration_sel = input(f"  Khoảng lặng giữa các đoạn (silence duration) [Mặc định: {d_silence_duration}]: ").strip()
+        if silence_duration_sel:
+            cmd_args.extend(["--silence_duration", silence_duration_sel])
         
     print("\nLệnh chạy giả định:")
     print("python " + " ".join(cmd_args[1:]))
@@ -683,8 +883,8 @@ def main():
         "--engine",
         required=(d_engine is None),
         default=d_engine,
-        choices=["piper", "clone", "edge"],
-        help="Selection of the engine (piper, clone, edge)."
+        choices=["piper", "clone", "edge", "rvc"],
+        help="Selection of the engine (piper, clone, edge, rvc)."
     )
     parser.add_argument(
         "--model",
@@ -795,6 +995,7 @@ def main():
         args.rvc_index = os.path.abspath(args.rvc_index)
     
     # Initialize Engine Plugin
+    engine = None
     if args.engine == "piper":
         from src.engines.piper import PiperEngine
         engine = PiperEngine(args.model)
@@ -811,6 +1012,10 @@ def main():
         except ImportError:
             print("Error: The CloneEngine (XTTSv2) requires coqui-tts, which could not be loaded.", file=sys.stderr)
             sys.exit(1)
+    elif args.engine == "rvc":
+        if not args.rvc_model:
+            print("Error: --rvc_model is required for RVC voice conversion engine.", file=sys.stderr)
+            sys.exit(1)
             
     # Determine input files
     if args.input:
@@ -825,7 +1030,11 @@ def main():
         output_dir = os.path.join(args.output_dir, input_base_name)
         output_path = os.path.join(output_dir, f"{output_name}.wav")
         
-        result = process_single_file(args.input, output_path, engine, args)
+        if args.engine == "rvc":
+            result = process_single_audio_rvc(args.input, output_path, args)
+        else:
+            result = process_single_file(args.input, output_path, engine, args)
+            
         if result["status"] != "SUCCESS":
             sys.exit(1)
     else:
@@ -834,14 +1043,19 @@ def main():
             print(f"Error: Input directory '{args.input_dir}' does not exist.", file=sys.stderr)
             sys.exit(1)
             
+        is_rvc = (args.engine == "rvc")
         input_files = []
+        extensions = (".wav", ".mp3", ".m4a", ".flac", ".ogg") if is_rvc else (".md", ".txt")
         for filename in os.listdir(args.input_dir):
-            if filename.endswith(".md") or filename.endswith(".txt"):
+            if filename.lower().endswith(extensions):
                 input_files.append(filename)
         input_files.sort()
         
         if not input_files:
-            print(f"Error: No .md or .txt files found in '{args.input_dir}'.", file=sys.stderr)
+            if is_rvc:
+                print(f"Error: No audio files found in '{args.input_dir}'.", file=sys.stderr)
+            else:
+                print(f"Error: No .md or .txt files found in '{args.input_dir}'.", file=sys.stderr)
             sys.exit(1)
             
         print(f"Found {len(input_files)} file(s) in '{args.input_dir}'.")
@@ -860,7 +1074,10 @@ def main():
             file_output_dir = os.path.join(args.output_dir, name_without_ext)
             output_path = os.path.join(file_output_dir, f"{name_without_ext}.wav")
             
-            result = process_single_file(file_path, output_path, engine, args)
+            if is_rvc:
+                result = process_single_audio_rvc(file_path, output_path, args)
+            else:
+                result = process_single_file(file_path, output_path, engine, args)
             results.append(result)
             
         batch_elapsed = time.time() - batch_start

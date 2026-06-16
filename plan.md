@@ -25,7 +25,7 @@ AIVoice/
 * **`src/engines/edge.py`**: Leverages Microsoft Edge Neural TTS online web API.
 * **`src/engines/piper.py`**: Fast local CPU/GPU speech synthesis using Piper ONNX. Housed with both Python in-process synthesis and subprocess fallback.
 * **`src/engines/clone.py`**: Local zero-shot voice cloning using Coqui XTTSv2, optimized via PyTorch SDPA kernel context.
-* **`src/engines/rvc_engine.py`**: Retrieval-based Voice Conversion for Voice-to-Voice post-processing.
+* **`src/engines/rvc_engine.py`**: Retrieval-based Voice Conversion for Voice-to-Voice post-processing or standalone audio conversion.
 * **`src/utils/text.py`**: Strips markdown formatting and divides long paragraphs into sentence chunks based on punctuation terminals.
 * **`src/utils/audio.py`**: Concatenates audio segments with adjustable silence spaces, normalizes volume to professional broadcast standard (e.g. -14 LUFS using BS.1770 meters), and applies linear fade-in/out to prevent pop noise.
 * **`src/utils/phoneme.py`**: Bypasses OS-compatibility issues on Windows to convert raw Vietnamese text into IPA phonemes via `viphoneme`.
@@ -39,6 +39,7 @@ AIVoice/
   - [x] Create modular base classes and implement Microsoft Edge TTS wrapper.
   - [x] Create Piper engine adapter supporting custom model paths and speeds.
   - [x] Create XTTSv2 Voice Cloning engine adapter with GPU support.
+  - [x] Implement standalone RVC engine option for direct audio-to-audio voice conversion.
 - [x] **Phase 2: Post-Processing & Text Processing**
   - [x] Write regex-based markdown cleaner and sentence segmenter.
   - [x] Write audio composer with padding silence, LUFS normalization, and linear fades.
