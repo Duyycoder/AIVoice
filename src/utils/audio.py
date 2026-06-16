@@ -171,3 +171,37 @@ def apply_audio_post_processing(
         print(f"Error during audio post-processing: {e}")
         return False
 
+
+def chunk_audio_file(input_path: str, chunk_duration_s: float = 60.0) -> tuple[list[str], int]:
+    """Splits an audio file into temporary WAV chunks of chunk_duration_s to prevent VRAM OOM during RVC.
+    
+    Args:
+        input_path: Path to the input audio file.
+        chunk_duration_s: Maximum duration of each chunk in seconds.
+        
+    Returns:
+        tuple: (list of temporary file paths, sample rate of the audio).
+    """
+    import tempfile
+    
+    data, sr = sf.read(input_path)
+    
+    # Calculate chunk size in samples
+    chunk_samples = int(chunk_duration_s * sr)
+    total_samples = len(data)
+    
+    temp_files = []
+    
+    for start_idx in range(0, total_samples, chunk_samples):
+        end_idx = min(start_idx + chunk_samples, total_samples)
+        chunk_data = data[start_idx:end_idx]
+        
+        # Save to a temp wav file
+        fd, temp_path = tempfile.mkstemp(suffix=f"_chunk_{len(temp_files)}.wav")
+        os.close(fd)
+        
+        sf.write(temp_path, chunk_data, sr)
+        temp_files.append(temp_path)
+        
+    return temp_files, sr
+

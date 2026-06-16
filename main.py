@@ -152,14 +152,67 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
+        
+    rvc_success = False
+    rvc_output_path = None
     
+    # Apply RVC voice conversion on segments if model is specified
+    if args.rvc_model:
+        rvc_output_path = os.path.splitext(output_path)[0] + "_rvc.wav"
+        print(f"Applying RVC voice conversion (Voice-to-Voice) to {len(temp_files)} segments...")
+        
+        # Pre-create all RVC temp paths
+        rvc_temp_files = []
+        for p in temp_files:
+            base, ext = os.path.splitext(p)
+            rvc_temp_files.append(f"{base}_rvc{ext}")
+            
+        from src.engines.rvc_engine import apply_rvc_to_segments
+        rvc_success = apply_rvc_to_segments(
+            input_wav_paths=temp_files,
+            output_wav_paths=rvc_temp_files,
+            model_path=args.rvc_model,
+            index_path=args.rvc_index,
+            pitch_shift=args.rvc_pitch
+        )
+        
+        if rvc_success:
+            print(f"Concatenating {len(rvc_temp_files)} RVC segments into final RVC audio...")
+            # concatenate_wavs will clean up rvc_temp_files!
+            concat_success = concatenate_wavs(rvc_temp_files, rvc_output_path, silence_duration=args.silence_duration)
+            if concat_success:
+                print(f"SUCCESS: RVC audio saved to: {rvc_output_path}")
+                # Apply audio post-processing to RVC output
+                if args.normalize or args.fade_in > 0 or args.fade_out > 0:
+                    print(f"Applying post-processing to RVC audio (Normalize to LUFS: {args.target_lufs if args.normalize else 'No'}, Fade In: {args.fade_in}s, Fade Out: {args.fade_out}s)...")
+                    apply_audio_post_processing(
+                        rvc_output_path,
+                        target_lufs=args.target_lufs if args.normalize else None,
+                        fade_in_duration=args.fade_in,
+                        fade_out_duration=args.fade_out
+                    )
+                result["output"] = rvc_output_path
+                result["status"] = "SUCCESS"
+            else:
+                print("Error: RVC audio concatenation failed.", file=sys.stderr)
+                result["status"] = "FAILED (RVC Concat Error)"
+                rvc_success = False
+        else:
+            # Clean up rvc temp files if conversion failed
+            for p in rvc_temp_files:
+                if os.path.exists(p):
+                    try: os.remove(p)
+                    except OSError: pass
+            print("Error: RVC voice conversion failed.", file=sys.stderr)
+            result["status"] = "FAILED (RVC Error)"
+
+    # Concatenate original non-RVC segments
     print(f"Concatenating {len(temp_files)} segments into final audio...")
     success = concatenate_wavs(temp_files, output_path, silence_duration=args.silence_duration)
     
-    # Apply audio post-processing if successful
     if success:
         if args.normalize or args.fade_in > 0 or args.fade_out > 0:
-            print(f"Applying post-processing (Normalize to LUFS: {args.target_lufs if args.normalize else 'No'}, Fade In: {args.fade_in}s, Fade Out: {args.fade_out}s)...")
+            print(f"Applying post-processing to final audio (Normalize to LUFS: {args.target_lufs if args.normalize else 'No'}, Fade In: {args.fade_in}s, Fade Out: {args.fade_out}s)...")
             apply_audio_post_processing(
                 output_path,
                 target_lufs=args.target_lufs if args.normalize else None,
@@ -167,29 +220,21 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
                 fade_out_duration=args.fade_out
             )
         
-        result["status"] = "SUCCESS"
-        print(f"SUCCESS: Audio saved to: {output_path}")
-        
-        # Apply RVC voice conversion if model is specified
         if args.rvc_model:
-            rvc_output_path = os.path.splitext(output_path)[0] + "_rvc.wav"
-            print("Applying RVC voice conversion (Voice-to-Voice)...")
-            from src.engines.rvc_engine import apply_rvc
-            rvc_success = apply_rvc(
-                input_wav_path=output_path,
-                output_wav_path=rvc_output_path,
-                model_path=args.rvc_model,
-                index_path=args.rvc_index,
-                pitch_shift=args.rvc_pitch
-            )
             if rvc_success:
+                result["status"] = "SUCCESS"
                 result["output"] = rvc_output_path
-                print(f"SUCCESS: RVC audio saved to: {rvc_output_path}")
             else:
-                print("Error: RVC voice conversion failed.", file=sys.stderr)
-                result["status"] = "FAILED (RVC Error)"
+                # Keep status set to failed RVC
+                pass
+        else:
+            result["status"] = "SUCCESS"
+            result["output"] = output_path
+            print(f"SUCCESS: Audio saved to: {output_path}")
     else:
         print(f"Error: Audio concatenation failed for '{input_path}'.", file=sys.stderr)
+        if not args.rvc_model or not rvc_success:
+            result["status"] = "FAILED (Concat Error)"
         
     elapsed = time.time() - start_time
     result["duration_s"] = elapsed
@@ -221,33 +266,73 @@ def process_single_audio_rvc(input_path: str, output_path: str, args) -> dict:
         os.makedirs(out_dir, exist_ok=True)
         
     print(f"\nProcessing audio file '{os.path.basename(input_path)}' with RVC...")
-    print("Applying RVC voice conversion (Voice-to-Voice)...")
-    from src.engines.rvc_engine import apply_rvc
     
-    success = apply_rvc(
-        input_wav_path=input_path,
-        output_wav_path=output_path,
-        model_path=args.rvc_model,
-        index_path=args.rvc_index,
-        pitch_shift=args.rvc_pitch
-    )
-    
-    if success:
-        # Apply audio post-processing if successful
-        from src.utils.audio import apply_audio_post_processing
-        if args.normalize or args.fade_in > 0 or args.fade_out > 0:
-            print(f"Applying post-processing (Normalize to LUFS: {args.target_lufs if args.normalize else 'No'}, Fade In: {args.fade_in}s, Fade Out: {args.fade_out}s)...")
-            apply_audio_post_processing(
-                output_path,
-                target_lufs=args.target_lufs if args.normalize else None,
-                fade_in_duration=args.fade_in,
-                fade_out_duration=args.fade_out
-            )
-        result["status"] = "SUCCESS"
-        print(f"SUCCESS: Audio saved to: {output_path}")
-    else:
-        print("Error: RVC voice conversion failed.", file=sys.stderr)
-        result["status"] = "FAILED (RVC Error)"
+    try:
+        # Step 1: Chunk the input audio file
+        from src.utils.audio import chunk_audio_file
+        print("Slicing input audio into 60-second chunks to prevent CUDA Out-of-Memory...")
+        temp_chunks, sr = chunk_audio_file(input_path, chunk_duration_s=60.0)
+        print(f"Generated {len(temp_chunks)} temporary chunk(s) for processing.")
+        
+        # Step 2: Pre-create all RVC temp paths
+        rvc_temp_chunks = []
+        for p in temp_chunks:
+            base, ext = os.path.splitext(p)
+            rvc_temp_chunks.append(f"{base}_rvc{ext}")
+            
+        # Step 3: Run RVC on all chunks
+        from src.engines.rvc_engine import apply_rvc_to_segments
+        rvc_success = apply_rvc_to_segments(
+            input_wav_paths=temp_chunks,
+            output_wav_paths=rvc_temp_chunks,
+            model_path=args.rvc_model,
+            index_path=args.rvc_index,
+            pitch_shift=args.rvc_pitch
+        )
+        
+        if rvc_success:
+            # Step 4: Concatenate chunks back seamlessly (silence_duration=0.0)
+            from src.utils.audio import concatenate_wavs
+            print("Concatenating processed RVC chunks back together...")
+            # concatenate_wavs will delete rvc_temp_chunks
+            success = concatenate_wavs(rvc_temp_chunks, output_path, silence_duration=0.0)
+            
+            # Clean up the original input chunks
+            for p in temp_chunks:
+                if os.path.exists(p):
+                    try: os.remove(p)
+                    except OSError: pass
+                    
+            if success:
+                # Apply audio post-processing if successful
+                from src.utils.audio import apply_audio_post_processing
+                if args.normalize or args.fade_in > 0 or args.fade_out > 0:
+                    print(f"Applying post-processing (Normalize to LUFS: {args.target_lufs if args.normalize else 'No'}, Fade In: {args.fade_in}s, Fade Out: {args.fade_out}s)...")
+                    apply_audio_post_processing(
+                        output_path,
+                        target_lufs=args.target_lufs if args.normalize else None,
+                        fade_in_duration=args.fade_in,
+                        fade_out_duration=args.fade_out
+                    )
+                result["status"] = "SUCCESS"
+                print(f"SUCCESS: Audio saved to: {output_path}")
+            else:
+                print("Error: Failed to concatenate processed RVC chunks.", file=sys.stderr)
+                result["status"] = "FAILED (RVC Concat Error)"
+        else:
+            # Clean up all chunks on failure
+            for p in temp_chunks + rvc_temp_chunks:
+                if os.path.exists(p):
+                    try: os.remove(p)
+                    except OSError: pass
+            print("Error: RVC voice conversion failed.", file=sys.stderr)
+            result["status"] = "FAILED (RVC Error)"
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error processing audio file with RVC: {e}", file=sys.stderr)
+        result["status"] = "FAILED (Error)"
         
     elapsed = time.time() - start_time
     result["duration_s"] = elapsed
