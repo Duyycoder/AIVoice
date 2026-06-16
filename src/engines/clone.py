@@ -140,7 +140,9 @@ class CloneEngine(BaseTTSEngine):
                     language=lang,
                     gpt_cond_latent=self.gpt_cond_latent,
                     speaker_embedding=self.speaker_embedding,
-                    speed=speed
+                    speed=speed,
+                    temperature=0.65,      # Mặc định là 0.85. Giảm xuống 0.65 giúp AI bớt "ảo giác" và phát âm chắc chữ hơn.
+    repetition_penalty=2.0
                 )
                 
                 import soundfile as sf

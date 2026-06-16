@@ -44,6 +44,17 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
         print(f"Error reading input file '{input_path}': {e}", file=sys.stderr)
         return result
         
+    # Apply local AI text spicing if requested
+    if args.spice_text:
+        from src.utils.local_ai_spice import add_spice_to_text_local
+        print("Adding AI emotion/spice to raw text using local LLM...")
+        try:
+            raw_text = add_spice_to_text_local(raw_text, style="teu_tao", model_path=args.llm_model)
+        except Exception as e:
+            print(f"Error adding AI emotion/spice: {e}", file=sys.stderr)
+            result["status"] = "FAILED (AI Spice Error)"
+            return result
+        
     # Process text
     from src.utils.text import clean_markdown, chunk_text
     cleaned_text = clean_markdown(raw_text)
@@ -96,7 +107,8 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
     elif args.engine == "piper":
         max_workers = 6
     else: # edge
-        max_workers = 10
+        max_workers = 3
+
         
     success_map = {}
     
@@ -157,6 +169,25 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
         
         result["status"] = "SUCCESS"
         print(f"SUCCESS: Audio saved to: {output_path}")
+        
+        # Apply RVC voice conversion if model is specified
+        if args.rvc_model:
+            rvc_output_path = os.path.splitext(output_path)[0] + "_rvc.wav"
+            print("Applying RVC voice conversion (Voice-to-Voice)...")
+            from src.engines.rvc_engine import apply_rvc
+            rvc_success = apply_rvc(
+                input_wav_path=output_path,
+                output_wav_path=rvc_output_path,
+                model_path=args.rvc_model,
+                index_path=args.rvc_index,
+                pitch_shift=args.rvc_pitch
+            )
+            if rvc_success:
+                result["output"] = rvc_output_path
+                print(f"SUCCESS: RVC audio saved to: {rvc_output_path}")
+            else:
+                print("Error: RVC voice conversion failed.", file=sys.stderr)
+                result["status"] = "FAILED (RVC Error)"
     else:
         print(f"Error: Audio concatenation failed for '{input_path}'.", file=sys.stderr)
         
@@ -466,8 +497,66 @@ def run_interactive_wizard(config_data: dict) -> list[str]:
         if out_name != default_out_name:
             cmd_args.extend(["--output_name", out_name])
 
-    # 6. Advanced options
-    print("\n[6] Các thông số nâng cao (Ấn Enter để chọn giá trị mặc định):")
+    # 6. AI Emotion/Spice (Spice & Clone)
+    print("\n[6] Thêm cảm xúc/hài hước bằng AI (Spice & Clone):")
+    d_spice_text = config_data.get("spice_text", False)
+    spice_sel = input(f"  Bạn có muốn thêm cảm xúc/hóm hỉnh vào văn bản bằng LLM cục bộ không? (y/n) [Mặc định: {'y' if d_spice_text else 'n'}]: ").strip().lower()
+    
+    spice_choice = None
+    if spice_sel:
+        spice_choice = spice_sel in ["y", "yes", "true"]
+    
+    actual_spice = spice_choice if spice_choice is not None else d_spice_text
+    
+    if actual_spice:
+        if spice_choice is not None or d_spice_text:
+            cmd_args.append("--spice_text")
+        
+        d_llm_model = config_data.get("llm_model", "")
+        default_prompt = f" [Mặc định: {d_llm_model}]" if d_llm_model else ""
+        llm_model_sel = input(f"  Nhập đường dẫn đến file model GGUF{default_prompt}: ").strip()
+        llm_model_choice = llm_model_sel if llm_model_sel else d_llm_model
+        if llm_model_choice:
+            cmd_args.extend(["--llm_model", llm_model_choice])
+    else:
+        if spice_choice is not None:
+            cmd_args.append("--no-spice_text")
+
+    # 7. Voice-to-Voice (RVC) Post-Processing
+    print("\n[7] Hậu kỳ Voice-to-Voice (RVC):")
+    d_rvc_model = config_data.get("rvc_model", "")
+    rvc_sel = input(f"  Bạn có muốn áp dụng RVC để đổi giọng (Voice-to-Voice) không? (y/n) [Mặc định: {'y' if d_rvc_model else 'n'}]: ").strip().lower()
+    
+    rvc_choice = None
+    if rvc_sel:
+        rvc_choice = rvc_sel in ["y", "yes", "true"]
+        
+    actual_rvc = rvc_choice if rvc_choice is not None else bool(d_rvc_model)
+    
+    if actual_rvc:
+        # Prompt for RVC Model Path
+        default_prompt = f" [Mặc định: {d_rvc_model}]" if d_rvc_model else ""
+        rvc_model_sel = input(f"  Nhập đường dẫn file RVC (.pth){default_prompt}: ").strip()
+        rvc_model_choice = rvc_model_sel if rvc_model_sel else d_rvc_model
+        if rvc_model_choice:
+            cmd_args.extend(["--rvc_model", rvc_model_choice])
+            
+            # Prompt for RVC Index Path (optional)
+            d_rvc_index = config_data.get("rvc_index", "")
+            default_index_prompt = f" [Mặc định: {d_rvc_index}]" if d_rvc_index else ""
+            rvc_index_sel = input(f"  Nhập đường dẫn file RVC Index (.index - Tùy chọn){default_index_prompt}: ").strip()
+            rvc_index_choice = rvc_index_sel if rvc_index_sel else d_rvc_index
+            if rvc_index_choice:
+                cmd_args.extend(["--rvc_index", rvc_index_choice])
+                
+            # Prompt for Pitch Shift
+            d_rvc_pitch = config_data.get("rvc_pitch", 0)
+            rvc_pitch_sel = input(f"  Nhập thông số pitch shift (Số nguyên, mặc định: {d_rvc_pitch}): ").strip()
+            rvc_pitch_choice = int(rvc_pitch_sel) if rvc_pitch_sel else d_rvc_pitch
+            cmd_args.extend(["--rvc_pitch", str(rvc_pitch_choice)])
+            
+    # 8. Advanced options
+    print("\n[8] Các thông số nâng cao (Ấn Enter để chọn giá trị mặc định):")
     
     d_speed = config_data.get("speed", 1.0)
     speed_sel = input(f"  Tốc độ đọc (speed) [Mặc định: {d_speed}]: ").strip()
@@ -543,6 +632,11 @@ def main():
         sys.argv = run_interactive_wizard(config_data)
         
     # Set default values from configuration file
+    d_rvc_model = config_data.get("rvc_model", None)
+    d_rvc_index = config_data.get("rvc_index", None)
+    d_rvc_pitch = config_data.get("rvc_pitch", 0)
+    d_spice_text = config_data.get("spice_text", False)
+    d_llm_model = config_data.get("llm_model", None)
     d_engine = config_data.get("engine", None)
     d_model = config_data.get("model", None)
     d_ref_audio = config_data.get("ref_audio", "data/voices/ref_voice.wav")
@@ -651,15 +745,54 @@ def main():
         default=d_silence_duration,
         help="Silence duration in seconds between segments (default: 0.3)."
     )
+    parser.add_argument(
+        "--spice_text",
+        action=argparse.BooleanOptionalAction,
+        default=d_spice_text,
+        help="Enable/disable rewriting text with local AI emotion/spice."
+    )
+    parser.add_argument(
+        "--llm_model",
+        default=d_llm_model,
+        help="Path to the local GGUF LLM model."
+    )
+    parser.add_argument(
+        "--rvc_model",
+        default=d_rvc_model,
+        help="Path to the RVC .pth model file."
+    )
+    parser.add_argument(
+        "--rvc_index",
+        default=d_rvc_index,
+        help="Path to the RVC .index file (optional)."
+    )
+    parser.add_argument(
+        "--rvc_pitch",
+        type=int,
+        default=d_rvc_pitch,
+        help="Pitch shift for RVC (integer, default: 0)."
+    )
     
     args = parser.parse_args()
     
+    # In interactive mode, if the user chose not to enable RVC, ensure it is disabled
+    # despite any defaults defined in configs/default.json.
+    if is_interactive and "--rvc_model" not in sys.argv:
+        args.rvc_model = None
+        args.rvc_index = None
+        
     # Resolve relative paths to absolute paths early, so they remain valid
     # regardless of any working directory changes during processing.
     if args.ref_audio:
         args.ref_audio = os.path.abspath(args.ref_audio)
     if args.model:
         args.model = os.path.abspath(args.model)
+    if args.llm_model:
+        args.llm_model = os.path.abspath(args.llm_model)
+    if args.rvc_model:
+        args.rvc_model = os.path.abspath(args.rvc_model)
+    if args.rvc_index:
+        args.rvc_index = os.path.abspath(args.rvc_index)
     
     # Initialize Engine Plugin
     if args.engine == "piper":

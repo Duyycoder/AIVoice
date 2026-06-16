@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 import edge_tts
 from src.engines.base import BaseTTSEngine
 
@@ -32,10 +33,17 @@ class EdgeEngine(BaseTTSEngine):
                 communicate = edge_tts.Communicate(text, voice_name)
             await communicate.save(output_path)
             
-        try:
-            # Run the asynchronous edge_tts saving synchronously
-            asyncio.run(_save())
-            return True
-        except Exception as e:
-            print(f"EdgeEngine generation failed: {e}")
-            return False
+        # Try up to 3 times with a delay to handle transient rate-limiting or network resets
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Run the asynchronous edge_tts saving synchronously
+                asyncio.run(_save())
+                return True
+            except Exception as e:
+                print(f"EdgeEngine generation attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2.0)  # Wait 2 seconds before retrying
+                    
+        return False
+

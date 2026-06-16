@@ -1,13 +1,16 @@
 {
-  "engine": "clone",
+  "engine": "edge",
   "model": "models/xtts_v2",
   "ref_audio": "data/voices/ref_voice.wav",
   "speed": 1.0,
-  "voice": "en",
+  "voice": "vi-VN-NamMinhNeural",
   "phonemize": false,
   "normalize": true,
   "target_lufs": -14.0,
   "fade_in": 0.1,
   "fade_out": 0.1,
-  "silence_duration": 0.3
+  "silence_duration": 0.3,
+  "rvc_model": "models/rvc/ElevenLabs_Adam_FR.pth",
+  "rvc_index": "models/rvc/added_IVF4988_Flat_nprobe_1_ElevenLabs_Adam_FR_v2.index",
+  "rvc_pitch": 0
 }

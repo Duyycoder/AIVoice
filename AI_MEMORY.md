@@ -19,11 +19,13 @@ The system follows an Object-Oriented, Plugin-style architecture under `src/`.
 * **PiperEngine (`src/engines/piper.py`):** For fast, lightweight Vietnamese reading (e.g., `vi_VN-vais1000-medium` or `vi_VN-vivos-x_low`).
 * **CloneEngine (`src/engines/clone.py`):** For zero-shot voice cloning using XTTSv2 (Coqui TTS). Requires `--ref_audio`.
 * **EdgeEngine (`src/engines/edge.py`):** Microsoft Edge online TTS for high-quality cloud-generated Vietnamese voices.
+* **RVCEngine (`src/engines/rvc_engine.py`):** Retrieval-based Voice Conversion for Voice-to-Voice post-processing to convert synthesized voice to target voice.
 
 ## 4. Helper Modules
 * `src/utils/text.py`: Strips markdown and splits text into chunks.
 * `src/utils/audio.py`: Handles audio array concatenation, linear fade-in/fade-out, and LUFS normalization.
 * `src/utils/phoneme.py`: Converts Vietnamese text to IPA phonemes using `viphoneme` library.
+* `src/utils/local_ai_spice.py`: Rewrites the input text using a local GGUF LLM to inject emotion and humor (spicing) based on styles.
 
 ## 5. CLI Arguments (Customization Interface)
 The `main.py` exposes these arguments via `argparse`:

@@ -11,12 +11,16 @@ transformers>=4.36.0
 edge-tts>=7.2.8        # Microsoft Edge online TTS
 piper-tts>=1.2.0       # Piper offline ONNX TTS
 coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS
+llama-cpp-python>=0.2.77 # Local GGUF LLM text rewriting (Spice & Clone pipeline Step 1)
+
 
 # Audio File Manipulation & Digital Signal Processing
 soundfile>=0.12.1      # Read/write WAV files
 numpy>=1.24.0          # Numerical operations on audio arrays
 librosa>=0.10.0        # Audio feature analysis and processing
 pyloudnorm>=0.1.1      # LUFS volume normalization (required by src/utils/audio.py)
+rvc-python>=1.0.3      # Voice-to-voice translation (RVC) post-processing
+
 
 # General Utilities & CLI Helpers
 python-dotenv>=1.0.0   # Environment variables loading

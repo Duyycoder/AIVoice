@@ -14,8 +14,8 @@ AIVoice/
 ├── data/                  # User inputs, outputs, and voice templates
 ├── models/                # Local model checkpoints (ONNX, PyTorch)
 ├── src/                   # Source core logics
-│   ├── engines/           # TTS adapter plugins (Base, Edge, Piper, XTTSv2)
-│   └── utils/             # Helper libraries (audio processing, text normalization)
+│   ├── engines/           # TTS adapter plugins (Base, Edge, Piper, XTTSv2, RVC)
+│   └── utils/             # Helper libraries (audio processing, text normalization, local AI spice)
 ├── tests/                 # Isolated integration tests and test data
 └── main.py                # Single-point control wizard
 ```
@@ -25,9 +25,11 @@ AIVoice/
 * **`src/engines/edge.py`**: Leverages Microsoft Edge Neural TTS online web API.
 * **`src/engines/piper.py`**: Fast local CPU/GPU speech synthesis using Piper ONNX. Housed with both Python in-process synthesis and subprocess fallback.
 * **`src/engines/clone.py`**: Local zero-shot voice cloning using Coqui XTTSv2, optimized via PyTorch SDPA kernel context.
+* **`src/engines/rvc_engine.py`**: Retrieval-based Voice Conversion for Voice-to-Voice post-processing.
 * **`src/utils/text.py`**: Strips markdown formatting and divides long paragraphs into sentence chunks based on punctuation terminals.
 * **`src/utils/audio.py`**: Concatenates audio segments with adjustable silence spaces, normalizes volume to professional broadcast standard (e.g. -14 LUFS using BS.1770 meters), and applies linear fade-in/out to prevent pop noise.
 * **`src/utils/phoneme.py`**: Bypasses OS-compatibility issues on Windows to convert raw Vietnamese text into IPA phonemes via `viphoneme`.
+* **`src/utils/local_ai_spice.py`**: Rewrites input text using a local GGUF LLM to add humor/emotion based on a selected style.
 
 ---
 
