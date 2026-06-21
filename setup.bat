@@ -158,7 +158,7 @@ echo.
 :: 6. Install optional Vietnamese phoneme packages (requires Git)
 if !GIT_OK! equ 1 (
     echo ----------------------------------------------------------------------
-    echo [INFO] Dang cai dat thu vien phien am tieng Viet (viphoneme)...
+    echo [INFO] Dang cai dat thu vien phien am tieng Viet viphoneme...
     echo ----------------------------------------------------------------------
     .venv\Scripts\python.exe -m pip install git+https://github.com/vunb/viphoneme.git git+https://github.com/vunb/vinorm.git
     if %errorlevel% neq 0 (
