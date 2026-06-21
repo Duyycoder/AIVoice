@@ -10,8 +10,19 @@ transformers>=4.36.0
 # TTS Generation Engines
 edge-tts>=7.2.8        # Microsoft Edge online TTS
 piper-tts>=1.2.0       # Piper offline ONNX TTS
-coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS
 llama-cpp-python>=0.2.77 # Local GGUF LLM text rewriting (Spice & Clone pipeline Step 1)
+
+# Pure-python / prebuilt dependencies for Coqui XTTSv2 (which is vendored in libs/)
+anyascii
+einops
+inflect
+ko-speech-tools
+matplotlib
+num2words
+numba
+pysbd
+pyyaml
+scipy
 
 
 # Audio File Manipulation & Digital Signal Processing
