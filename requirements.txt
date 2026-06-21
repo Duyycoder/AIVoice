@@ -10,9 +10,11 @@ transformers>=4.36.0
 # TTS Generation Engines
 edge-tts>=7.2.8        # Microsoft Edge online TTS
 piper-tts>=1.2.0       # Piper offline ONNX TTS
-llama-cpp-python>=0.2.77 # Local GGUF LLM text rewriting (Spice & Clone pipeline Step 1)
+coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS (requires C++ compiler)
+llama-cpp-python==0.2.77 # Local GGUF LLM text rewriting (requires C++ compiler)
+rvc-python>=0.1.5      # Voice-to-voice translation (RVC) (requires C++ compiler)
 
-# Pure-python / prebuilt dependencies for Coqui XTTSv2 (which is vendored in libs/)
+# Pure-python / prebuilt dependencies for Coqui XTTSv2
 anyascii
 einops
 inflect
@@ -24,21 +26,17 @@ pysbd
 pyyaml
 scipy
 
-
 # Audio File Manipulation & Digital Signal Processing
 soundfile>=0.12.1      # Read/write WAV files
-numpy>=1.24.0          # Numerical operations on audio arrays
+numpy==1.23.5          # Numerical operations on audio arrays (resolves dependency conflicts)
 librosa>=0.10.0        # Audio feature analysis and processing
 pyloudnorm>=0.1.1      # LUFS volume normalization (required by src/utils/audio.py)
-rvc-python>=1.0.3      # Voice-to-voice translation (RVC) post-processing
-
 
 # General Utilities & CLI Helpers
 python-dotenv>=1.0.0   # Environment variables loading
 tqdm>=4.66.0           # CLI progress bars
 requests>=2.31.0       # Model download assistant (used in download_models.py)
 flask>=3.0.0           # Web UI server
-
 
 # Optional Dependencies (For Vietnamese phonemization support, see README)
 # git+https://github.com/vunb/viphoneme.git

@@ -53,18 +53,18 @@ AIVoice/
 │
 ├── tests/                 # [5. HỆ THỐNG KIỂM THỬ ĐỘC LẬP]
 │   ├── test_data/         # Dữ liệu đầu vào/đầu ra riêng phục vụ kiểm thử
-│   └── run_tests.py       # Tập lệnh chạy tự động 10 kịch bản kiểm thử toàn diện
+│   └── run_tests.py       # Tập lệnh chạy tự động 11 kịch bản kiểm thử toàn diện
 │
 ├── check_gpu.py           # Công cụ chẩn đoán khả năng tương thích GPU/CUDA và kiểm tra tính năng SDPA
 ├── download_models.py     # Tập lệnh tự động tải xuống các mô hình (Piper & XTTSv2) từ Hugging Face
 ├── main.py                # Điểm khởi chạy (Entry Point) của CLI và Wizard tương tác từng bước
-├── requirements.txt       # Danh sách thư viện và dependencies
+├── requirements.txt       # Danh sách thư viện và dependencies cài đặt qua pip
 └── plan.md                # Kế hoạch phát triển dự án và trạng thái hiện tại
 ```
 
 ---
 
-## 3. Các Giải Pháp Tối Ưu Hóa Tránh Tràn VRAM (OOM) Cho GPU 8GB (RTX 5060)
+## 3. Các Giải Giải Pháp Tối Ưu Hóa Tránh Tràn VRAM (OOM) Cho GPU 8GB (RTX 5060)
 
 Để hệ thống hoạt động ổn định trên card đồ họa **RTX 5060 (8GB VRAM)** hoặc thấp hơn (thậm chí là **6GB VRAM**), một số chiến lược tối ưu hóa bộ nhớ chuyên sâu đã được tích hợp trực tiếp vào thiết kế dự án:
 
@@ -129,90 +129,31 @@ AIVoice/
 
 ---
 
-## 5. Chi Tiết Các Tệp Tin Mã Nguồn Chính
+## 5. Hướng Dẫn Cài Đặt & Vận Hành Cho Máy Mới (Standard installation)
 
-### 5.1. Điểm Vào Điều Khiển - `main.py`
-Chứa các thành phần chính:
-* **Interactive Wizard Mode:** Nếu chạy không có tham số, nó sẽ quét các thư mục `data/inputs/`, `data/voices/` và `models/` để hiển thị menu lựa chọn thân thiện cho người dùng, sau đó sinh lệnh CLI và thực thi.
-* **CLI Parser:** Định nghĩa tất cả các tham số từ tốc độ, hiệu ứng âm thanh đến đường dẫn mô hình.
-* **Pipeline Orchestrator:** Liên kết các bước làm sạch văn bản -> phân đoạn câu -> sinh âm thanh từng phần -> ghép nối -> chuẩn hóa âm lượng LUFS -> hậu xử lý fade -> áp dụng RVC.
+Môi trường chạy sử dụng thư viện cài qua pip tiêu chuẩn. Các thư viện biên dịch C++ gốc (native extension) như `coqui-tts`, `llama-cpp-python` và `fairseq` sẽ được xây dựng ổn định tại chỗ thông qua trình biên dịch MSVC chính thức của Windows.
 
-### 5.2. Động Cơ Nhân Bản - `src/engines/clone.py`
-Tích hợp Coqui XTTSv2 cục bộ:
-* Chịu trách nhiệm khởi tạo lớp `TTS` từ đường dẫn cục bộ chỉ định (tránh kết nối internet).
-* Thực hiện patch tokenizer để hỗ trợ việc phân mảnh các từ tiếng Việt (`VoiceBpeTokenizer.preprocess_text` được sửa đổi để hỗ trợ mã ngôn ngữ `vi`).
-* Thực hiện sinh giọng nói và lưu kết quả ra tần số lấy mẫu chuẩn của XTTSv2 (24kHz).
+### 5.1. Quy Trình Cài Đặt Môi Trường Chi Tiết (4 Bước)
 
-### 5.3. Động Cơ Chuyển Đổi Giọng RVC - `src/engines/rvc_engine.py`
-Tích hợp thư viện `rvc-python`:
-* Hỗ trợ hai phương thức: `apply_rvc` cho một tệp đơn lẻ và `apply_rvc_to_segments` cho danh sách phân đoạn câu (giúp tối ưu hóa VRAM).
-* Sử dụng bộ dự đoán cao độ `rmvpe` chất lượng cao và hỗ trợ tham số dịch giọng (`pitch_shift`).
+#### **Bước 1: Cài đặt Python 3.11 (Tự động hoặc Thủ công)**
+* **Tự động:** Script **[setup.bat](file:///f:/programfiles/AIVoice/setup.bat)** sẽ tự động tải và cài đặt Python 3.11.9 nếu máy chưa có.
+* **Thủ công:** Tải Python 3.11 từ python.org và cài đặt (tích chọn "Add Python to PATH").
 
-### 5.4. Tiện Ích Hậu Xử Lý Âm Thanh - `src/utils/audio.py`
-* **`concatenate_wavs`:** Ghép nối các file WAV thô của các đoạn câu, tự động chèn khoảng lặng tĩnh (`silence_duration`) giữa các câu và thực hiện Peak Normalization lên mức 0.95 để tránh méo tiếng.
-* **`apply_audio_post_processing`:** Áp dụng thuật toán fade-in (tăng âm lượng đầu file từ 0.0 lên 1.0) và fade-out (giảm âm lượng cuối file về 0.0) tuyến tính. Đo lường và chuẩn hóa âm lượng tích hợp theo tiêu chuẩn phát thanh chuyên nghiệp **-14 LUFS** bằng thư viện `pyloudnorm`.
+#### **Bước 2: Cài đặt Microsoft C++ Build Tools (Bắt buộc)**
+* **Đường dẫn tải:** Truy cập [Microsoft Downloads](https://visualstudio.microsoft.com/downloads/) → mục "Tools for Visual Studio" → "Build Tools for Visual Studio 2022".
+* **Cách chọn Workload:** Khởi chạy installer, chọn **"Desktop development with C++"** rồi nhấn Install.
+* **Lưu ý:** Chỉ cần thực hiện 1 lần duy nhất trên máy mới, cài xong cần khởi động lại máy.
 
----
+#### **Bước 3: Cài đặt Git for Windows**
+* Hỗ trợ cài các thư viện ngữ âm trực tiếp từ Github. Tải tại [Git for Windows](https://git-scm.com/download/win).
 
-## 6. Hướng Dẫn Vận Hành & Chạy Thử (Dành Cho Claude Code)
+#### **Bước 4: Chạy file setup.bat để thiết lập tự động**
+* Bấm đúp file **[setup.bat](file:///f:/programfiles/AIVoice/setup.bat)**. Script tự động tạo môi trường ảo `.venv`, cấu hình pip 24.0, cài đặt dependencies trong `requirements.txt`, tải models và chạy diagnostics.
 
-### 6.1. Thiết Lập Môi Trường
-Mở PowerShell trong thư mục gốc của dự án:
-```powershell
-# Tạo và kích hoạt môi trường ảo
-python -m venv .venv
-.venv\Scripts\Activate.ps1
 
-# Cài đặt toàn bộ thư viện cần thiết
-pip install -r requirements.txt
-
-# Cài đặt thêm các thư viện ngữ âm tiếng Việt (tùy chọn nhưng khuyên dùng)
-pip install git+https://github.com/vunb/viphoneme.git
-pip install git+https://github.com/vunb/vinorm.git
-```
-
-### 6.2. Kiểm Trạng Thái GPU & CUDA
-Chạy file chẩn đoán để xác định trạng thái GPU và khả năng chạy SDPA:
-```powershell
-python check_gpu.py
-```
-
-### 6.3. Tải Trọng Số Mô HÌnh Cục Bộ
-Sử dụng script tải chuyên dụng để chuẩn bị sẵn các mô hình ngoại tuyến:
-```powershell
-# Tải tất cả các mô hình cần thiết (Piper & XTTSv2)
-python download_models.py --engine all
-```
-*Lưu ý: Mô hình LLM cục bộ (file `.gguf`) và mô hình RVC (file `.pth`/`.index`) cần được người dùng đặt thủ công vào đúng cấu trúc thư mục trong `models/llm/` và `models/rvc/`.*
-
-### 6.4. Chạy Bộ Kiểm Thử Tự Động (10 Kịch Bản)
-Chạy bộ kiểm thử tự động để xác nhận toàn bộ hệ thống hoạt động ổn định:
+### 5.2. Chạy Kiểm Thử Tự Động
+Chạy thử kịch bản kiểm thử toàn diện để xác nhận hệ thống hoạt động tốt:
 ```powershell
 python tests/run_tests.py
 ```
-Bộ kiểm thử sẽ kiểm tra độc lập các chức năng sinh giọng nói (Edge, Piper, XTTSv2 tiếng Việt, XTTSv2 tiếng Anh, Batch processing, Config override, RVC standalone, lỗi tham số đầu vào...).
-
----
-
-## 7. Các Lệnh Chạy CLI Thực Tế Tham Khảo
-
-1. **Sinh giọng nói bằng Edge-TTS (Online, nhanh):**
-   ```powershell
-   python main.py --input data/inputs/test_vi.md --engine edge --voice vi-VN-NamMinhNeural --speed 1.0
-   ```
-2. **Sinh giọng nói ngoại tuyến bằng Piper ONNX:**
-   ```powershell
-   python main.py --input data/inputs/test_vi.md --engine piper --model models/piper/vi_VN-vais1000-medium.onnx
-   ```
-3. **Sao chép giọng nói ngoại tuyến bằng XTTSv2:**
-   ```powershell
-   python main.py --input data/inputs/test_vi.md --engine clone --model models/xtts_v2 --ref_audio data/voices/ref_voice.wav --voice vi --phonemize
-   ```
-4. **Chạy trọn gói chuỗi xử lý (LLM viết lại + Edge sinh âm + RVC đổi giọng):**
-   ```powershell
-   python main.py --input data/inputs/test_vi.md --engine edge --voice vi-VN-NamMinhNeural --spice_text --llm_model models/llm/qwen2.5-1.5b-instruct-q4_k_m.gguf --rvc_model models/rvc/adam.pth --rvc_pitch 0
-   ```
-5. **Chạy đổi giọng trực tiếp cho file âm thanh bằng RVC:**
-   ```powershell
-   python main.py --input data/voices/ref_voice.wav --engine rvc --rvc_model models/rvc/ElevenLabs_Adam_FR.pth --rvc_index models/rvc/added_IVF4988_Flat_nprobe_1_ElevenLabs_Adam_FR_v2.index
-   ```
+Bộ kiểm thử sẽ kiểm tra độc lập tất cả 11 kịch bản và báo cáo kết quả.

@@ -72,22 +72,36 @@ AIVoice/
 * **Tối ưu phần cứng:** Dự án đã được tối ưu hóa cho card đồ họa thế hệ mới **RTX 5060 (8GB VRAM)** và tương thích ngược (RTX 30/40 series) thông qua chế độ FP16 Mixed Precision (giảm VRAM sử dụng xuống ~2GB) và tăng tốc TensorFloat-32 (TF32). Có cơ chế tự động chuyển đổi sang CPU nếu không có GPU rời.
 * **Python:** Phiên bản 3.10 hoặc 3.11.
 
-### 2. Tạo Môi Trường Ảo & Cài Đặt Thư Viện
-Mở PowerShell trong thư mục dự án và chạy các lệnh sau:
+### 2. Quy Trình Cài Đặt Môi Trường Chi Tiết (4 Bước)
 
-```powershell
-# Tạo môi trường ảo python
-python -m venv .venv
+Để hệ thống hoạt động ổn định trên máy mới, bạn cần thực hiện theo các bước chuẩn sau (lưu ý: Bước cài đặt Build Tools chỉ cần làm duy nhất 1 lần trên mỗi máy, không cần lặp lại khi clone lại dự án):
 
-# Kích hoạt môi trường ảo
-.venv\Scripts\Activate.ps1
+#### **Bước 1: Cài đặt Python 3.11 (Tự động hoặc Thủ công)**
+* **Tự động:** File **[setup.bat](file:///f:/programfiles/AIVoice/setup.bat)** sẽ tự động phát hiện và cài đặt ngầm Python 3.11.9 cho bạn nếu máy chưa có. Bạn không cần làm gì ở bước này.
+* **Thủ công (Nếu muốn):** Tải và cài đặt Python 3.11 từ trang chủ Python. Bắt buộc phải tích chọn ô **"Add Python to PATH"** khi chạy trình cài đặt.
 
-# Nâng cấp pip lên bản mới nhất
-python -m pip install --upgrade pip
+#### **Bước 2: Cài đặt Microsoft C++ Build Tools (Bắt buộc cho Clone & RVC)**
+* Vì động cơ Clone (XTTSv2) và RVC yêu cầu biên dịch mã nguồn C++ khi cài đặt, bạn cần cài đặt bộ biên dịch chính thức của Microsoft.
+* **Đường dẫn tải:** Truy cập [Microsoft Downloads](https://visualstudio.microsoft.com/downloads/) → cuộn xuống mục **"All Downloads"** → chọn **"Tools for Visual Studio"** → Tải xuống **"Build Tools for Visual Studio"**.
+* **Cách chọn Workload:** Khởi chạy installer, tích chọn ô **"Desktop development with C++"** (Phát triển ứng dụng Desktop với C++) rồi nhấn Install. Sau khi hoàn tất, hãy khởi động lại máy tính hoặc mở một cửa sổ Terminal mới.
 
-# Cài đặt các thư viện từ requirements.txt
-pip install -r requirements.txt
-```
+#### **Bước 3: Cài đặt Git for Windows**
+* Cài đặt Git nếu hệ thống chưa có để hỗ trợ quá trình tải trực tiếp các gói thư viện ngữ âm tiếng Việt từ GitHub.
+* **Đường dẫn tải:** [Git for Windows](https://git-scm.com/download/win).
+
+#### **Bước 4: Chạy file setup.bat để thiết lập tự động**
+* Kích hoạt Command Prompt (hoặc PowerShell) tại thư mục dự án trên máy mới.
+* Bấm đúp vào file **[setup.bat](file:///f:/programfiles/AIVoice/setup.bat)** (hoặc chạy lệnh `setup.bat` từ terminal).
+* Script sẽ tự động:
+  1. Khởi tạo môi trường ảo `.venv`.
+  2. Thiết lập đúng phiên bản pip tương thích (`pip 24.0`).
+  3. Cài đặt toàn bộ dependencies trong `requirements.txt`.
+  4. Cài đặt các gói ngữ âm tiếng Việt từ GitHub (nếu có Git).
+  5. Tải tự động các mô hình AI Piper & XTTSv2.
+  6. Chạy chẩn đoán GPU phần cứng CUDA.
+
+*(Gợi ý: Nếu bạn muốn chạy thủ công từng lệnh thay vì dùng file .bat, bạn cũng có thể mở PowerShell và chạy tuần tự các lệnh trong file [setup.bat](file:///f:/programfiles/AIVoice/setup.bat) một cách thủ công).*
+
 
 > [!TIP]
 > Nếu bạn muốn sử dụng tính năng phiên âm ngữ âm IPA tiếng Việt (`--phonemize`), hãy cài đặt thêm các thư viện ngữ âm tùy chọn sau:

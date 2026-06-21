@@ -1,6 +1,4 @@
 @echo off
-:: Set console to UTF-8 to display Vietnamese characters correctly
-chcp 65001 > nul
 setlocal enabledelayedexpansion
 
 echo ======================================================================
@@ -15,60 +13,81 @@ if %errorlevel% equ 0 (
     for /f "tokens=2" %%i in ('python --version') do (
         set py_ver=%%i
     )
-    echo Phát hiện Python version !py_ver! trong hệ thống (PATH).
+    echo [INFO] Phat hien Python !py_ver! trong PATH.
     if "!py_ver:~0,4!"=="3.11" (
         set PYTHON_EXE=python
         goto :python_ok
     ) else (
-        echo Cảnh báo: AIVoice yêu cầu Python 3.11 để tương thích với các thư viện đã build sẵn.
-        echo Phiên bản hiện tại (!py_ver!) có thể gây lỗi.
+        echo [WARNING] AIVoice yeu cau Python 3.11.
     )
+)
+
+:: Check via Python Launcher (py -3.11)
+py -3.11 -c "import sys" >nul 2>&1
+if %errorlevel% equ 0 (
+    for /f "delims=" %%i in ('py -3.11 -c "import sys; print(sys.executable)"') do (
+        set PYTHON_EXE="%%i"
+    )
+    echo [INFO] Tim thay Python 3.11 thong qua Python Launcher tai: !PYTHON_EXE!
+    goto :python_ok
 )
 
 :: Check if installed in default Local AppData folder for User
 set LOCAL_PY_EXE="%LocalAppData%\Programs\Python\Python311\python.exe"
 if exist %LOCAL_PY_EXE% (
     set PYTHON_EXE=%LOCAL_PY_EXE%
-    echo Tìm thấy Python 3.11 được cài đặt tại: %LOCAL_PY_EXE%
+    echo [INFO] Tim thay Python 3.11 tai: %LOCAL_PY_EXE%
+    goto :python_ok
+)
+
+:: Check in default Program Files (for all users installation)
+set SYSTEM_PY_EXE="%ProgramFiles%\Python311\python.exe"
+if exist %SYSTEM_PY_EXE% (
+    set PYTHON_EXE=%SYSTEM_PY_EXE%
+    echo [INFO] Tim thay Python 3.11 tai: %SYSTEM_PY_EXE%
     goto :python_ok
 )
 
 :: If Python 3.11 is not found, download and install it silently
 echo.
 echo ----------------------------------------------------------------------
-echo Không tìm thấy Python 3.11 trên máy tính này.
-echo Hệ thống sẽ tự động tải xuống Python 3.11.9 từ python.org...
+echo [INFO] Khong tim thay Python 3.11 tren may tinh nay.
+echo Dang tu dong tai xuong Python 3.11.9 tu python.org...
 echo ----------------------------------------------------------------------
 echo.
 
 :: Download Python 3.11.9 Installer
 curl -L -o python-3.11.9-amd64.exe https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
 if %errorlevel% neq 0 (
-    echo [LỖI] Tải xuống Python thất bại. Vui lòng kiểm tra lại kết nối internet.
+    echo [ERROR] Tai xuong Python that bai. Vui long kiem tra ket noi mang.
     pause
     exit /b 1
 )
 
-echo Đang cài đặt Python 3.11.9 ở chế độ chạy ngầm (Silent Mode)...
-echo Quá trình cài đặt diễn ra trong khoảng 1-2 phút, vui lòng đợi...
+echo [INFO] Dang cai dat Python 3.11.9 chay ngam (Silent Mode)...
+echo Vui long cho 1-2 phut...
 start /wait python-3.11.9-amd64.exe /quiet PrependPath=1 Include_test=0
 del python-3.11.9-amd64.exe
 
 :: Verify silent install
 if exist %LOCAL_PY_EXE% (
     set PYTHON_EXE=%LOCAL_PY_EXE%
-    echo Cài đặt Python 3.11.9 thành công!
+    echo [INFO] Cai dat Python 3.11.9 thanh cong!
+    goto :python_ok
+) else if exist %SYSTEM_PY_EXE% (
+    set PYTHON_EXE=%SYSTEM_PY_EXE%
+    echo [INFO] Cai dat Python 3.11.9 thanh cong!
     goto :python_ok
 ) else (
-    echo [LỖI] Cài đặt Python tự động thất bại hoặc được cài ở thư mục không mặc định.
-    echo Vui lòng tải và cài đặt Python 3.11.9 thủ công từ: https://www.python.org/downloads/
-    echo Lưu ý: Hãy tích chọn ô "Add Python to PATH" khi cài đặt thủ công.
+    echo [ERROR] Cai dat Python tu dong that bai.
+    echo Vui long tai va cai dat Python 3.11.9 thu cong tu: https://www.python.org/downloads/
+    echo Nho tich chon "Add Python to PATH" khi cai dat.
     pause
     exit /b 1
 )
 
 :python_ok
-echo Sử dụng đường dẫn Python: %PYTHON_EXE%
+echo [INFO] Su dung Python: %PYTHON_EXE%
 echo.
 
 :: 2. Check Git installation
@@ -76,85 +95,86 @@ set GIT_OK=0
 git --version >nul 2>&1
 if %errorlevel% equ 0 (
     set GIT_OK=1
-    echo Phát hiện Git đã được cài đặt.
+    echo [INFO] Phat hien Git da duoc cai dat.
 ) else (
-    echo Cảnh báo: Không tìm thấy Git trong hệ thống.
-    echo Hệ thống sẽ bỏ qua việc cài đặt các gói ngữ âm tiếng Việt từ GitHub.
-    echo Dự án vẫn hoạt động tốt, tính năng XTTSv2 Clone sẽ tự động chuyển sang đọc văn bản gốc.
+    echo [WARNING] Khong tim thay Git. Se bo qua cai dat phien am tu Github.
 )
 echo.
 
 :: 3. Create virtual environment (.venv)
 echo ----------------------------------------------------------------------
-echo Đang khởi tạo môi trường ảo (.venv)...
+echo [INFO] Dang khoi tao moi truong ao (.venv)...
 echo ----------------------------------------------------------------------
 if not exist .venv (
     %PYTHON_EXE% -m venv .venv
     if %errorlevel% neq 0 (
-        echo [LỖI] Khởi tạo môi trường ảo thất bại.
+        echo [ERROR] Khoi tao .venv that bai.
         pause
         exit /b 1
     )
-    echo Khởi tạo .venv thành công.
+    echo [INFO] Khoi tao .venv thanh cong.
 ) else (
-    echo Thư mục .venv đã tồn tại. Bỏ qua bước khởi tạo.
+    echo [INFO] Thu muc .venv da ton tai.
 )
 echo.
 
-:: 4. Install libraries
+:: 4. Install pip 24.0 (Required to bypass omegaconf metadata error)
 echo ----------------------------------------------------------------------
-echo Đang cài đặt các thư viện Python (requirements.txt)...
+echo [INFO] Dang thiet lap pip phien ban thich hop (pip 24.0)...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install "pip==24.0"
 if %errorlevel% neq 0 (
-    echo [LỖI] Nâng cấp pip thất bại.
+    echo [WARNING] Cai dat pip 24.0 that bai.
 )
+echo.
 
+:: 5. Install libraries
+echo ----------------------------------------------------------------------
+echo [INFO] Dang cai dat cac thu vien Python (requirements.txt)...
+echo ----------------------------------------------------------------------
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 if %errorlevel% neq 0 (
-    echo [LỖI] Cài đặt thư viện thất bại.
+    echo [ERROR] Cai dat thu vien that bai.
     pause
     exit /b 1
 )
-echo Cài đặt các thư viện trong requirements.txt thành công.
+echo [INFO] Cai dat thu vien thanh cong.
 echo.
 
-:: 5. Install optional Vietnamese phoneme packages (requires Git)
+:: 6. Install optional Vietnamese phoneme packages (requires Git)
 if !GIT_OK! equ 1 (
     echo ----------------------------------------------------------------------
-    echo Đang cài đặt thư viện hỗ trợ phiên âm ngữ âm tiếng Việt (viphoneme)...
+    echo [INFO] Dang cai dat thu vien phien am tieng Viet (viphoneme)...
     echo ----------------------------------------------------------------------
     .venv\Scripts\python.exe -m pip install git+https://github.com/vunb/viphoneme.git git+https://github.com/vunb/vinorm.git
     if %errorlevel% neq 0 (
-        echo [CẢNH BÁO] Cài đặt thư viện phiên âm từ GitHub thất bại.
-        echo Hệ thống sẽ tự động sử dụng văn bản gốc khi chạy XTTSv2.
+        echo [WARNING] Cai dat thu vien phien am tu GitHub that bai.
     ) else (
-        echo Cài đặt thư viện phiên âm viphoneme thành công.
+        echo [INFO] Cai dat thu vien phien am thanh cong.
     )
     echo.
 )
 
-:: 6. Download model weights
+:: 7. Download model weights
 echo ----------------------------------------------------------------------
-echo Đang tiến hành tải trọng số mô hình AI (Piper & XTTSv2)...
+echo [INFO] Dang tai trong so mo hinh AI (Piper & XTTSv2)...
 echo ----------------------------------------------------------------------
 .venv\Scripts\python.exe download_models.py --engine all
 if %errorlevel% neq 0 (
-    echo [LỖI] Quá trình tải mô hình bị gián đoạn. Bạn có thể tự chạy lệnh:
-    echo ".venv\Scripts\python.exe download_models.py --engine all" sau để thử lại.
+    echo [WARNING] Qua trinh tai mo hinh bi gian doan.
 )
 echo.
 
-:: 7. Hardware & GPU Diagnostic
+:: 8. Hardware & GPU Diagnostic
 echo ----------------------------------------------------------------------
-echo Đang tiến hành chẩn đoán phần cứng (GPU CUDA)...
+echo [INFO] Dang tien hanh chan doan GPU CUDA...
 echo ----------------------------------------------------------------------
 .venv\Scripts\python.exe check_gpu.py
 echo.
 
 echo ======================================================================
-echo THIẾT LẬP THÀNH CÔNG! Dự án AIVoice đã sẵn sàng hoạt động.
-echo Để khởi chạy giao diện Wizard tương tác, hãy gõ lệnh:
+echo THIET LAP THANH CONG! AIVoice da san sang hoat dong.
+echo Chay ung dung bang lenh:
 echo.
 echo     .venv\Scripts\python.exe main.py
 echo.

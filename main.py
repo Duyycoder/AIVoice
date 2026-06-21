@@ -6,11 +6,6 @@ import time
 import glob
 import json
 
-# Add local libs directory to sys.path to support offline engines without compilation/build tools
-libs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "libs")
-if os.path.exists(libs_path):
-    sys.path.insert(0, libs_path)
-
 # Add PyTorch's bundled CUDA/cuDNN DLLs to Windows DLL search path
 # so that onnxruntime-gpu can find them without system-wide CUDA installation.
 if sys.platform == "win32":
