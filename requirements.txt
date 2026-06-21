@@ -26,6 +26,8 @@ rvc-python>=1.0.3      # Voice-to-voice translation (RVC) post-processing
 python-dotenv>=1.0.0   # Environment variables loading
 tqdm>=4.66.0           # CLI progress bars
 requests>=2.31.0       # Model download assistant (used in download_models.py)
+flask>=3.0.0           # Web UI server
+
 
 # Optional Dependencies (For Vietnamese phonemization support, see README)
 # git+https://github.com/vunb/viphoneme.git

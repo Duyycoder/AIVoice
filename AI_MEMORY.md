@@ -1,47 +1,39 @@
 # AI ARCHITECTURE MEMORY & RULEBOOK
-**Project:** Single-Speaker Local Vietnamese TTS Framework (Extensible CLI-Driven)
-**Goal:** A modular, offline-first TTS engine tailored for Vietnamese, supporting plug-and-play engines (Piper TTS, XTTSv2, Edge-TTS) and controllable via CLI, following Clean Architecture principles.
+**Project:** Single-Speaker Local Vietnamese TTS Framework (Extensible CLI & Web UI)
+**Target Hardware:** Optimized for RTX 5060 (8GB VRAM) and fully compatible down to RTX 3060 (6GB VRAM) / Fallback CPU.
 
 ## 1. Core Principles (DO NOT VIOLATE)
 * **Virtual Environment:** The project MUST use a Python virtual environment (`.venv`).
 * **Offline First:** Models must run locally. Do NOT use Hugging Face auto-downloads during inference.
-* **Memory Efficiency:** Use PyTorch >= 2.1.1 SDPA natively. DO NOT include `flash-attn` in `requirements.txt`.
-* **Chunking is Mandatory:** Long text must be chunked by sentences/punctuation before passing to any engine to prevent OOM errors on 6GB VRAM.
-* **Dynamic Naming:** Output audio files MUST take the base name of the input `.md` file.
-* **Clean Architecture Layout:** All logic goes in `src/`, config files in `configs/`, models in `models/`, user files in `data/`, and test assets in `tests/test_data/`.
+* **FP16 Mixed Precision (Autocast):** Coqui XTTSv2 uses `torch.amp.autocast` on GPU. Output is safely cast back to `float32` before writing to `soundfile`.
+* **Zero-Reload In-Memory Fallback:** If FP16 inference fails or yields NaNs, the system automatically falls back to FP32 in-memory for that chunk only (no disk reloading).
+* **TF32 Matmul Acceleration:** Enable `matmul.allow_tf32 = True` and `cudnn.allow_tf32 = True` globally once at startup if CUDA is active.
+* **VRAM Serialization (Locking):** Flask backend must serialize GPU inference calls via a global `threading.Lock()` to prevent concurrent VRAM OOM.
+* **Path Security & Sanitization:** Absolute external paths are allowed, but writing to critical system directories (`C:\Windows`, `C:\Program Files`) and project code/weight folders (`src/`, `models/`, `.venv/`, `.git/`, `configs/`, `tests/`) is strictly blocked.
+* **Chunking Limit:** Text chunking limit (`max_words`) is set to `50` to improve prosody on modern GPUs while keeping VRAM safe.
+* **Launchers:** Location-independent `.bat` files (`chay_giao_dien.bat`, `kiem_tra_gpu.bat`, `chay_kiem_thu.bat`) resolve the project root (`F:\programfiles\AIVoice`) if moved or run from the Desktop.
 
-## 2. Global System Architecture
-The system follows an Object-Oriented, Plugin-style architecture under `src/`.
-* `src/engines/base.py`: Contains the abstract class `BaseTTSEngine` with the method `generate(self, text: str, output_path: str, **kwargs) -> bool`.
-* `main.py`: The CLI controller (using `argparse`). Routes to the correct engine class.
+## 2. Global System Layout
+All logic goes in `src/`, config files in `configs/`, models in `models/`, user files in `data/`, templates in `templates/`, and test assets in `tests/test_data/`.
+* `src/engines/base.py`: Declares abstract TTS engine plugin interfaces.
+* `main.py`: Command Line Interface controller (with argparse).
+* `web_ui.py`: Flask Web application backend.
 
 ## 3. The Engines
-* **PiperEngine (`src/engines/piper.py`):** For fast, lightweight Vietnamese reading (e.g., `vi_VN-vais1000-medium` or `vi_VN-vivos-x_low`).
-* **CloneEngine (`src/engines/clone.py`):** For zero-shot voice cloning using XTTSv2 (Coqui TTS). Requires `--ref_audio`.
-* **EdgeEngine (`src/engines/edge.py`):** Microsoft Edge online TTS for high-quality cloud-generated Vietnamese voices.
-* **RVCEngine (`src/engines/rvc_engine.py`):** Retrieval-based Voice Conversion for Voice-to-Voice post-processing, or used as a standalone engine (`rvc`) to convert existing audio recordings directly.
+* **PiperEngine (`src/engines/piper.py`):** Fast local ONNX synthesis. Supports CPU/GPU via onnxruntime execution providers.
+* **CloneEngine (`src/engines/clone.py`):** Coqui XTTSv2 voice cloning. Integrates SDPA context, FP16 autocast, and zero-reload FP32 fallback.
+* **EdgeEngine (`src/engines/edge.py`):** Microsoft Edge cloud neural TTS wrapper.
+* **RVCEngine (`src/engines/rvc_engine.py`):** Voice-to-Voice RVC post-processing. Accepts custom `device` argument.
 
 ## 4. Helper Modules
-* `src/utils/text.py`: Strips markdown and splits text into chunks.
-* `src/utils/audio.py`: Handles audio array concatenation, linear fade-in/fade-out, and LUFS normalization.
-* `src/utils/phoneme.py`: Converts Vietnamese text to IPA phonemes using `viphoneme` library.
-* `src/utils/local_ai_spice.py`: Rewrites the input text using a local GGUF LLM to inject emotion and humor (spicing) based on styles.
+* `src/utils/text.py`: Clean markdown, chunk paragraphs into 50-word punctuation-bound segments.
+* `src/utils/audio.py`: Concatenate arrays, apply linear fade-in/out, target LUFS volume normalization.
+* `src/utils/phoneme.py`: IPA phoneme translation using local `viphoneme`.
+* `src/utils/local_ai_spice.py`: Rewrite text styles using Qwen GGUF.
 
-## 5. CLI Arguments (Customization Interface)
-The `main.py` exposes these arguments via `argparse`:
-* `--input`: Path to the input `.md` or `.txt` file (or audio file `.mp3`, `.wav`, etc. when using the `rvc` engine).
-* `--input_dir`: Path to input directory for batch processing (or directory with audio files when using the `rvc` engine).
-* `--engine`: Selection of the engine (`piper`, `clone`, `edge`, `rvc`).
-* `--model`: Local path to specific model weights (e.g., `models/piper/vi_VN-vais1000-medium.onnx`).
-* `--speed`: Float value to control speech rate (e.g., `1.0`, `1.2`).
-* `--voice`: Name of the voice (e.g., `vi-VN-NamMinhNeural` or lang code `vi`, `en`).
-* `--ref_audio`: Path to the reference `.wav` file (for CloneEngine, defaults to `data/voices/ref_voice.wav`).
-* `--config`: Path to customization configuration file (defaults to `configs/default.json`).
-* `--output_dir`: Path to base output folder (defaults to `data/outputs`).
-* `--output_name`: Custom filename for output audio file.
-* `--phonemize` / `--no-phonemize`: Enable/disable IPA phoneme translation.
-* `--normalize` / `--no-normalize`: Enable/disable LUFS volume normalization.
-* `--target_lufs`: Target LUFS value (defaults to `-14.0`).
-* `--fade_in`: Duration of linear fade-in (defaults to `0.1`s).
-* `--fade_out`: Duration of linear fade-out (defaults to `0.1`s).
-* `--silence_duration`: Silence gap between chunks (defaults to `0.3`s).
+## 5. Web UI Features & Endpoints
+* `/`: Serves modern glassmorphism SPA.
+* `/api/generate`: Runs background thread generation with serialization lock and logging queues.
+* `/api/diagnose`: Runs GPU check health tool.
+* `/api/models` / `/api/voices`: Discovery APIs for local models and cloud voices.
+* `/api/audio`: Serves generated wav files securely.

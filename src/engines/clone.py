@@ -26,7 +26,15 @@ class CloneEngine(BaseTTSEngine):
         if not os.path.exists(model_p):
             raise FileNotFoundError(f"XTTSv2 model directory not found at: {model_p}")
             
-        if not self.tts or model_p != self.model_path:
+        # Check device override ("cpu" vs "cuda")
+        device_opt = kwargs.get("device") or "cuda"
+        gpu = torch.cuda.is_available() and (device_opt != "cpu")
+        
+        # Track device change to trigger model reload if necessary
+        if not hasattr(self, "_active_gpu"):
+            self._active_gpu = None
+            
+        if not self.tts or model_p != self.model_path or gpu != self._active_gpu:
             # Monkeypatch torchaudio.load and torchaudio.save to bypass torchcodec/FFmpeg DLL issues
             import torchaudio
             import soundfile as sf
@@ -63,9 +71,6 @@ class CloneEngine(BaseTTSEngine):
             # Lazy loading of TTS class and loading the model weights
             from TTS.api import TTS
             
-            # Check GPU availability
-            gpu = torch.cuda.is_available()
-            
             print(f"Loading local XTTSv2 model from: {model_p} (Using GPU: {gpu})")
             
             # Load the model locally. Pass the folder path containing model.pth and other files as model_path,
@@ -82,6 +87,7 @@ class CloneEngine(BaseTTSEngine):
                 torch.load = orig_load
                 
             self.model_path = model_p
+            self._active_gpu = gpu
             
         ref_audio = kwargs.get("ref_audio")
         if not ref_audio:
@@ -100,7 +106,14 @@ class CloneEngine(BaseTTSEngine):
             lang = "en"
             
         speed = kwargs.get("speed", 1.0)
+        use_fp16 = kwargs.get("use_fp16", True) and gpu
+        use_tf32 = kwargs.get("use_tf32", True) and gpu
         
+        # Apply local TF32 settings
+        if gpu:
+            torch.backends.cuda.matmul.allow_tf32 = use_tf32
+            torch.backends.cudnn.allow_tf32 = use_tf32
+            
         # Ensure output directory exists
         out_dir = os.path.dirname(output_path)
         if out_dir:
@@ -108,7 +121,6 @@ class CloneEngine(BaseTTSEngine):
             
         try:
             import contextlib
-            gpu = torch.cuda.is_available()
             
             # Use torch's native SDPA context manager for efficient GPU inference if GPU is available
             if gpu:
@@ -121,35 +133,95 @@ class CloneEngine(BaseTTSEngine):
                 sdpa_context = contextlib.nullcontext()
                 
             with sdpa_context:
-                # Cache speaker latents/embeddings to speed up inference significantly
                 abs_ref = os.path.abspath(ref_audio)
+                model = self.tts.synthesizer.tts_model
+                
+                # Cache speaker latents/embeddings to speed up inference significantly
                 if (self.current_ref_audio != abs_ref or 
                     self.gpt_cond_latent is None or 
                     self.speaker_embedding is None):
                     
                     print(f"Computing speaker latents for reference audio: {ref_audio}")
-                    model = self.tts.synthesizer.tts_model
+                    # Always compute latents in standard float32 precision
+                    model.float()
                     gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(audio_path=abs_ref)
                     self.gpt_cond_latent = gpt_cond_latent
                     self.speaker_embedding = speaker_embedding
                     self.current_ref_audio = abs_ref
                 
-                # Perform fast direct inference
-                out = self.tts.synthesizer.tts_model.inference(
-                    text=text,
-                    language=lang,
-                    gpt_cond_latent=self.gpt_cond_latent,
-                    speaker_embedding=self.speaker_embedding,
-                    speed=speed,
-                    temperature=0.65,      # Mặc định là 0.85. Giảm xuống 0.65 giúp AI bớt "ảo giác" và phát âm chắc chữ hơn.
-    repetition_penalty=2.0
-                )
+                run_fp16 = use_fp16
+                try:
+                    if run_fp16:
+                        # Use dynamic PyTorch mixed precision (autocast) which is stable and avoids mismatch errors
+                        autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.float16)
+                    else:
+                        autocast_ctx = contextlib.nullcontext()
+                        
+                    # Model and inputs remain in Float32, autocast handles downcasting internally
+                    model.float()
+                    gpt_cond = self.gpt_cond_latent.float()
+                    spk_emb = self.speaker_embedding.float()
+                    
+                    with autocast_ctx:
+                        # Perform fast inference
+                        out = model.inference(
+                            text=text,
+                            language=lang,
+                            gpt_cond_latent=gpt_cond,
+                            speaker_embedding=spk_emb,
+                            speed=speed,
+                            temperature=0.65,
+                            repetition_penalty=2.0
+                        )
+                    
+                    wav = out['wav']
+                    if isinstance(wav, torch.Tensor):
+                        wav_cpu = wav.cpu().numpy()
+                    else:
+                        wav_cpu = wav
+                        
+                    # NaN and Inf checking
+                    import numpy as np
+                    has_nan = np.isnan(wav_cpu).any() or np.isinf(wav_cpu).any()
+                    
+                    if has_nan and run_fp16:
+                        print("Warning: NaN or Inf detected in FP16 output! Reverting to FP32 in-memory...")
+                        raise ValueError("FP16 NaN/Inf output detected.")
+                        
+                except Exception as e:
+                    if run_fp16:
+                        print(f"FP16 autocast failed/NaN ({e}). Retrying chunk in FP32 fallback...")
+                        
+                        out = model.inference(
+                            text=text,
+                            language=lang,
+                            gpt_cond_latent=self.gpt_cond_latent.float(),
+                            speaker_embedding=self.speaker_embedding.float(),
+                            speed=speed,
+                            temperature=0.65,
+                            repetition_penalty=2.0
+                        )
+                        wav = out['wav']
+                    else:
+                        raise e
                 
                 import soundfile as sf
-                wav = out['wav']
                 if isinstance(wav, torch.Tensor):
                     wav = wav.cpu().numpy()
+                # soundfile does not support float16, cast to float32 if needed
+                import numpy as np
+                if wav.dtype == np.float16:
+                    wav = wav.astype(np.float32)
                 sf.write(output_path, wav, 24000) # XTTSv2 sample rate is 24000Hz
+                
+                # Aggressive VRAM cleaning for RTX 3060 and CPU profiles
+                profile_opt = kwargs.get("hardware_profile") or "rtx3060"
+                if not gpu or profile_opt == "rtx3060":
+                    import gc
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        print("Aggressively cleared CUDA VRAM after chunk processing.")
                 
             return True
         except Exception as e:

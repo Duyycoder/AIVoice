@@ -25,9 +25,17 @@ __pycache__/
 # Data outputs (generated audio files)
 data/outputs/
 
+# Test outputs
+tests/test_data/outputs/
+
 # Large Model weights (ONNX, PyTorch weights, etc.)
 models/
 
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Temporary scratch scripts
+scratch/
+scratch_*.py
+

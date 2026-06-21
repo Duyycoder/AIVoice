@@ -27,7 +27,7 @@ def clean_markdown(text: str) -> str:
     
     return text.strip()
 
-def chunk_text(text: str, max_words: int = 30) -> list[str]:
+def chunk_text(text: str, max_words: int = 50) -> list[str]:
     """Splits plain text into manageable sentence/punctuation-bound chunks.
     
     If a sentence is longer than max_words, it is split on commas or spaces
@@ -35,6 +35,9 @@ def chunk_text(text: str, max_words: int = 30) -> list[str]:
     
     Short sentences are merged together within the same line (paragraph)
     to improve prosody and voice quality, and to speed up processing.
+    
+    Note: Optimized default of 50 words works well on >= 6GB/8GB VRAM
+    enabling richer speech flow/intonation in XTTSv2.
     """
     if not text:
         return []

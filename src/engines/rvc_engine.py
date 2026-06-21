@@ -60,7 +60,7 @@ def patched_get_field(cls, name, type, kw_only):
 dataclasses._get_field = patched_get_field
 
 
-def apply_rvc(input_wav_path: str, output_wav_path: str, model_path: str, index_path: str = None, pitch_shift: int = 0) -> bool:
+def apply_rvc(input_wav_path: str, output_wav_path: str, model_path: str, index_path: str = None, pitch_shift: int = 0, device: str = None) -> bool:
     """
     Applies RVC (Retrieval-based Voice Conversion) to the input audio file
     to convert the voice and saves it to output_wav_path.
@@ -82,7 +82,9 @@ def apply_rvc(input_wav_path: str, output_wav_path: str, model_path: str, index_
         # Dynamic import of RVCInference class
         from rvc_python.infer import RVCInference
         
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        if device is None:
+            device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            
         print(f"Running RVC voice conversion on device: {device}...")
         print(f"  Input: {input_wav_path}")
         print(f"  Output: {output_wav_path}")
@@ -137,7 +139,8 @@ def apply_rvc_to_segments(
     output_wav_paths: list[str], 
     model_path: str, 
     index_path: str = None, 
-    pitch_shift: int = 0
+    pitch_shift: int = 0,
+    device: str = None
 ) -> bool:
     """
     Applies RVC (Retrieval-based Voice Conversion) to a list of segment files 
@@ -160,7 +163,9 @@ def apply_rvc_to_segments(
         # Dynamic import of RVCInference class
         from rvc_python.infer import RVCInference
         
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        if device is None:
+            device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            
         print(f"Running RVC voice conversion on device: {device} for {len(input_wav_paths)} segments...")
         print(f"  Model: {model_path}")
         if index_path:

@@ -58,7 +58,7 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
     # Process text
     from src.utils.text import clean_markdown, chunk_text
     cleaned_text = clean_markdown(raw_text)
-    chunks = chunk_text(cleaned_text)
+    chunks = chunk_text(cleaned_text, max_words=getattr(args, "max_words", 50))
     
     if not chunks:
         print(f"Warning: No text content found after cleaning '{input_path}'. Skipping.")
@@ -98,6 +98,10 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
             kwargs["voice"] = args.voice
         if args.ref_audio:
             kwargs["ref_audio"] = args.ref_audio
+        kwargs["use_fp16"] = getattr(args, "use_fp16", True)
+        kwargs["use_tf32"] = getattr(args, "use_tf32", True)
+        kwargs["device"] = getattr(args, "device", "cuda")
+        kwargs["hardware_profile"] = getattr(args, "hardware_profile", "rtx3060")
             
         tasks.append((idx, chunk, temp_path, kwargs))
         
@@ -173,7 +177,8 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
             output_wav_paths=rvc_temp_files,
             model_path=args.rvc_model,
             index_path=args.rvc_index,
-            pitch_shift=args.rvc_pitch
+            pitch_shift=args.rvc_pitch,
+            device="cuda:0" if getattr(args, "device", "cuda") == "cuda" else "cpu"
         )
         
         if rvc_success:
@@ -238,6 +243,18 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
         
     elapsed = time.time() - start_time
     result["duration_s"] = elapsed
+    
+    # VRAM and Garbage collection cleanup
+    try:
+        import torch
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            print("CUDA VRAM cleared after file processing.")
+    except Exception:
+        pass
+        
     return result
 
 
@@ -287,7 +304,8 @@ def process_single_audio_rvc(input_path: str, output_path: str, args) -> dict:
             output_wav_paths=rvc_temp_chunks,
             model_path=args.rvc_model,
             index_path=args.rvc_index,
-            pitch_shift=args.rvc_pitch
+            pitch_shift=args.rvc_pitch,
+            device="cuda:0" if getattr(args, "device", "cuda") == "cuda" else "cpu"
         )
         
         if rvc_success:
@@ -933,6 +951,11 @@ def main():
     d_fade_in = config_data.get("fade_in", 0.1)
     d_fade_out = config_data.get("fade_out", 0.1)
     d_silence_duration = config_data.get("silence_duration", 0.3)
+    d_use_fp16 = config_data.get("use_fp16", True)
+    d_use_tf32 = config_data.get("use_tf32", True)
+    d_device = config_data.get("device", "cuda")
+    d_max_words = config_data.get("max_words", 50)
+    d_hardware_profile = config_data.get("hardware_profile", "rtx3060")
 
     parser = argparse.ArgumentParser(
         description="Extensible Single-Speaker Vietnamese TTS Framework"
@@ -1057,8 +1080,58 @@ def main():
         default=d_rvc_pitch,
         help="Pitch shift for RVC (integer, default: 0)."
     )
+    parser.add_argument(
+        "--use_fp16",
+        action=argparse.BooleanOptionalAction,
+        default=d_use_fp16,
+        help="Enable/disable FP16 half precision for GPU models."
+    )
+    parser.add_argument(
+        "--use_tf32",
+        action=argparse.BooleanOptionalAction,
+        default=d_use_tf32,
+        help="Enable/disable TensorFloat32 (TF32) for GPU models."
+    )
+    parser.add_argument(
+        "--device",
+        choices=["cuda", "cpu"],
+        default=d_device,
+        help="Target hardware device (cuda or cpu)."
+    )
+    parser.add_argument(
+        "--max_words",
+        type=int,
+        default=d_max_words,
+        help="Maximum number of words per text chunk."
+    )
+    parser.add_argument(
+        "--hardware_profile",
+        choices=["rtx5060", "rtx3060", "cpu"],
+        default=d_hardware_profile,
+        help="Hardware profile optimization choice."
+    )
     
     args = parser.parse_args()
+    
+    # Initialize TF32 settings early based on user options
+    if getattr(args, "use_tf32", True):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                print("PyTorch TensorFloat-32 (TF32) acceleration globally enabled.")
+        except ImportError:
+            pass
+    else:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.backends.cuda.matmul.allow_tf32 = False
+                torch.backends.cudnn.allow_tf32 = False
+                print("PyTorch TensorFloat-32 (TF32) globally disabled.")
+        except ImportError:
+            pass
     
     # In interactive mode, if the user chose not to enable RVC, ensure it is disabled
     # despite any defaults defined in configs/default.json.
