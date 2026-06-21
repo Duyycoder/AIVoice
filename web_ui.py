@@ -2,6 +2,43 @@ import os
 import sys
 import gc
 import json
+import dataclasses
+
+# Monkey-patch dataclasses._get_field to bypass Python 3.11 mutable default checks in fairseq/hydra
+original_get_field = dataclasses._get_field
+
+def patched_get_field(cls, name, type, kw_only):
+    try:
+        return original_get_field(cls, name, type, kw_only)
+    except ValueError as e:
+        if "mutable default" in str(e):
+            val = cls.__dict__.get(name, dataclasses.MISSING)
+            default_val = val.default if isinstance(val, dataclasses.Field) else val
+            if default_val is not dataclasses.MISSING and default_val is not None:
+                cls_attr = default_val.__class__
+                try:
+                    cls_attr.__hash__ = lambda self: 0
+                    return original_get_field(cls, name, type, kw_only)
+                except TypeError:
+                    pass
+            original_val = getattr(cls, name, dataclasses.MISSING)
+            try:
+                setattr(cls, name, None)
+                f = original_get_field(cls, name, type, kw_only)
+                if isinstance(original_val, dataclasses.Field):
+                    f.default = original_val.default
+                    f.default_factory = original_val.default_factory
+                else:
+                    f.default = original_val
+                setattr(cls, name, original_val)
+                return f
+            except Exception:
+                if original_val is not dataclasses.MISSING:
+                    setattr(cls, name, original_val)
+                raise
+        raise
+
+dataclasses._get_field = patched_get_field
 import time
 import glob
 import asyncio

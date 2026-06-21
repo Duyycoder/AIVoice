@@ -1,18 +1,39 @@
 # ==============================================================================
 # AIVoice TTS Framework Dependencies
 # ==============================================================================
+# DEPENDENCY RESOLUTION NOTES:
+# - coqui-tts>=0.27.5 requires numpy>=1.26.0
+# - rvc-python 0.1.5 declares numpy<=1.23.5 (overly restrictive, works at runtime with >=1.26)
+# - To resolve: rvc-python is installed with --no-deps in setup.bat,
+#   and its actual runtime dependencies are listed explicitly below.
+# ==============================================================================
 
 # Core Machine Learning & Deep Learning Libraries
-torch>=2.1.1
-torchaudio>=2.1.1
-transformers>=4.36.0
+torch>=2.1.1,<2.6.0
+torchaudio>=2.1.1,<2.6.0
+transformers>=4.57,<5.0
 
 # TTS Generation Engines
 edge-tts>=7.2.8        # Microsoft Edge online TTS
 piper-tts>=1.2.0       # Piper offline ONNX TTS
 coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS (requires C++ compiler)
 llama-cpp-python==0.2.77 # Local GGUF LLM text rewriting (requires C++ compiler)
-rvc-python>=0.1.5      # Voice-to-voice translation (RVC) (requires C++ compiler)
+# NOTE: rvc-python>=0.1.5 is installed separately with --no-deps in setup.bat
+#       because it declares numpy<=1.23.5 which conflicts with coqui-tts.
+
+# Runtime dependencies of rvc-python (installed explicitly instead of via --no-deps)
+fairseq==0.12.2        # Required by rvc-python (requires C++ compiler)
+faiss-cpu==1.7.3       # Required by rvc-python
+praat-parselmouth>=0.4.2 # Required by rvc-python
+pyworld                # Required by rvc-python
+torchcrepe             # Required by rvc-python
+av                     # Required by rvc-python
+ffmpeg-python          # Required by rvc-python
+loguru                 # Required by rvc-python
+fastapi                # Required by rvc-python
+pydantic               # Required by rvc-python
+python-multipart       # Required by rvc-python
+uvicorn                # Required by rvc-python
 
 # Pure-python / prebuilt dependencies for Coqui XTTSv2
 anyascii
@@ -28,7 +49,7 @@ scipy
 
 # Audio File Manipulation & Digital Signal Processing
 soundfile>=0.12.1      # Read/write WAV files
-numpy==1.23.5          # Numerical operations on audio arrays (resolves dependency conflicts)
+numpy>=1.26.0,<2.0.0   # Pinned range: >=1.26.0 for coqui-tts, <2.0 to avoid ABI breaks
 librosa>=0.10.0        # Audio feature analysis and processing
 pyloudnorm>=0.1.1      # LUFS volume normalization (required by src/utils/audio.py)
 

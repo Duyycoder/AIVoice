@@ -141,6 +141,20 @@ if %errorlevel% neq 0 (
 echo [INFO] Cai dat thu vien thanh cong.
 echo.
 
+:: 5b. Install rvc-python separately with --no-deps
+::     (rvc-python declares numpy<=1.23.5 which conflicts with coqui-tts's numpy>=1.26.0)
+::     Its runtime dependencies are already installed via requirements.txt above.
+echo ----------------------------------------------------------------------
+echo [INFO] Dang cai dat rvc-python (--no-deps, tranh xung dot numpy)...
+echo ----------------------------------------------------------------------
+.venv\Scripts\python.exe -m pip install rvc-python>=0.1.5 --no-deps
+if %errorlevel% neq 0 (
+    echo [WARNING] Cai dat rvc-python that bai.
+) else (
+    echo [INFO] Cai dat rvc-python thanh cong.
+)
+echo.
+
 :: 6. Install optional Vietnamese phoneme packages (requires Git)
 if !GIT_OK! equ 1 (
     echo ----------------------------------------------------------------------
