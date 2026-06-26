@@ -1,31 +1,34 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
-pushd "%~dp0"
-set "PROJ_DIR=%cd%"
-popd
+rem -- Xac dinh thu muc du an (luon lay thu muc chua file bat nay) --
+set "PROJ_DIR=%~dp0"
+rem Xoa dau \ o cuoi
+if "%PROJ_DIR:~-1%"=="\" set "PROJ_DIR=%PROJ_DIR:~0,-1%"
 
+cd /d "%PROJ_DIR%"
+
+echo ============================================================
+echo   AIVoice - Web UI
+echo   Thu muc: %PROJ_DIR%
+echo ============================================================
+echo.
+
+rem -- Kiem tra moi truong ao --
 if not exist "%PROJ_DIR%\.venv\Scripts\python.exe" (
-    set "PROJ_DIR=F:\programfiles\AIVoice"
-)
-
-echo ============================================================
-echo  AIVoice - Starting Web UI
-echo  Project Directory: !PROJ_DIR!
-echo ============================================================
-
-if not exist "!PROJ_DIR!\.venv\Scripts\python.exe" (
-    echo [ERROR] Virtual environment not found at: !PROJ_DIR!\.venv
-    echo Please check your project path.
+    echo [LOI] Khong tim thay .venv\Scripts\python.exe
+    echo Vui long chay setup truoc.
     pause
     exit /b 1
 )
 
-cd /d "!PROJ_DIR!"
+echo [*] Dang khoi dong server...
+echo [*] Trinh duyet se tu dong mo khi server san sang.
+echo [*] Dung dong cua so nay khi dang su dung.
+echo.
 
-rem Start browser in background after 2 seconds delay
-start /b cmd /c "timeout /t 2 > nul && start http://127.0.0.1:5000"
+"%PROJ_DIR%\.venv\Scripts\python.exe" "%PROJ_DIR%\web_ui.py"
 
-rem Start Flask server
-.venv\Scripts\python.exe web_ui.py
+echo.
+echo [!] Server da dung. Nhan phim bat ky de dong.
 pause

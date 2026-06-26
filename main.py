@@ -1,7 +1,13 @@
 import argparse
 import os
-import sys
 import tempfile
+import sys
+# Redirect temp files to F drive to prevent C drive overloading/stutter
+custom_temp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "temp")
+os.makedirs(custom_temp, exist_ok=True)
+os.environ["TEMP"] = custom_temp
+os.environ["TMP"] = custom_temp
+tempfile.tempdir = custom_temp
 import dataclasses
 
 # Monkey-patch dataclasses._get_field to bypass Python 3.11 mutable default checks in fairseq/hydra
@@ -39,6 +45,25 @@ def patched_get_field(cls, name, type, kw_only):
         raise
 
 dataclasses._get_field = patched_get_field
+
+# Monkey-patch transformers & TTS to bypass torchcodec requirements under PyTorch 2.9+ on Windows
+try:
+    import transformers.utils.import_utils
+    transformers.utils.import_utils.is_torchcodec_available = lambda: True
+except Exception:
+    pass
+
+try:
+    import TTS.tts.datasets.dataset
+    import torchaudio
+    def patched_get_audio_size(audiopath):
+        if not isinstance(audiopath, str):
+            audiopath = str(audiopath)
+        return torchaudio.info(audiopath).num_frames
+    TTS.tts.datasets.dataset.get_audio_size = patched_get_audio_size
+except Exception:
+    pass
+
 import time
 import glob
 import json
@@ -139,6 +164,17 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
         kwargs["use_tf32"] = getattr(args, "use_tf32", True)
         kwargs["device"] = getattr(args, "device", "cuda")
         kwargs["hardware_profile"] = getattr(args, "hardware_profile", "rtx3060")
+        
+        # Pass clone quality settings
+        kwargs["clone_temperature"] = getattr(args, "clone_temperature", 0.75)
+        kwargs["clone_repetition_penalty"] = getattr(args, "clone_repetition_penalty", 10.0)
+        kwargs["clone_top_k"] = getattr(args, "clone_top_k", 50)
+        kwargs["clone_top_p"] = getattr(args, "clone_top_p", 0.85)
+        kwargs["clone_length_penalty"] = getattr(args, "clone_length_penalty", 1.0)
+        kwargs["clone_gpt_cond_len"] = getattr(args, "clone_gpt_cond_len", 30)
+        kwargs["clone_gpt_cond_chunk_len"] = getattr(args, "clone_gpt_cond_chunk_len", 4)
+        kwargs["clone_sound_norm_refs"] = getattr(args, "clone_sound_norm_refs", True)
+        kwargs["clone_librosa_trim_db"] = getattr(args, "clone_librosa_trim_db", 30)
             
         tasks.append((idx, chunk, temp_path, kwargs))
         
@@ -157,6 +193,13 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
         idx, chunk, temp_path, kwargs = task
         preview_text = chunk[:40].replace('\n', ' ')
         try:
+            # Introduce a small staggered delay to prevent multiple threads hitting the online API simultaneously
+            if args.engine == "edge":
+                import random
+                # Stagger delay: e.g. thread 0 starts immediately, thread 1 waits 0.4s, thread 2 waits 0.8s, plus a tiny random jitter
+                stagger_delay = (idx % max_workers) * 0.4 + random.uniform(0.0, 0.2)
+                time.sleep(stagger_delay)
+                
             success = engine.generate(chunk, temp_path, **kwargs)
             if success:
                 print(f" -> Generated segment {idx+1}/{len(chunks)}: '{preview_text}...'")
@@ -993,6 +1036,15 @@ def main():
     d_device = config_data.get("device", "cuda")
     d_max_words = config_data.get("max_words", 50)
     d_hardware_profile = config_data.get("hardware_profile", "rtx3060")
+    d_clone_temp = config_data.get("clone_temperature", 0.75)
+    d_clone_rep_penalty = config_data.get("clone_repetition_penalty", 10.0)
+    d_clone_top_k = config_data.get("clone_top_k", 50)
+    d_clone_top_p = config_data.get("clone_top_p", 0.85)
+    d_clone_len_penalty = config_data.get("clone_length_penalty", 1.0)
+    d_clone_gpt_cond_len = config_data.get("clone_gpt_cond_len", 30)
+    d_clone_gpt_cond_chunk_len = config_data.get("clone_gpt_cond_chunk_len", 4)
+    d_clone_sound_norm_refs = config_data.get("clone_sound_norm_refs", True)
+    d_clone_librosa_trim_db = config_data.get("clone_librosa_trim_db", None)
 
     parser = argparse.ArgumentParser(
         description="Extensible Single-Speaker Vietnamese TTS Framework"
@@ -1146,6 +1198,60 @@ def main():
         choices=["rtx5060", "rtx3060", "cpu"],
         default=d_hardware_profile,
         help="Hardware profile optimization choice."
+    )
+    parser.add_argument(
+        "--clone_temperature",
+        type=float,
+        default=d_clone_temp,
+        help="Inference temperature for voice cloning (default: 0.75)."
+    )
+    parser.add_argument(
+        "--clone_repetition_penalty",
+        type=float,
+        default=d_clone_rep_penalty,
+        help="Inference repetition penalty for voice cloning (default: 10.0)."
+    )
+    parser.add_argument(
+        "--clone_top_k",
+        type=int,
+        default=d_clone_top_k,
+        help="Inference top_k for voice cloning (default: 50)."
+    )
+    parser.add_argument(
+        "--clone_top_p",
+        type=float,
+        default=d_clone_top_p,
+        help="Inference top_p for nucleus sampling (default: 0.85)."
+    )
+    parser.add_argument(
+        "--clone_length_penalty",
+        type=float,
+        default=d_clone_len_penalty,
+        help="Inference length penalty for voice cloning (default: 1.0)."
+    )
+    parser.add_argument(
+        "--clone_gpt_cond_len",
+        type=int,
+        default=d_clone_gpt_cond_len,
+        help="Audio duration (seconds) used for speaker conditioning latents (default: 30)."
+    )
+    parser.add_argument(
+        "--clone_gpt_cond_chunk_len",
+        type=int,
+        default=d_clone_gpt_cond_chunk_len,
+        help="Chunk duration (seconds) for computing conditioning latents (default: 4)."
+    )
+    parser.add_argument(
+        "--clone_sound_norm_refs",
+        action=argparse.BooleanOptionalAction,
+        default=d_clone_sound_norm_refs,
+        help="Normalize reference audio volume before extraction (default: True)."
+    )
+    parser.add_argument(
+        "--clone_librosa_trim_db",
+        type=int,
+        default=d_clone_librosa_trim_db,
+        help="Trim silence from reference audio using this decibel threshold (default: None)."
     )
     
     args = parser.parse_args()

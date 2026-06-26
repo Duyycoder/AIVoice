@@ -33,17 +33,30 @@ class EdgeEngine(BaseTTSEngine):
                 communicate = edge_tts.Communicate(text, voice_name)
             await communicate.save(output_path)
             
-        # Try up to 3 times with a delay to handle transient rate-limiting or network resets
-        max_retries = 3
+        # Try up to 5 times with exponential backoff to handle rate-limiting or network resets
+        max_retries = 5
         for attempt in range(max_retries):
             try:
                 # Run the asynchronous edge_tts saving synchronously
                 asyncio.run(_save())
-                return True
+                
+                # Check if the output file was successfully created and has content
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    return True
+                else:
+                    raise ValueError("Output audio file is missing or empty.")
             except Exception as e:
                 print(f"EdgeEngine generation attempt {attempt + 1}/{max_retries} failed: {e}")
+                # Remove empty or invalid file if it was created
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
                 if attempt < max_retries - 1:
-                    time.sleep(2.0)  # Wait 2 seconds before retrying
+                    backoff_time = [2.0, 5.0, 10.0, 15.0][attempt]
+                    print(f"Rate limit or connection issue. Waiting {backoff_time}s before retry...")
+                    time.sleep(backoff_time)
                     
         return False
 

@@ -58,8 +58,13 @@ AIVoice/
 ├── check_gpu.py           # Công cụ chẩn đoán khả năng tương thích GPU/CUDA và kiểm tra tính năng SDPA
 ├── download_models.py     # Tập lệnh tự động tải xuống các mô hình (Piper & XTTSv2) từ Hugging Face
 ├── main.py                # Điểm khởi chạy (Entry Point) của CLI và Wizard tương tác từng bước
+├── web_ui.py              # Giao diện Web UI (Flask-based SPA với phong cách Glassmorphism)
 ├── requirements.txt       # Danh sách thư viện và dependencies cài đặt qua pip
-└── plan.md                # Kế hoạch phát triển dự án và trạng thái hiện tại
+├── plan.md                # Kế hoạch phát triển dự án và trạng thái hiện tại
+├── HUONG_DAN_SU_DUNG.md   # Hướng dẫn sử dụng tiếng Việt chi tiết cho Web UI & sửa lỗi RVC/phomie
+├── chay_giao_dien.bat     # Tập lệnh khởi chạy nhanh máy chủ Web UI cục bộ
+├── chay_kiem_thu.bat      # Tập lệnh chạy nhanh bộ kiểm thử tích hợp (tests suite)
+└── kiem_tra_gpu.bat       # Tập lệnh chạy nhanh chẩn đoán GPU/CUDA
 ```
 
 ---

@@ -8,6 +8,8 @@
 #   and its actual runtime dependencies are listed explicitly below.
 # ==============================================================================
 
+--extra-index-url https://download.pytorch.org/whl/cu121
+
 # Core Machine Learning & Deep Learning Libraries
 torch>=2.1.1,<2.6.0
 torchaudio>=2.1.1,<2.6.0
@@ -62,3 +64,9 @@ flask>=3.0.0           # Web UI server
 # Optional Dependencies (For Vietnamese phonemization support, see README)
 # git+https://github.com/vunb/viphoneme.git
 # git+https://github.com/vunb/vinorm.git
+
+# MediaComposer Integration Dependencies
+moviepy==2.2.1
+faster-whisper==1.2.1
+openai
+streamlit

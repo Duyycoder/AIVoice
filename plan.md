@@ -51,10 +51,11 @@ AIVoice/
   - [x] Group python source files inside `src/`.
   - [x] Create global `data/` folder and `configs/` folder.
   - [x] Update imports, local relative checks, and test runner configurations.
+  - [x] Create a detailed Vietnamese user manual ([HUONG_DAN_SU_DUNG.md](file:///f:/programfiles/AIVoice/HUONG_DAN_SU_DUNG.md)) for Web UI setup and troubleshooting RVC & phomie.
 - [ ] **Phase 5: Future Enhancements (Roadmap)**
   - [ ] Add Multi-Speaker Markdown script parser (splitting text into dialogues by speaker names).
   - [ ] Implement support for batch processing multi-speaker scripts.
-  - [ ] Provide web GUI interface (Gradio or Next.js local server).
+  - [x] Provide web GUI interface (implemented as a Flask-based local server with a modern glassmorphism SPA interface in [web_ui.py](file:///f:/programfiles/AIVoice/web_ui.py)).
 
 ---
 

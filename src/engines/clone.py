@@ -59,9 +59,10 @@ class CloneEngine(BaseTTSEngine):
                 orig_preprocess_text = VoiceBpeTokenizer.preprocess_text
                 
                 def patched_preprocess_text(self, txt, lang):
-                    if lang == "vi":
-                        from TTS.tts.utils.text.cleaners import basic_cleaners
-                        return basic_cleaners(txt)
+                    orig_lang = getattr(self, "original_language", lang)
+                    if orig_lang == "vi":
+                        from src.utils.text import vietnamese_cleaners
+                        return vietnamese_cleaners(txt)
                     return orig_preprocess_text(self, txt, lang)
                     
                 VoiceBpeTokenizer.preprocess_text = patched_preprocess_text
@@ -93,11 +94,24 @@ class CloneEngine(BaseTTSEngine):
         if not ref_audio:
             raise ValueError("Reference audio path (--ref_audio) is required for CloneEngine.")
             
-        if not os.path.exists(ref_audio):
-            raise FileNotFoundError(f"Reference audio file not found at: {ref_audio}")
+        # Support multiple references separated by ; or ,
+        ref_audios = []
+        if isinstance(ref_audio, list):
+            ref_audios = ref_audio
+        elif ";" in ref_audio:
+            ref_audios = [r.strip() for r in ref_audio.split(";") if r.strip()]
+        elif "," in ref_audio:
+            ref_audios = [r.strip() for r in ref_audio.split(",") if r.strip()]
+        else:
+            ref_audios = [ref_audio]
+
+        for r_audio in ref_audios:
+            if not os.path.exists(r_audio):
+                raise FileNotFoundError(f"Reference audio file not found at: {r_audio}")
             
         # Map the CLI --voice parameter to the target language code, defaulting to 'en'
         lang = kwargs.get("voice") or "en"
+        original_lang = lang
         
         # Check if the language is supported by XTTSv2, otherwise fallback to 'en'
         supported_langs = getattr(self.tts, "languages", [])
@@ -119,6 +133,49 @@ class CloneEngine(BaseTTSEngine):
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
             
+        # Extract voice conditioning quality parameters
+        gpt_cond_len = kwargs.get("clone_gpt_cond_len", kwargs.get("gpt_cond_len", 30))
+        gpt_cond_chunk_len = kwargs.get("clone_gpt_cond_chunk_len", kwargs.get("gpt_cond_chunk_len", 4))
+        max_ref_length = kwargs.get("clone_max_ref_length", kwargs.get("max_ref_length", 60))
+        sound_norm_refs = kwargs.get("clone_sound_norm_refs", kwargs.get("sound_norm_refs", True))
+        librosa_trim_db = kwargs.get("clone_librosa_trim_db", kwargs.get("librosa_trim_db", None))
+        
+        if librosa_trim_db == 0 or librosa_trim_db is False or librosa_trim_db == "None" or librosa_trim_db is None:
+            librosa_trim_db = None
+        else:
+            try:
+                librosa_trim_db = int(librosa_trim_db)
+            except (ValueError, TypeError):
+                librosa_trim_db = None
+                
+        try:
+            gpt_cond_len = int(gpt_cond_len)
+            gpt_cond_chunk_len = int(gpt_cond_chunk_len)
+            max_ref_length = int(max_ref_length)
+            sound_norm_refs = bool(sound_norm_refs)
+        except (ValueError, TypeError):
+            pass
+
+        # Extract inference parameters
+        temp = kwargs.get("clone_temperature", kwargs.get("temperature", 0.75))
+        rep_penalty = kwargs.get("clone_repetition_penalty", kwargs.get("repetition_penalty", 10.0))
+        top_k = kwargs.get("clone_top_k", kwargs.get("top_k", 50))
+        top_p = kwargs.get("clone_top_p", kwargs.get("top_p", 0.85))
+        len_penalty = kwargs.get("clone_length_penalty", kwargs.get("length_penalty", 1.0))
+        
+        try:
+            temp = float(temp)
+            rep_penalty = float(rep_penalty)
+            top_k = int(top_k)
+            top_p = float(top_p)
+            len_penalty = float(len_penalty)
+        except (ValueError, TypeError):
+            temp = 0.75
+            rep_penalty = 10.0
+            top_k = 50
+            top_p = 0.85
+            len_penalty = 1.0
+
         try:
             import contextlib
             
@@ -133,21 +190,36 @@ class CloneEngine(BaseTTSEngine):
                 sdpa_context = contextlib.nullcontext()
                 
             with sdpa_context:
-                abs_ref = os.path.abspath(ref_audio)
+                abs_refs = [os.path.abspath(r) for r in ref_audios]
                 model = self.tts.synthesizer.tts_model
+                if hasattr(model, "tokenizer"):
+                    model.tokenizer.original_language = original_lang
                 
                 # Cache speaker latents/embeddings to speed up inference significantly
-                if (self.current_ref_audio != abs_ref or 
+                if (getattr(self, "current_ref_audio", None) != tuple(abs_refs) or 
                     self.gpt_cond_latent is None or 
                     self.speaker_embedding is None):
                     
-                    print(f"Computing speaker latents for reference audio: {ref_audio}")
+                    print(f"Computing speaker latents for reference audio: {ref_audios} (gpt_cond_len={gpt_cond_len}, gpt_cond_chunk_len={gpt_cond_chunk_len})")
                     # Always compute latents in standard float32 precision
                     model.float()
-                    gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(audio_path=abs_ref)
+                    
+                    gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(
+                        audio_path=abs_refs if len(abs_refs) > 1 else abs_refs[0],
+                        gpt_cond_len=gpt_cond_len,
+                        gpt_cond_chunk_len=gpt_cond_chunk_len,
+                        max_ref_length=max_ref_length,
+                        sound_norm_refs=sound_norm_refs,
+                        librosa_trim_db=librosa_trim_db
+                    )
                     self.gpt_cond_latent = gpt_cond_latent
                     self.speaker_embedding = speaker_embedding
-                    self.current_ref_audio = abs_ref
+                    self.current_ref_audio = tuple(abs_refs)
+                
+                # Safety check for Vietnamese character limit to prevent CUDA assertion crash
+                if original_lang == "vi" and len(text) > 248:
+                    print(f"[CloneEngine Safety] Text length ({len(text)} chars) exceeds XTTSv2 limit of 250 characters for Vietnamese. Truncating to 240 characters to prevent CUDA crash.")
+                    text = text[:240]
                 
                 run_fp16 = use_fp16
                 try:
@@ -163,15 +235,18 @@ class CloneEngine(BaseTTSEngine):
                     spk_emb = self.speaker_embedding.float()
                     
                     with autocast_ctx:
-                        # Perform fast inference
+                        # Perform fast inference with quality params
                         out = model.inference(
                             text=text,
                             language=lang,
                             gpt_cond_latent=gpt_cond,
                             speaker_embedding=spk_emb,
                             speed=speed,
-                            temperature=0.65,
-                            repetition_penalty=2.0
+                            temperature=temp,
+                            repetition_penalty=rep_penalty,
+                            top_k=top_k,
+                            top_p=top_p,
+                            length_penalty=len_penalty
                         )
                     
                     wav = out['wav']
@@ -198,8 +273,11 @@ class CloneEngine(BaseTTSEngine):
                             gpt_cond_latent=self.gpt_cond_latent.float(),
                             speaker_embedding=self.speaker_embedding.float(),
                             speed=speed,
-                            temperature=0.65,
-                            repetition_penalty=2.0
+                            temperature=temp,
+                            repetition_penalty=rep_penalty,
+                            top_k=top_k,
+                            top_p=top_p,
+                            length_penalty=len_penalty
                         )
                         wav = out['wav']
                     else:
@@ -225,5 +303,7 @@ class CloneEngine(BaseTTSEngine):
                 
             return True
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"CloneEngine voice cloning failed: {e}")
             return False

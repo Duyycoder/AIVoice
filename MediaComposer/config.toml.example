@@ -1,0 +1,14 @@
+[app]
+pexels_api_keys = "YOUR_PEXELS_API_KEY"
+pixabay_api_keys = []
+coverr_api_keys = []
+openai_api_key = "YOUR_GEMINI_API_KEY"
+openai_base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+openai_model = "gemini-2.0-flash"
+llm_provider = "Google Gemini"
+video_codec = "h264_nvenc"
+
+[whisper]
+model_size = "medium"
+device = "cuda"
+compute_type = "float32"

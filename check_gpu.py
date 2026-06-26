@@ -26,7 +26,8 @@ def main():
         print("\n⚠️  CUDA is NOT available.")
         print("   PyTorch is running in CPU-only mode.")
         print("\n   To fix this, reinstall PyTorch with CUDA support:")
-        print("   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126")
+        print("   - For RTX 30/40 Series (standard): pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121")
+        print("   - For RTX 50 Series (Blackwell):   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128")
         sys.exit(0)
     
     # 3. CUDA version

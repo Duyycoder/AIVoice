@@ -1,5 +1,12 @@
 import os
+import tempfile
 import sys
+# Redirect temp files to F drive to prevent C drive overloading/stutter
+custom_temp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "temp")
+os.makedirs(custom_temp, exist_ok=True)
+os.environ["TEMP"] = custom_temp
+os.environ["TMP"] = custom_temp
+tempfile.tempdir = custom_temp
 import gc
 import json
 import dataclasses
@@ -39,6 +46,25 @@ def patched_get_field(cls, name, type, kw_only):
         raise
 
 dataclasses._get_field = patched_get_field
+
+# Monkey-patch transformers & TTS to bypass torchcodec requirements under PyTorch 2.9+ on Windows
+try:
+    import transformers.utils.import_utils
+    transformers.utils.import_utils.is_torchcodec_available = lambda: True
+except Exception:
+    pass
+
+try:
+    import TTS.tts.datasets.dataset
+    import torchaudio
+    def patched_get_audio_size(audiopath):
+        if not isinstance(audiopath, str):
+            audiopath = str(audiopath)
+        return torchaudio.info(audiopath).num_frames
+    TTS.tts.datasets.dataset.get_audio_size = patched_get_audio_size
+except Exception:
+    pass
+
 import time
 import glob
 import asyncio
@@ -145,10 +171,13 @@ def open_file_dialog_subprocess() -> str:
     cmd = [
         sys.executable,
         "-c",
-        "import tkinter as tk; from tkinter import filedialog; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); print(filedialog.askopenfilename(title='Chọn tệp tin đầu vào (.md, .txt)', filetypes=[('Văn bản / Markdown', '*.md;*.txt')])); root.destroy()"
+        "import sys; sys.stdout.reconfigure(encoding='utf-8'); import tkinter as tk; from tkinter import filedialog; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); print(filedialog.askopenfilename(title='Chọn tệp tin đầu vào (.md, .txt)', filetypes=[('Văn bản / Markdown', '*.md;*.txt')])); root.destroy()"
     ]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+        if res.returncode != 0:
+            print(f"[DIALOG ERROR] Subprocess exited with code {res.returncode}")
+            print(f"[DIALOG ERROR] Stderr: {res.stderr}")
         return res.stdout.strip()
     except Exception as e:
         print(f"Error in file dialog subprocess: {e}")
@@ -160,10 +189,13 @@ def open_dir_dialog_subprocess() -> str:
     cmd = [
         sys.executable,
         "-c",
-        "import tkinter as tk; from tkinter import filedialog; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); print(filedialog.askdirectory(title='Chọn thư mục')); root.destroy()"
+        "import sys; sys.stdout.reconfigure(encoding='utf-8'); import tkinter as tk; from tkinter import filedialog; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); print(filedialog.askdirectory(title='Chọn thư mục')); root.destroy()"
     ]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+        if res.returncode != 0:
+            print(f"[DIALOG ERROR] Subprocess exited with code {res.returncode}")
+            print(f"[DIALOG ERROR] Stderr: {res.stderr}")
         return res.stdout.strip()
     except Exception as e:
         print(f"Error in dir dialog subprocess: {e}")
@@ -305,6 +337,16 @@ def generate_speech():
         return jsonify({"success": False, "error": str(e)}), 400
         
     # 2. Gather parameters
+    # Load config defaults if they exist
+    config_defaults = {}
+    config_path = os.path.abspath("configs/default.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_defaults = json.load(f)
+        except Exception:
+            pass
+            
     engine_name = data.get("engine", "edge")
     model_name = data.get("model", "")
     voice = data.get("voice", "")
@@ -316,6 +358,17 @@ def generate_speech():
     fade_in = float(data.get("fade_in", 0.1))
     fade_out = float(data.get("fade_out", 0.1))
     silence_duration = float(data.get("silence_duration", 0.3))
+    
+    # Extract voice cloning quality parameters
+    clone_temperature = data.get("clone_temperature", config_defaults.get("clone_temperature", 0.75))
+    clone_repetition_penalty = data.get("clone_repetition_penalty", config_defaults.get("clone_repetition_penalty", 10.0))
+    clone_top_k = data.get("clone_top_k", config_defaults.get("clone_top_k", 50))
+    clone_top_p = data.get("clone_top_p", config_defaults.get("clone_top_p", 0.85))
+    clone_length_penalty = data.get("clone_length_penalty", config_defaults.get("clone_length_penalty", 1.0))
+    clone_gpt_cond_len = data.get("clone_gpt_cond_len", config_defaults.get("clone_gpt_cond_len", 30))
+    clone_gpt_cond_chunk_len = data.get("clone_gpt_cond_chunk_len", config_defaults.get("clone_gpt_cond_chunk_len", 4))
+    clone_sound_norm_refs = data.get("clone_sound_norm_refs", config_defaults.get("clone_sound_norm_refs", True))
+    clone_librosa_trim_db = data.get("clone_librosa_trim_db", config_defaults.get("clone_librosa_trim_db", 30))
     
     # Local GGUF LLM Spicing
     spice_text = bool(data.get("spice_text", False))
@@ -391,6 +444,17 @@ def generate_speech():
     args.hardware_profile = hardware_profile
     args.is_direct_text = bool(direct_text)
     
+    # Voice cloning quality settings
+    args.clone_temperature = clone_temperature
+    args.clone_repetition_penalty = clone_repetition_penalty
+    args.clone_top_k = clone_top_k
+    args.clone_top_p = clone_top_p
+    args.clone_length_penalty = clone_length_penalty
+    args.clone_gpt_cond_len = clone_gpt_cond_len
+    args.clone_gpt_cond_chunk_len = clone_gpt_cond_chunk_len
+    args.clone_sound_norm_refs = clone_sound_norm_refs
+    args.clone_librosa_trim_db = clone_librosa_trim_db
+    
     # Define generation wrapper to be run inside the serialized lock
     def run_generation():
         is_gpu_task = (device == "cuda" and engine_name in ["clone", "rvc"]) or bool(rvc_model) or spice_text
@@ -453,22 +517,29 @@ def generate_speech():
                 if not files:
                     add_log("Không tìm thấy tệp tin .md hoặc .txt nào trong thư mục đầu vào.")
                     return False, []
+                
+                # Tạo 1 thư mục đầu ra dùng tên thư mục đầu vào
+                input_dir_name = os.path.basename(os.path.normpath(args.input_dir))
+                batch_out_dir = os.path.join(args.output_dir, input_dir_name)
+                os.makedirs(batch_out_dir, exist_ok=True)
                     
                 add_log(f"Tìm thấy {len(files)} tệp tin cần xử lý...")
+                add_log(f"Thư mục đầu ra: {batch_out_dir}")
                 results = []
                 all_success = True
                 
                 for idx, file_p in enumerate(files):
                     add_log(f"[{idx+1}/{len(files)}] Đang xử lý tệp: {os.path.basename(file_p)}...")
                     input_base_name = os.path.splitext(os.path.basename(file_p))[0].strip()
-                    out_path = os.path.join(args.output_dir, input_base_name, f"{input_base_name}.wav")
+                    # Lưu phẳng vào 1 thư mục: ThuMucDauVao/TenFile.wav
+                    out_path = os.path.join(batch_out_dir, f"{input_base_name}.wav")
                     
                     res = process_single_file(file_p, out_path, engine, args)
                     results.append(res)
                     if res["status"] != "SUCCESS":
                         all_success = False
                         
-                add_log("Hoàn thành xử lý hàng loạt.")
+                add_log(f"Hoàn thành! Tất cả {len(files)} file đã lưu tại: {batch_out_dir}")
                 return all_success, results
 
     # Run in a background thread to prevent blocking Flask response
@@ -527,6 +598,35 @@ def get_history():
     except Exception:
         return jsonify({"history": []})
 
+def _open_browser_when_ready():
+    """Waits until the Flask server is accepting connections, then opens the browser."""
+    import urllib.request
+    url = "http://127.0.0.1:5000"
+    for _ in range(30):  # Retry up to 30 times (15 seconds)
+        time.sleep(0.5)
+        try:
+            urllib.request.urlopen(url, timeout=1)
+            import webbrowser
+            webbrowser.open(url)
+            return
+        except Exception:
+            pass
+
+# Tích hợp MediaComposer
+try:
+    import sys
+    mc_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "MediaComposer"))
+    if mc_path not in sys.path:
+        sys.path.append(mc_path)
+    from MediaComposer.app.api import composer_bp
+    app.register_blueprint(composer_bp, url_prefix="/api/composer")
+except Exception as e:
+    print(f"Error integrating MediaComposer: {e}")
+
 if __name__ == '__main__':
+    # Open browser automatically after server is ready
+    browser_thread = threading.Thread(target=_open_browser_when_ready, daemon=True)
+    browser_thread.start()
+    
     # Listen strictly to localhost 127.0.0.1 for maximum security
     app.run(host='127.0.0.1', port=5000, debug=False)

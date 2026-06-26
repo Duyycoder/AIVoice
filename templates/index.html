@@ -529,6 +529,7 @@
                 🟢 Đang dò...
             </div>
             <button class="btn" onclick="openDiagnoseModal()">🔌 Chẩn đoán GPU</button>
+            <button class="btn btn-primary" onclick="launchMediaComposer()">🎬 Tạo Video (Media Composer)</button>
         </div>
     </header>
 
@@ -1140,6 +1141,32 @@
 
         function closeDiagnoseModal() {
             document.getElementById('diagnose-modal').style.display = 'none';
+        }
+
+        function launchMediaComposer() {
+            const consoleDiv = document.getElementById('console');
+            consoleDiv.innerHTML += `<div class="console-line console-warning">Đang kết nối khởi động Media Composer... Vui lòng đợi trong giây lát.</div>`;
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+
+            fetch('/api/composer/launch')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        consoleDiv.innerHTML += `<div class="console-line">Media Composer đã sẵn sàng: ${data.url}</div>`;
+                        consoleDiv.scrollTop = consoleDiv.scrollHeight;
+                        // Open Streamlit WebUI in a new tab
+                        window.open(data.url, '_blank');
+                    } else {
+                        consoleDiv.innerHTML += `<div class="console-line console-error">Lỗi khởi động: ${data.error}</div>`;
+                        consoleDiv.scrollTop = consoleDiv.scrollHeight;
+                        alert('Không thể khởi động Media Composer: ' + data.error);
+                    }
+                })
+                .catch(err => {
+                    consoleDiv.innerHTML += `<div class="console-line console-error">Lỗi kết nối API: ${err}</div>`;
+                    consoleDiv.scrollTop = consoleDiv.scrollHeight;
+                    alert('Lỗi kết nối API: ' + err);
+                });
         }
     </script>
 </body>

@@ -12,5 +12,19 @@
   "silence_duration": 0.3,
   "rvc_model": "models/rvc/ElevenLabs_Adam_FR.pth",
   "rvc_index": "models/rvc/added_IVF4988_Flat_nprobe_1_ElevenLabs_Adam_FR_v2.index",
-  "rvc_pitch": 0
+  "rvc_pitch": 0,
+  "use_fp16": true,
+  "use_tf32": true,
+  "device": "cuda",
+  "max_words": 30,
+  "hardware_profile": "rtx3060",
+  "clone_temperature": 0.75,
+  "clone_repetition_penalty": 10.0,
+  "clone_top_k": 50,
+  "clone_top_p": 0.85,
+  "clone_length_penalty": 1.0,
+  "clone_gpt_cond_len": 30,
+  "clone_gpt_cond_chunk_len": 4,
+  "clone_sound_norm_refs": true,
+  "clone_librosa_trim_db": null
 }

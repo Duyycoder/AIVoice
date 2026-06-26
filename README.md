@@ -58,7 +58,14 @@ AIVoice/
 ├── check_gpu.py           # Công cụ kiểm tra sức khỏe và chẩn đoán GPU/CUDA
 ├── download_models.py     # Script tải xuống mô hình tự động (Piper & XTTSv2)
 ├── main.py                # [ENTRY POINT] CLI điều khiển chính (Hỗ trợ Wizard tương tác)
+├── web_ui.py              # Giao diện Web UI (Flask-based SPA phong cách Glassmorphism)
 ├── requirements.txt       # Danh sách thư viện môi trường cần cài đặt
+├── plan.md                # Kế hoạch phát triển dự án và trạng thái hiện tại
+├── HUONG_DAN_SU_DUNG.md   # Hướng dẫn sử dụng tiếng Việt chi tiết cho Web UI & sửa lỗi RVC/phomie
+├── chay_giao_dien.bat     # Tập lệnh khởi chạy nhanh máy chủ Web UI cục bộ
+├── chay_kiem_thu.bat      # Tập lệnh chạy nhanh bộ kiểm thử tích hợp (tests suite)
+├── kiem_tra_gpu.bat       # Tập lệnh chạy nhanh chẩn đoán GPU/CUDA
+├── MediaComposer/         # Công cụ đồng hành tạo video có phụ đề tự động (Streamlit)
 └── README.md              # Tài liệu hướng dẫn sử dụng này
 ```
 
@@ -104,10 +111,9 @@ AIVoice/
 
 
 > [!TIP]
-> Nếu bạn muốn sử dụng tính năng phiên âm ngữ âm IPA tiếng Việt (`--phonemize`), hãy cài đặt thêm các thư viện ngữ âm tùy chọn sau:
+> Nếu bạn muốn sử dụng tính năng phiên âm ngữ âm IPA tiếng Việt (`--phonemize`), hãy cài đặt thêm các thư viện ngữ âm tùy chọn sau vào môi trường ảo:
 > ```powershell
-> pip install git+https://github.com/vunb/viphoneme.git
-> pip install git+https://github.com/vunb/vinorm.git
+> .\.venv\Scripts\pip install git+https://github.com/vunb/viphoneme.git git+https://github.com/vunb/vinorm.git
 > ```
 
 ### 3. Tải Xuống Các Mô HÌnh Lớn (Models Download)
@@ -148,6 +154,13 @@ Sau khi chạy, giao diện sẽ tự động mở trên trình duyệt tại đ
 3. **Serialization Lock (Chặn OOM):** Web UI tích hợp cơ chế xếp hàng xử lý (`threading.Lock()`). Nếu bạn vô tình click đúp hoặc gửi nhiều yêu cầu cùng lúc từ các tab khác nhau, các yêu cầu sau sẽ hiển thị trạng thái `[Xếp hàng chờ xử lý (GPU đang bận)]` và chạy tuần tự, ngăn ngừa việc GPU bị quá tải dẫn đến crash/OOM.
 4. **Console Log & Player tích hợp:** Hiển thị trực tiếp log xử lý thời gian thực, có danh sách tệp lịch sử và trình phát audio tích hợp để bạn nghe thử trực tiếp kết quả.
 5. **Chẩn đoán GPU nhanh:** Có nút bấm chạy chẩn đoán nhanh `check_gpu.py` hiển thị báo cáo cấu hình CUDA/cuDNN ngay trên giao diện web.
+6. **Tạo Video Tự Động (Tích hợp Media Composer):** Nút bấm khởi chạy công cụ tạo video đồng hành, tự động cấu hình ứng dụng Streamlit chạy nền tại cổng 8502 và mở trình duyệt để tạo video kèm phụ đề từ âm thanh thu được.
+
+### 0.1. Tích hợp Tạo Video (Media Composer)
+AIVoice hỗ trợ tích hợp với công cụ tạo video có phụ đề chạy giao diện Streamlit:
+* **Khởi chạy từ Web UI:** Nhấp vào nút **"🎬 Tạo Video (Media Composer)"** ở thanh công cụ. Hệ thống sẽ tự động kích hoạt máy chủ Streamlit nền (tải các thư viện `moviepy`, `faster-whisper`, `openai`, `streamlit` trong môi trường ảo) và trỏ trình duyệt đến `http://127.0.0.1:8502`.
+* **Cài đặt dependencies bổ sung:** Nếu bạn chưa có các gói thư viện này, vui lòng chạy lại script `setup.bat` để hệ thống tự động cập nhật và cài đặt đầy đủ các thư viện MediaComposer ở cuối tệp `requirements.txt`.
+
 
 ### 1. Chế Độ Tương Tác (Wizard Mode - KHUYÊN DÙNG)
 Nếu bạn không muốn nhớ các tham số phức tạp, chỉ cần gõ lệnh sau:
@@ -286,10 +299,15 @@ Bộ chẩn đoán sẽ kiểm tra và hiển thị các thông tin:
 5. Kiểm tra tính năng **SDPA (Scaled Dot-Product Attention)** trực tiếp trên GPU để đảm bảo hiệu suất tính toán tốt nhất.
 
 ### Khắc phục lỗi CUDA chưa khả dụng
-Nếu chạy `check_gpu.py` báo CUDA không khả dụng, điều này có nghĩa là bạn đang cài đặt phiên bản PyTorch dành cho CPU. Hãy chạy lệnh sau để cài đặt phiên bản PyTorch CUDA 12.x:
-```powershell
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-```
+Nếu chạy `check_gpu.py` báo CUDA không khả dụng, điều này có nghĩa là bạn đang cài đặt phiên bản PyTorch dành cho CPU. Hãy chạy lệnh sau để cài đặt phiên bản PyTorch CUDA tương thích:
+* **Đối với card RTX 30-Series và 40-Series (Tiêu chuẩn):**
+  ```powershell
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+  ```
+* **Đối với card RTX 50-Series (Kiến trúc Blackwell mới, ví dụ RTX 5060):** Bắt buộc sử dụng CUDA 12.8 để tránh lỗi crash `CUDA error: no kernel image is available`:
+  ```powershell
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+  ```
 
 ### Bộ tệp tin kích hoạt nhanh (.bat) tiện lợi
 Dự án đi kèm các tệp tin script hàng loạt `.bat` được thiết kế đặc biệt. Bạn có thể copy chúng ra màn hình Desktop hoặc bất cứ thư mục ngoài nào để mở nhanh mà không cần mở thư mục dự án:
