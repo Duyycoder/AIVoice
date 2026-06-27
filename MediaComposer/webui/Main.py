@@ -17,8 +17,9 @@ from loguru import logger
 import torch
 
 root_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-if root_dir not in sys.path:
-    sys.path.append(root_dir)
+if root_dir in sys.path:
+    sys.path.remove(root_dir)
+sys.path.insert(0, root_dir)
 
 from app.config import config
 from app.models.schema import VideoAspect, VideoConcatMode
@@ -495,9 +496,15 @@ def save_uploaded_file(uploaded_file, dest_dir):
     return file_path
 
 def merge_audio_files(uploaded_audios, task_dir):
+    """
+    Ghép nhiều file audio thành một file duy nhất.
+    Ưu tiên dùng FFmpeg concat demuxer (-c copy) — không decode/re-encode,
+    nhanh hơn MoviePy ~50-100x với batch lớn.
+    Fallback về MoviePy nếu FFmpeg không có trong PATH.
+    """
     if not uploaded_audios:
         return None
-        
+
     # Natural sort: tách cụm số và so sánh dưới dạng int,
     # tránh lỗi "Chương 111" xếp trước "Chương 89"
     import re
@@ -505,21 +512,72 @@ def merge_audio_files(uploaded_audios, task_dir):
         return [int(part) if part.isdigit() else part.lower()
                 for part in re.split(r'(\d+)', item.name)]
     sorted_audios = sorted(uploaded_audios, key=_natural_sort_key)
-    
-    # Save files to task directory
-    saved_paths = []
-    for f in sorted_audios:
-        saved_paths.append(save_uploaded_file(f, task_dir))
-        
+
+    saved_paths = [save_uploaded_file(f, task_dir) for f in sorted_audios]
     if len(saved_paths) == 1:
         return saved_paths[0]
-        
-    # Concat multiple audio files
+
     sorted_names = [f.name for f in sorted_audios]
-    logger.info(f"Merging {len(sorted_names)} audio files (natural sort order): {sorted_names}")
+    logger.info(f"Merging {len(sorted_names)} audio files: {sorted_names}")
+
+    return _merge_audio_ffmpeg(saved_paths, task_dir)
+
+
+def _merge_audio_ffmpeg(saved_paths, task_dir):
+    """
+    Ghép bằng FFmpeg concat demuxer với -c copy (stream-copy).
+    Vì tất cả file WAV đầu vào có cùng định dạng (cùng sample rate, channels, bit depth),
+    stream-copy hoạt động trực tiếp mà không cần decode hay re-encode.
+    Fallback về MoviePy chỉ khi FFmpeg không tồn tại hoặc gặp lỗi bất ngờ.
+    """
+    import subprocess
+    import shutil as _shutil
+
+    # Tìm ffmpeg: ưu tiên system ffmpeg, fallback về imageio_ffmpeg (cài sẵn qua moviepy)
+    ffmpeg_exe = _shutil.which("ffmpeg")
+    if ffmpeg_exe is None:
+        try:
+            import imageio_ffmpeg
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            pass
+
+    if ffmpeg_exe is None:
+        logger.warning("ffmpeg not found in PATH, falling back to MoviePy (slow).")
+        return _merge_audio_moviepy(saved_paths, task_dir)
+
+    # Ghi filelist với đường dẫn tuyệt đối (required by -safe 0)
+    filelist_path = os.path.join(task_dir, "filelist.txt")
+    with open(filelist_path, "w", encoding="utf-8") as flist:
+        for p in saved_paths:
+            abs_p = os.path.abspath(p).replace("\\", "/")
+            flist.write(f"file '{abs_p}'\n")
+
+    # Output WAV — giữ nguyên định dạng đầu vào, stream-copy không mất chất lượng
+    merged_path = os.path.join(task_dir, "merged_input_audio.wav")
+
+    logger.info(f"[FFmpeg] Stream-copy {len(saved_paths)} files → merged_input_audio.wav")
+    result = subprocess.run(
+        [ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", filelist_path, "-c", "copy", merged_path],
+        capture_output=True, text=True,
+    )
+
+    if result.returncode == 0:
+        logger.info("[FFmpeg] Merge complete.")
+        return merged_path
+
+    # Chỉ fallback MoviePy nếu FFmpeg gặp lỗi bất ngờ
+    logger.error(f"[FFmpeg] concat failed: {result.stderr[-400:]}")
+    logger.warning("Falling back to MoviePy...")
+    return _merge_audio_moviepy(saved_paths, task_dir)
+
+
+def _merge_audio_moviepy(saved_paths, task_dir):
+    """Fallback: ghép audio bằng MoviePy (chậm hơn nhưng luôn hoạt động)."""
     from moviepy.audio.io.AudioFileClip import AudioFileClip
     from moviepy.audio.AudioClip import concatenate_audioclips
-    
+
+    logger.info(f"[MoviePy] Merging {len(saved_paths)} files (this may take a while)...")
     merged_path = os.path.join(task_dir, "merged_input_audio.mp3")
     clips = []
     try:

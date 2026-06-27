@@ -2,6 +2,15 @@ import argparse
 import os
 import tempfile
 import sys
+
+# Reconfigure stdout/stderr to UTF-8 on Windows to prevent UnicodeEncodeError with Vietnamese characters
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 # Redirect temp files to F drive to prevent C drive overloading/stutter
 custom_temp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "temp")
 os.makedirs(custom_temp, exist_ok=True)

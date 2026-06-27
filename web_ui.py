@@ -1,6 +1,15 @@
 import os
 import tempfile
 import sys
+
+# Reconfigure stdout/stderr to UTF-8 on Windows to prevent UnicodeEncodeError with Vietnamese characters
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 # Redirect temp files to F drive to prevent C drive overloading/stutter
 custom_temp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "temp")
 os.makedirs(custom_temp, exist_ok=True)
@@ -616,8 +625,9 @@ def _open_browser_when_ready():
 try:
     import sys
     mc_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "MediaComposer"))
-    if mc_path not in sys.path:
-        sys.path.append(mc_path)
+    if mc_path in sys.path:
+        sys.path.remove(mc_path)
+    sys.path.insert(0, mc_path)
     from MediaComposer.app.api import composer_bp
     app.register_blueprint(composer_bp, url_prefix="/api/composer")
 except Exception as e:

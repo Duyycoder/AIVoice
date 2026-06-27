@@ -169,6 +169,20 @@ if !GIT_OK! equ 1 (
     echo.
 )
 
+:: 6b. Copy config.toml from example if not exist
+if not exist "MediaComposer\config.toml" (
+    echo ----------------------------------------------------------------------
+    echo [INFO] Dang khoi tao config.toml tu file mau...
+    echo ----------------------------------------------------------------------
+    copy "MediaComposer\config.toml.example" "MediaComposer\config.toml" >nul
+    if %errorlevel% equ 0 (
+        echo [INFO] Khoi tao config.toml thanh cong! Vui long cap nhat API key neu can.
+    ) else (
+        echo [WARNING] Khong the tu dong sao chep config.toml.
+    )
+    echo.
+)
+
 :: 7. Download model weights
 echo ----------------------------------------------------------------------
 echo [INFO] Dang tai trong so mo hinh AI (Piper & XTTSv2)...

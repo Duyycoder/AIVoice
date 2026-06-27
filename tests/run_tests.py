@@ -5,6 +5,14 @@ import shutil
 import time
 import json
 
+# Reconfigure stdout/stderr to UTF-8 on Windows to prevent UnicodeEncodeError with emojis/Vietnamese characters
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 def run_command(cmd_args: list[str]) -> tuple[int, str, str]:
     """Runs a command and returns exit code, stdout, and stderr."""
     # Run using the current virtualenv Python executable
