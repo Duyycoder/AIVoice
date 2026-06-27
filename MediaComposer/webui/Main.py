@@ -30,6 +30,130 @@ st.set_page_config(page_title="MediaComposer", page_icon="🎬", layout="wide")
 st.title("🎬 MediaComposer Standalone")
 st.write("Generate a fully voiceovered video from audio files.")
 
+# --- Task Manager System ---
+import datetime
+import time
+import threading
+
+def get_all_tasks():
+    tasks_dir = utils.storage_dir("tasks")
+    if not os.path.exists(tasks_dir):
+        return []
+    tasks_list = []
+    try:
+        subdirs = os.listdir(tasks_dir)
+    except Exception:
+        return []
+        
+    for task_id in subdirs:
+        try:
+            task_dir = os.path.join(tasks_dir, task_id)
+            if not os.path.isdir(task_dir):
+                continue
+            log_path = os.path.join(task_dir, "run.log")
+            if not os.path.exists(log_path):
+                continue
+                
+            thread_name = f"task_{task_id}"
+            is_running = any(t.name == thread_name for t in threading.enumerate())
+            mtime = os.path.getmtime(log_path)
+            
+            final_video = os.path.join(task_dir, "final.mp4")
+            has_video = os.path.exists(final_video)
+            
+            tasks_list.append({
+                "id": task_id,
+                "path": task_dir,
+                "log_path": log_path,
+                "is_running": is_running,
+                "has_video": has_video,
+                "mtime": mtime
+            })
+        except Exception:
+            continue
+            
+    try:
+        tasks_list.sort(key=lambda x: x["mtime"], reverse=True)
+    except Exception:
+        pass
+    return tasks_list
+
+tasks = get_all_tasks()
+running_tasks = [t for t in tasks if t["is_running"]]
+
+# Render selected task detail view if active
+if "selected_task_id" in st.session_state:
+    selected_task_id = st.session_state["selected_task_id"]
+    task_info = next((t for t in tasks if t["id"] == selected_task_id), None)
+    if task_info:
+        st.markdown(f"### 📊 Chi tiết tác vụ `{selected_task_id}`")
+        
+        col_back, col_del = st.columns([1, 1])
+        with col_back:
+            if st.button("⬅️ Quay lại danh sách", use_container_width=True):
+                del st.session_state["selected_task_id"]
+                st.rerun()
+        with col_del:
+            if st.button("🗑️ Xóa sạch tác vụ này", type="primary", use_container_width=True):
+                shutil.rmtree(task_info["path"], ignore_errors=True)
+                del st.session_state["selected_task_id"]
+                st.success("Đã xóa dữ liệu tác vụ!")
+                st.rerun()
+                
+        log_placeholder = st.empty()
+        
+        is_running = any(t.name == f"task_{selected_task_id}" for t in threading.enumerate())
+        if is_running:
+            st.info("⚡ Tác vụ đang xử lý ngầm... Log sẽ tự động cuộn xuống dưới.")
+            while any(t.name == f"task_{selected_task_id}" for t in threading.enumerate()):
+                time.sleep(1.0)
+                if os.path.exists(task_info["log_path"]):
+                    with open(task_info["log_path"], "r", encoding="utf-8", errors="ignore") as f:
+                        log_data = f.read()
+                    try:
+                        log_placeholder.code(log_data, language="text")
+                    except Exception:
+                        break
+            st.rerun()
+        else:
+            if os.path.exists(task_info["log_path"]):
+                with open(task_info["log_path"], "r", encoding="utf-8", errors="ignore") as f:
+                    log_data = f.read()
+                log_placeholder.code(log_data, language="text")
+                
+            if task_info["has_video"]:
+                st.success("🎉 Tác vụ hoàn thành thành công!")
+                st.video(os.path.join(task_info["path"], "final.mp4"))
+            else:
+                st.error("❌ Tác vụ đã dừng hoặc gặp lỗi (Xem log ở trên để biết chi tiết).")
+        st.divider()
+
+# Expandable Task Manager
+if running_tasks:
+    st.warning(f"⚠️ Phát hiện {len(running_tasks)} tác vụ đang chạy ngầm trên server!")
+
+with st.expander("📊 Quản lý tác vụ chạy ngầm (Task Manager)", expanded=bool(running_tasks)):
+    if not tasks:
+        st.write("Chưa có tác vụ nào được ghi nhận.")
+    else:
+        for t in tasks:
+            status_str = "🟢 Đang chạy" if t["is_running"] else ("🔵 Đã xong" if t["has_video"] else "🔴 Đã dừng/Lỗi")
+            time_str = datetime.datetime.fromtimestamp(t["mtime"]).strftime('%Y-%m-%d %H:%M:%S')
+            
+            col_id, col_status, col_time, col_action = st.columns([3, 1, 2, 2])
+            with col_id:
+                st.write(f"`{t['id']}`")
+            with col_status:
+                st.write(status_str)
+            with col_time:
+                st.write(time_str)
+            with col_action:
+                if st.button("Xem chi tiết & Log", key=f"btn_{t['id']}", use_container_width=True):
+                    st.session_state["selected_task_id"] = t["id"]
+                    st.rerun()
+st.divider()
+
+
 # Basic Setup
 with st.sidebar:
     st.header("Global Settings")
@@ -211,6 +335,156 @@ with st.sidebar:
         config.app["video_codec"] = video_codec
         config.save_config()
 
+    st.header("Subtitle Style Settings")
+    
+    # Quét font động từ thư mục resource/fonts
+    import os
+    font_dir = utils.font_dir()
+    os.makedirs(font_dir, exist_ok=True)
+    try:
+        available_fonts = [f for f in os.listdir(font_dir) if f.endswith(('.ttf', '.ttc'))]
+    except Exception:
+        available_fonts = []
+    if not available_fonts:
+        available_fonts = ["STHeitiMedium.ttc", "Arial-Regular.ttf"]
+        
+    current_font = config.whisper.get("font_name", "STHeitiMedium.ttc")
+    if current_font not in available_fonts:
+        current_font = available_fonts[0]
+    sub_font = st.selectbox("Font chữ (Font)", available_fonts, index=available_fonts.index(current_font))
+    
+    current_font_size = int(config.whisper.get("font_size", 60))
+    sub_font_size = st.slider("Kích thước (Size)", min_value=20, max_value=120, value=current_font_size)
+    
+    current_fore_color = config.whisper.get("text_fore_color", "#FFFFFF")
+    sub_fore_color = st.color_picker("Màu chữ (Text Color)", value=current_fore_color)
+    
+    current_stroke_color = config.whisper.get("stroke_color", "#000000")
+    sub_stroke_color = st.color_picker("Màu viền (Stroke Color)", value=current_stroke_color)
+    
+    current_stroke_width = float(config.whisper.get("stroke_width", 1.5))
+    sub_stroke_width = st.slider("Độ dày viền (Stroke Width)", min_value=0.0, max_value=5.0, value=current_stroke_width, step=0.1)
+    
+    current_bg_style = config.whisper.get("background_style", "None")
+    bg_style_opts = ["None", "Black", "Custom"]
+    bg_style_index = bg_style_opts.index(current_bg_style) if current_bg_style in bg_style_opts else 0
+    sub_bg_style = st.selectbox("Kiểu nền (Background)", ["Không nền", "Nền đen mặc định", "Nền màu tùy chọn"], index=bg_style_index)
+    bg_style_val = bg_style_opts[["Không nền", "Nền đen mặc định", "Nền màu tùy chọn"].index(sub_bg_style)]
+    
+    sub_bg_color = "#000000"
+    if bg_style_val == "Custom":
+        current_bg_color = config.whisper.get("text_background_color", "#000000")
+        sub_bg_color = st.color_picker("Màu nền (Background Color)", value=current_bg_color)
+        
+    has_bg = (bg_style_val != "None")
+    
+    sub_bg_alpha = 140
+    sub_rounded = False
+    if has_bg:
+        default_alpha = 140 if bg_style_val == "Black" else 255
+        current_bg_alpha = int(config.whisper.get("subtitle_bg_alpha", default_alpha))
+        sub_bg_alpha_pct = st.slider("Độ mờ nền (%)", min_value=0, max_value=100, value=int(current_bg_alpha / 255.0 * 100))
+        sub_bg_alpha = int(sub_bg_alpha_pct / 100.0 * 255)
+        
+        current_rounded = bool(config.whisper.get("rounded_subtitle_background", False))
+        sub_rounded = st.checkbox("Bo góc nền (Rounded corners)", value=current_rounded)
+        
+    current_pos_style = config.whisper.get("subtitle_position", "bottom")
+    pos_opts = ["bottom", "custom"]
+    pos_style_index = pos_opts.index(current_pos_style) if current_pos_style in pos_opts else 0
+    sub_pos_style = st.selectbox("Vị trí (Position)", ["Mặc định (Dưới)", "Tùy chọn (Custom)"], index=pos_style_index)
+    pos_style_val = pos_opts[["Mặc định (Dưới)", "Tùy chọn (Custom)"].index(sub_pos_style)]
+    
+    sub_custom_pos = 70.0
+    if pos_style_val == "custom":
+        current_custom_pos = float(config.whisper.get("custom_position", 70.0))
+        sub_custom_pos = st.slider("Chiều cao vị trí (%)", min_value=10.0, max_value=90.0, value=current_custom_pos, step=1.0)
+        
+    # Lưu cấu hình phụ đề
+    if (sub_font != config.whisper.get("font_name") or
+        sub_font_size != config.whisper.get("font_size") or
+        sub_fore_color != config.whisper.get("text_fore_color") or
+        sub_stroke_color != config.whisper.get("stroke_color") or
+        sub_stroke_width != config.whisper.get("stroke_width") or
+        bg_style_val != config.whisper.get("background_style") or
+        (bg_style_val == "Custom" and sub_bg_color != config.whisper.get("text_background_color")) or
+        (has_bg and (sub_bg_alpha != config.whisper.get("subtitle_bg_alpha") or sub_rounded != config.whisper.get("rounded_subtitle_background"))) or
+        pos_style_val != config.whisper.get("subtitle_position") or
+        (pos_style_val == "custom" and sub_custom_pos != config.whisper.get("custom_position"))):
+        
+        config.whisper["font_name"] = sub_font
+        config.whisper["font_size"] = sub_font_size
+        config.whisper["text_fore_color"] = sub_fore_color
+        config.whisper["stroke_color"] = sub_stroke_color
+        config.whisper["stroke_width"] = sub_stroke_width
+        config.whisper["background_style"] = bg_style_val
+        if bg_style_val == "Custom":
+            config.whisper["text_background_color"] = sub_bg_color
+        if has_bg:
+            config.whisper["subtitle_bg_alpha"] = sub_bg_alpha
+            config.whisper["rounded_subtitle_background"] = sub_rounded
+        config.whisper["subtitle_position"] = pos_style_val
+        if pos_style_val == "custom":
+            config.whisper["custom_position"] = sub_custom_pos
+            
+        config.save_config()
+
+    # Bộ xem trước trực tiếp (Live Preview)
+    st.markdown("### Live Preview (Xem trước)")
+    css_text_color = sub_fore_color
+    
+    if bg_style_val == "None":
+        css_bg = "background-color: transparent;"
+    elif bg_style_val == "Black":
+        alpha_float = round(sub_bg_alpha / 255.0, 2)
+        css_bg = f"background-color: rgba(0, 0, 0, {alpha_float});"
+    else:
+        hex_color = sub_bg_color.lstrip('#')
+        r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        alpha_float = round(sub_bg_alpha / 255.0, 2)
+        css_bg = f"background-color: rgba({r}, {g}, {b}, {alpha_float});"
+        
+    css_radius = "border-radius: 8px;" if sub_rounded else "border-radius: 0px;"
+    css_padding = "padding: 6px 12px;" if has_bg else "padding: 0px;"
+    
+    st.markdown(
+        f"""
+        <div style="
+            background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('https://images.pexels.com/photos/15286/pexels-photo.jpg?auto=compress&cs=tinysrgb&h=150');
+            background-size: cover;
+            background-position: center;
+            height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            border: 1px solid #555;
+            position: relative;
+        ">
+            <span style="
+                color: {css_text_color};
+                font-size: {int(sub_font_size * 0.35)}px;
+                font-weight: bold;
+                text-align: center;
+                text-shadow: 
+                    -{sub_stroke_width}px -{sub_stroke_width}px 0 {sub_stroke_color},  
+                     {sub_stroke_width}px -{sub_stroke_width}px 0 {sub_stroke_color},
+                    -{sub_stroke_width}px  {sub_stroke_width}px 0 {sub_stroke_color},
+                     {sub_stroke_width}px  {sub_stroke_width}px 0 {sub_stroke_color};
+                {css_bg}
+                {css_radius}
+                {css_padding}
+                max-width: 90%;
+                word-wrap: break-word;
+                line-height: 1.2;
+            ">
+                Đây là phụ đề mẫu
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 tab1, tab2 = st.tabs(["Manual Mode (Upload)", "Auto Mode (Fetch)"])
 
 def save_uploaded_file(uploaded_file, dest_dir):
@@ -224,8 +498,13 @@ def merge_audio_files(uploaded_audios, task_dir):
     if not uploaded_audios:
         return None
         
-    # Sort alphabetically from A to Z by file name
-    sorted_audios = sorted(uploaded_audios, key=lambda x: x.name)
+    # Natural sort: tách cụm số và so sánh dưới dạng int,
+    # tránh lỗi "Chương 111" xếp trước "Chương 89"
+    import re
+    def _natural_sort_key(item):
+        return [int(part) if part.isdigit() else part.lower()
+                for part in re.split(r'(\d+)', item.name)]
+    sorted_audios = sorted(uploaded_audios, key=_natural_sort_key)
     
     # Save files to task directory
     saved_paths = []
@@ -236,7 +515,8 @@ def merge_audio_files(uploaded_audios, task_dir):
         return saved_paths[0]
         
     # Concat multiple audio files
-    logger.info("Merging multiple audio files in A-Z order...")
+    sorted_names = [f.name for f in sorted_audios]
+    logger.info(f"Merging {len(sorted_names)} audio files (natural sort order): {sorted_names}")
     from moviepy.audio.io.AudioFileClip import AudioFileClip
     from moviepy.audio.AudioClip import concatenate_audioclips
     
@@ -328,7 +608,7 @@ with tab1:
                     except Exception:
                         pass
             
-            thread = threading.Thread(target=run_in_thread)
+            thread = threading.Thread(target=run_in_thread, name=f"task_{task_id}")
             thread.start()
             
             # Read and display log in real-time
@@ -337,13 +617,19 @@ with tab1:
                 if os.path.exists(log_path):
                     with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
                         log_data = f.read()
-                    log_placeholder.code(log_data, language="text")
+                    try:
+                        log_placeholder.code(log_data, language="text")
+                    except Exception:
+                        break
             
             # Final log update
             if os.path.exists(log_path):
                 with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
                     log_data = f.read()
-                log_placeholder.code(log_data, language="text")
+                try:
+                    log_placeholder.code(log_data, language="text")
+                except Exception:
+                    pass
                 
             if result["error"]:
                 st.error(f"Error during video generation: {result['error']}")
@@ -362,6 +648,7 @@ with tab1:
 with tab2:
     st.header("Workflow 2: Auto Fetch")
     st.write("Upload audio(s). The system will transcribe it, use LLM to infer keywords, and fetch videos automatically.")
+    st.caption("💡 Nếu bạn đã có file text/markdown gốc, hãy upload để bỏ qua Whisper → tiết kiệm VRAM và thời gian.")
     
     audio_files_a = st.file_uploader("Upload Audio(s) (Required)", type=["mp3", "wav", "m4a"], accept_multiple_files=True, key="a_audio")
     source_a = st.selectbox("Source", ["pexels", "pixabay", "coverr"], key="a_source")
@@ -392,7 +679,50 @@ with tab2:
             config.save_config()
             
     aspect_a = st.selectbox("Aspect Ratio", [VideoAspect.portrait.value, VideoAspect.landscape.value, VideoAspect.square.value], key="a_aspect")
-    subtitles_a = st.checkbox("Enable Whisper Subtitles", value=True, key="a_subs")
+    subtitles_a = st.checkbox("Enable Subtitles", value=True, key="a_subs")
+    
+    # Transcript text file uploader — bypasses Whisper entirely
+    transcript_file_a = st.file_uploader(
+        "📝 Transcript Text File (Tùy chọn — Bỏ qua Whisper)",
+        type=["md", "txt"],
+        accept_multiple_files=False,
+        key="a_transcript",
+        help="Upload file .md hoặc .txt chứa nội dung gốc của audio. Hệ thống sẽ bỏ qua Whisper hoàn toàn, tiết kiệm VRAM và thời gian xử lý."
+    )
+    
+    # Read and clean transcript text
+    transcript_text_a = ""
+    if transcript_file_a is not None:
+        raw_text = transcript_file_a.read().decode("utf-8", errors="ignore")
+        # Strip markdown formatting if .md file
+        import re
+        def _clean_markdown_simple(text: str) -> str:
+            """Strip markdown formatting, keeping only readable text."""
+            if not text:
+                return ""
+            text = re.sub(r'```[\s\S]*?```', '', text)  # code blocks
+            text = re.sub(r'`[^`]+`', '', text)  # inline code
+            text = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', text)  # images
+            text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)  # links
+            text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # bold
+            text = re.sub(r'\*(.+?)\*', r'\1', text)  # italic
+            text = re.sub(r'__(.+?)__', r'\1', text)  # bold alt
+            text = re.sub(r'_(.+?)_', r'\1', text)  # italic alt
+            text = re.sub(r'^\s*[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)  # hr
+            text = re.sub(r'^\s*>\s*', '', text, flags=re.MULTILINE)  # blockquote
+            text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)  # headers
+            text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)  # bullets
+            text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)  # numbered
+            # Collapse multiple blank lines
+            text = re.sub(r'\n{3,}', '\n\n', text)
+            return text.strip()
+        
+        transcript_text_a = _clean_markdown_simple(raw_text)
+        if transcript_text_a:
+            word_count = len(transcript_text_a.split())
+            st.success(f"⚡ Chế độ nhanh: Sẽ bỏ qua Whisper transcription ({word_count:,} từ đã đọc)")
+        else:
+            st.warning("File transcript rỗng, sẽ dùng Whisper như bình thường.")
     
     if st.button("Generate Video (Auto)", type="primary"):
         if not audio_files_a:
@@ -427,7 +757,8 @@ with tab2:
                         bgm_file=bgm_file if enable_bgm else "",
                         video_aspect=VideoAspect(aspect_a),
                         concat_mode=VideoConcatMode.random,
-                        enable_subtitles=subtitles_a
+                        enable_subtitles=subtitles_a,
+                        transcript_text=transcript_text_a
                     )
                     result["video"] = final_video
                     logger.info("=== Hoàn thành Workflow 2 thành công! ===")
@@ -437,18 +768,20 @@ with tab2:
                     logger.error(traceback.format_exc())
                     result["error"] = ex
                 finally:
-                    try:
-                        from app.services.subtitle import release_whisper_model
-                        release_whisper_model()
-                    except Exception as clean_ex:
-                        logger.warning(f"Lỗi giải phóng VRAM: {clean_ex}")
+                    # Only release Whisper if it was actually used
+                    if not transcript_text_a:
+                        try:
+                            from app.services.subtitle import release_whisper_model
+                            release_whisper_model()
+                        except Exception as clean_ex:
+                            logger.warning(f"Lỗi giải phóng VRAM: {clean_ex}")
                     result["done"] = True
                     try:
                         logger.remove(sink_id)
                     except Exception:
                         pass
             
-            thread = threading.Thread(target=run_in_thread)
+            thread = threading.Thread(target=run_in_thread, name=f"task_{task_id}")
             thread.start()
             
             # Read and display log in real-time
@@ -457,13 +790,19 @@ with tab2:
                 if os.path.exists(log_path):
                     with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
                         log_data = f.read()
-                    log_placeholder.code(log_data, language="text")
+                    try:
+                        log_placeholder.code(log_data, language="text")
+                    except Exception:
+                        break
             
             # Final log update
             if os.path.exists(log_path):
                 with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
                     log_data = f.read()
-                log_placeholder.code(log_data, language="text")
+                try:
+                    log_placeholder.code(log_data, language="text")
+                except Exception:
+                    pass
                 
             if result["error"]:
                 st.error(f"Error during video generation: {result['error']}")

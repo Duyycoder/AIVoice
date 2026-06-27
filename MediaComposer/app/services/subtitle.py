@@ -119,6 +119,50 @@ def read_srt_text(subtitle_file: str) -> str:
                 text_lines.append(line)
     return " ".join(text_lines)
 
+def create_subtitle_from_text(text: str, audio_duration: float, subtitle_file: str) -> str:
+    """Creates an SRT subtitle file from plain text by distributing duration
+    proportionally across sentences based on word count.
+
+    This avoids loading Whisper entirely — zero GPU/CPU cost for transcription.
+    Timing won't be word-level accurate, but is sufficient for stock video overlays.
+    """
+    import re
+    if not text or not text.strip():
+        logger.warning("Empty transcript text, skipping subtitle generation")
+        return ""
+
+    # Split into sentences by common sentence terminators
+    raw_sentences = re.split(r'(?<=[.!?;:。！？；])\s+', text.strip())
+    # Filter empty and merge very short fragments
+    sentences = [s.strip() for s in raw_sentences if s.strip()]
+    if not sentences:
+        return ""
+
+    # Calculate word count per sentence for proportional timing
+    word_counts = [max(len(s.split()), 1) for s in sentences]
+    total_words = sum(word_counts)
+
+    # Small buffer at start/end to avoid edge-clipping
+    MARGIN_SECONDS = 0.1
+    usable_duration = max(audio_duration - MARGIN_SECONDS * 2, 1.0)
+
+    lines = []
+    current_time = MARGIN_SECONDS
+    for idx, (sentence, wcount) in enumerate(zip(sentences, word_counts), start=1):
+        proportion = wcount / total_words
+        segment_duration = max(usable_duration * proportion, 0.3)
+        start_time = current_time
+        end_time = current_time + segment_duration
+        lines.append(utils.text_to_srt(idx, sentence, start_time, end_time))
+        current_time = end_time
+
+    srt_content = "\n".join(lines) + "\n"
+    with open(subtitle_file, "w", encoding="utf-8") as f:
+        f.write(srt_content)
+    logger.info(f"Subtitle from text created: {subtitle_file} ({len(sentences)} segments)")
+    return subtitle_file
+
+
 def release_whisper_model():
     """Giải phóng mô hình faster-whisper khỏi bộ nhớ RAM/VRAM."""
     global model

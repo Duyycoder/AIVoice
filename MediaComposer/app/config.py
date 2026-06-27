@@ -38,9 +38,10 @@ class Config:
     def save_config(self):
         data = {
             "app": self.app,
-            "whisper": self.whisper,
-            "proxy": self.proxy
+            "whisper": self.whisper
         }
+        if self.proxy is not None:
+            data["proxy"] = self.proxy
         with open(self.config_file, "w", encoding="utf-8") as f:
             toml.dump(data, f)
 

@@ -51,3 +51,16 @@ def str_contains_punctuation(word: str) -> bool:
             return True
     return False
 
+def to_json(obj) -> str:
+    def handler(x):
+        if hasattr(x, "__dict__"):
+            return x.__dict__
+        if hasattr(x, "dict") and callable(x.dict):
+            return x.dict()
+        return str(x)
+    try:
+        return json.dumps(obj, default=handler, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return f"<Serialization failed: {e}>"
+
+

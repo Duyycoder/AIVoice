@@ -694,6 +694,11 @@ def combine_videos(
             
         except Exception as e:
             logger.error(f"failed to process clip: {str(e)}")
+            if 'clip' in locals() and clip is not None:
+                try:
+                    close_clip(clip)
+                except Exception:
+                    pass
     
     # loop processed clips until the video duration covers the audio duration and the small safety margin.
     if video_duration < required_video_duration:
@@ -736,7 +741,7 @@ def combine_videos(
     )
     
     # clean temp files
-    delete_files(clip_files)
+    delete_files(list(set(clip_files)))
             
     logger.info("video combining completed")
     return combined_video_path
@@ -933,7 +938,7 @@ def generate_video(
 
     def create_text_clip(subtitle_item):
         params.font_size = int(params.font_size)
-        params.stroke_width = int(params.stroke_width)
+        params.stroke_width = float(params.stroke_width)
         phrase = subtitle_item[1]
         max_width = video_width * 0.9
         bg_color = resolve_subtitle_background_color()
@@ -1000,7 +1005,7 @@ def generate_video(
                 width=box_w,
                 height=clip_h,
                 color=bg_color,
-                alpha=140,
+                alpha=getattr(params, "subtitle_bg_alpha", 140),
                 radius=radius,
             )
             text_position = _get_visible_center_position(text_clip, box_w, clip_h)
@@ -1031,7 +1036,7 @@ def generate_video(
                 width=size[0],
                 height=size[1],
                 color=bg_color,
-                alpha=255,
+                alpha=getattr(params, "subtitle_bg_alpha", 255),
                 radius=0,
             )
             text_position = _get_visible_center_position(text_clip, size[0], size[1])
@@ -1078,60 +1083,66 @@ def generate_video(
             _clip = _clip.with_position(("center", "center"))
         return _clip
 
-    video_clip = _open_video_clip_quietly(video_path)
-    audio_clip = AudioFileClip(audio_path).with_effects(
-        [afx.MultiplyVolume(params.voice_volume)]
-    )
-
-    def make_textclip(text):
-        return TextClip(
-            text=text,
-            font=font_path,
-            font_size=params.font_size,
+    video_clip = None
+    audio_clip = None
+    try:
+        video_clip = _open_video_clip_quietly(video_path)
+        audio_clip = AudioFileClip(audio_path).with_effects(
+            [afx.MultiplyVolume(params.voice_volume)]
         )
 
-    if subtitle_path and os.path.exists(subtitle_path):
-        sub = SubtitlesClip(
-            subtitles=subtitle_path, encoding="utf-8", make_textclip=make_textclip
-        )
-        text_clips = []
-        for item in sub.subtitles:
-            clip = create_text_clip(subtitle_item=item)
-            text_clips.append(clip)
-        video_clip = CompositeVideoClip([video_clip, *text_clips])
-
-    bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
-    if bgm_file:
-        try:
-            bgm_clip = AudioFileClip(bgm_file).with_effects(
-                [
-                    afx.MultiplyVolume(params.bgm_volume),
-                    afx.AudioFadeOut(3),
-                    afx.AudioLoop(duration=video_clip.duration),
-                ]
+        def make_textclip(text):
+            return TextClip(
+                text=text,
+                font=font_path,
+                font_size=params.font_size,
             )
-            audio_clip = CompositeAudioClip([audio_clip, bgm_clip])
-        except Exception as e:
-            logger.error(f"failed to add bgm: {str(e)}")
 
-    video_clip = video_clip.with_audio(audio_clip)
-    # 显式沿用输入音频的采样率；如果取不到，再回退到 MoviePy 默认的 44100Hz。
-    # 这样可以减少不同运行环境，尤其是 Docker 环境中再次重采样带来的音质波动。
-    output_audio_fps = int(getattr(audio_clip, "fps", 0) or 44100)
-    _write_videofile_with_codec_fallback(
-        video_clip,
-        output_file=output_file,
-        codec=_get_configured_video_codec(),
-        audio_codec=audio_codec,
-        audio_fps=output_audio_fps,
-        audio_bitrate=audio_bitrate,
-        temp_audiofile_path=_get_temp_audio_dir(output_dir),
-        threads=params.n_threads or os.cpu_count() or 4,
-        logger=None,
-        fps=fps,
-    )
-    video_clip.close()
-    del video_clip
+        if subtitle_path and os.path.exists(subtitle_path):
+            sub = SubtitlesClip(
+                subtitles=subtitle_path, encoding="utf-8", make_textclip=make_textclip
+            )
+            text_clips = []
+            for item in sub.subtitles:
+                clip = create_text_clip(subtitle_item=item)
+                text_clips.append(clip)
+            video_clip = CompositeVideoClip([video_clip, *text_clips])
+
+        bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
+        if bgm_file:
+            try:
+                bgm_clip = AudioFileClip(bgm_file).with_effects(
+                    [
+                        afx.MultiplyVolume(params.bgm_volume),
+                        afx.AudioFadeOut(3),
+                        afx.AudioLoop(duration=video_clip.duration),
+                    ]
+                )
+                audio_clip = CompositeAudioClip([audio_clip, bgm_clip])
+            except Exception as e:
+                logger.error(f"failed to add bgm: {str(e)}")
+
+        video_clip = video_clip.with_audio(audio_clip)
+        # 显式沿用输入音频的采样率；如果取不到，再回退到 MoviePy 默认的 44100Hz。
+        # 这样可以减少 different runtime environments, especially Docker...
+        output_audio_fps = int(getattr(audio_clip, "fps", 0) or 44100)
+        _write_videofile_with_codec_fallback(
+            video_clip,
+            output_file=output_file,
+            codec=_get_configured_video_codec(),
+            audio_codec=audio_codec,
+            audio_fps=output_audio_fps,
+            audio_bitrate=audio_bitrate,
+            temp_audiofile_path=_get_temp_audio_dir(output_dir),
+            threads=params.n_threads or os.cpu_count() or 4,
+            logger=None,
+            fps=fps,
+        )
+    finally:
+        if video_clip is not None:
+            close_clip(video_clip)
+        elif audio_clip is not None:
+            close_clip(audio_clip)
 
 
 def preprocess_video(materials: List[MaterialInfo], clip_duration=4):

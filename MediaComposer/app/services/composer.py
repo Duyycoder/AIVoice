@@ -2,10 +2,11 @@ import os
 from loguru import logger
 from urllib.parse import urlparse
 from app.services.video import generate_video, combine_videos
-from app.services.subtitle import create_subtitle, read_srt_text
+from app.services.subtitle import create_subtitle, create_subtitle_from_text, read_srt_text
 from app.services.llm import extract_search_terms
 from app.services.material import download_videos
 from app.utils import utils
+from app.config import config
 from app.models.schema import VideoAspect, VideoConcatMode, VideoTransitionMode, VideoParams
 
 class ComposerWorkflow:
@@ -35,7 +36,8 @@ class ComposerWorkflow:
         concat_mode: VideoConcatMode = VideoConcatMode.random,
         enable_subtitles: bool = True,
         max_clip_duration: int = 5,
-        threads: int = None
+        threads: int = None,
+        transcript_text: str = ""
     ) -> str:
         """
         Orchestrates the entire flow:
@@ -46,11 +48,20 @@ class ComposerWorkflow:
         """
         task_dir = utils.task_dir(task_id)
         
-        # 1. Subtitle generation
+        # 1. Subtitle generation / transcript handling
         subtitle_path = ""
         srt_text = ""
-        if enable_subtitles or auto_fetch:
-            logger.info("Generating subtitles from audio...")
+        if transcript_text.strip():
+            # Fast path: user provided transcript text, skip Whisper entirely
+            logger.info("⚡ Transcript text provided — skipping Whisper transcription")
+            srt_text = transcript_text
+            if enable_subtitles:
+                subtitle_path = os.path.join(task_dir, "subtitle.srt")
+                audio_dur = self._get_audio_duration(audio_path)
+                create_subtitle_from_text(transcript_text, audio_dur, subtitle_path)
+        elif enable_subtitles or auto_fetch:
+            # Original path: use Whisper for transcription
+            logger.info("Generating subtitles from audio (Whisper)...")
             subtitle_path = os.path.join(task_dir, "subtitle.srt")
             create_subtitle(audio_path, subtitle_path)
             srt_text = read_srt_text(subtitle_path)
@@ -100,6 +111,16 @@ class ComposerWorkflow:
 
         # 4. Final Compose
         final_video_path = os.path.join(task_dir, "final.mp4")
+        
+        # Determine background color based on background style
+        bg_style = config.whisper.get("background_style", "None")
+        if bg_style == "None":
+            bg_color = False
+        elif bg_style == "Black":
+            bg_color = "#000000"
+        else:
+            bg_color = config.whisper.get("text_background_color", "#000000")
+
         params = VideoParams(
             video_aspect=video_aspect,
             video_concat_mode=concat_mode,
@@ -108,6 +129,16 @@ class ComposerWorkflow:
             bgm_file=bgm_file,
             bgm_volume=0.2 if bgm_file else 0.0,
             subtitle_enabled=enable_subtitles,
+            font_name=config.whisper.get("font_name", "STHeitiMedium.ttc"),
+            font_size=int(config.whisper.get("font_size", 60)),
+            text_fore_color=config.whisper.get("text_fore_color", "#FFFFFF"),
+            stroke_color=config.whisper.get("stroke_color", "#000000"),
+            stroke_width=float(config.whisper.get("stroke_width", 1.5)),
+            text_background_color=bg_color,
+            subtitle_bg_alpha=int(config.whisper.get("subtitle_bg_alpha", 140)),
+            rounded_subtitle_background=bool(config.whisper.get("rounded_subtitle_background", False)),
+            subtitle_position=config.whisper.get("subtitle_position", "bottom"),
+            custom_position=float(config.whisper.get("custom_position", 70.0)),
             n_threads=threads
         )
         
