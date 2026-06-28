@@ -244,13 +244,37 @@ if !GIT_OK! equ 1 (
     echo.
 )
 
+:: 6d. Install Valtec-TTS (requires Git)
+if !GIT_OK! equ 1 (
+    echo ----------------------------------------------------------------------
+    echo [INFO] Dang thiet lap va cai dat Valtec-TTS...
+    echo ----------------------------------------------------------------------
+    if not exist "valtec-tts" (
+        git clone https://github.com/tronghieuit/valtec-tts.git
+    )
+    if exist "valtec-tts" (
+        cd valtec-tts
+        ..\.venv\Scripts\pip install --default-timeout=1000 -e .
+        if !errorlevel! neq 0 (
+            echo [WARNING] Cấu hình Valtec-TTS thất bại.
+        ) else (
+            echo [INFO] Cai dat Valtec-TTS thanh cong.
+        )
+        cd ..
+    ) else (
+        echo [WARNING] Khong the clone Valtec-TTS tu GitHub.
+    )
+    echo.
+)
+
+
 :: 6b. Copy config.toml from example if not exist
 if not exist "MediaComposer\config.toml" (
     echo ----------------------------------------------------------------------
     echo [INFO] Dang khoi tao config.toml tu file mau...
     echo ----------------------------------------------------------------------
     copy "MediaComposer\config.toml.example" "MediaComposer\config.toml" >nul
-    if %errorlevel% equ 0 (
+    if !errorlevel! equ 0 (
         echo [INFO] Khoi tao config.toml thanh cong! Vui long cap nhat API key neu can.
     ) else (
         echo [WARNING] Khong the tu dong sao chep config.toml.

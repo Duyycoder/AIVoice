@@ -110,6 +110,25 @@ if [ "$GIT_OK" -eq 1 ]; then
     echo
 fi
 
+# 6d. Install Valtec-TTS (requires Git)
+if [ "$GIT_OK" -eq 1 ]; then
+    echo "----------------------------------------------------------------------"
+    echo "[INFO] Dang thiet lap va cai dat Valtec-TTS..."
+    echo "----------------------------------------------------------------------"
+    if [ ! -d "valtec-tts" ]; then
+        git clone https://github.com/tronghieuit/valtec-tts.git
+    fi
+    if [ -d "valtec-tts" ]; then
+        cd valtec-tts
+        ../.venv/bin/pip install --default-timeout=1000 -e .
+        cd ..
+        echo "[INFO] Cai dat Valtec-TTS thanh cong."
+    else
+        echo "[WARNING] Khong the clone Valtec-TTS tu GitHub."
+    fi
+    echo
+fi
+
 
 # 6b. Copy config.toml from example if not exist
 if [ ! -f "MediaComposer/config.toml" ]; then
