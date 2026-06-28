@@ -22,6 +22,7 @@ from moviepy import (
     TextClip,
     VideoFileClip,
     afx,
+    vfx,
 )
 from moviepy.video.tools.subtitles import SubtitlesClip
 from PIL import Image, ImageDraw, ImageFont
@@ -541,6 +542,7 @@ def combine_videos(
     video_transition_mode: VideoTransitionMode = None,
     max_clip_duration: int = 5,
     threads: int = None,
+    slice_video: bool = True,
 ) -> str:
     audio_clip = AudioFileClip(audio_file)
     try:
@@ -576,7 +578,7 @@ def combine_videos(
         start_time = 0
 
         while start_time < clip_duration:
-            end_time = min(start_time + max_clip_duration, clip_duration)
+            end_time = min(start_time + max_clip_duration, clip_duration) if slice_video else clip_duration
 
             # 保留所有有效分段。
             # 这样既不会丢掉“整段视频本身就短于 max_clip_duration”的素材，
@@ -594,7 +596,7 @@ def combine_videos(
                 )
 
             start_time = end_time
-            if video_concat_mode.value == VideoConcatMode.sequential.value:
+            if not slice_video or video_concat_mode.value == VideoConcatMode.sequential.value:
                 break
 
     subclipped_items = _prioritize_unique_source_clips(
@@ -1091,6 +1093,39 @@ def generate_video(
             [afx.MultiplyVolume(params.voice_volume)]
         )
 
+        # Virtual resizing if size doesn't match target aspect ratio
+        clip_w, clip_h = video_clip.size
+        if clip_w != video_width or clip_h != video_height:
+            clip_ratio = clip_w / clip_h
+            video_ratio = video_width / video_height
+            logger.info(f"Resizing input video virtually in generate_video: {clip_w}x{clip_h} -> {video_width}x{video_height}")
+            if clip_ratio == video_ratio:
+                video_clip = video_clip.resized(new_size=(video_width, video_height))
+            else:
+                if clip_ratio > video_ratio:
+                    scale_factor = video_width / clip_w
+                else:
+                    scale_factor = video_height / clip_h
+
+                new_width = int(clip_w * scale_factor)
+                new_height = int(clip_h * scale_factor)
+
+                background = ColorClip(size=(video_width, video_height), color=(0, 0, 0)).with_duration(video_clip.duration)
+                clip_resized = video_clip.resized(new_size=(new_width, new_height)).with_position("center")
+                video_clip = CompositeVideoClip([background, clip_resized])
+
+        # Virtual trim or loop to match audio duration
+        required_duration = audio_clip.duration
+        if video_clip.duration > required_duration:
+            logger.info(f"Trimming video virtually in generate_video: {video_clip.duration:.2f}s -> {required_duration:.2f}s")
+            video_clip = video_clip.subclipped(0, required_duration)
+        elif video_clip.duration < required_duration:
+            logger.info(f"Looping video virtually in generate_video: {video_clip.duration:.2f}s -> {required_duration:.2f}s")
+            try:
+                video_clip = video_clip.with_effects([vfx.Loop(duration=required_duration)])
+            except Exception as e:
+                logger.error(f"Failed to loop video virtually: {e}")
+
         def make_textclip(text):
             return TextClip(
                 text=text,
@@ -1244,3 +1279,107 @@ def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
         valid_materials.append(material)
 
     return valid_materials
+
+
+def split_video_file(
+    video_path: str,
+    num_parts: int,
+    output_dir: str,
+    fast_split: bool = True
+) -> list[str]:
+    """
+    Splits a video file into `num_parts` equal-duration segments.
+    """
+    import zipfile
+    if num_parts < 2:
+        raise ValueError("Number of parts must be at least 2.")
+
+    logger.info(f"Opening video to get duration: {video_path}")
+    try:
+        clip = _open_video_clip_quietly(video_path)
+        duration = clip.duration
+        has_audio = clip.audio is not None
+        close_clip(clip)
+    except Exception as e:
+        logger.error(f"Failed to read video properties via MoviePy: {e}")
+        raise RuntimeError(f"Cannot read video properties: {e}")
+
+    logger.info(f"Video duration: {duration:.2f}s, Has audio: {has_audio}")
+    part_duration = duration / num_parts
+    logger.info(f"Each part duration: {part_duration:.2f}s")
+
+    ffmpeg_exe = shutil.which("ffmpeg")
+    if ffmpeg_exe is None:
+        try:
+            import imageio_ffmpeg
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            pass
+    if ffmpeg_exe is None:
+        raise FileNotFoundError("FFmpeg executable not found.")
+
+    output_files = []
+    base, ext = os.path.splitext(os.path.basename(video_path))
+
+    for i in range(num_parts):
+        start_time = i * part_duration
+        if i == num_parts - 1:
+            part_dur = duration - start_time
+        else:
+            part_dur = part_duration
+
+        output_filename = f"{base}_part{i+1}{ext}"
+        output_file_path = os.path.join(output_dir, output_filename)
+
+        current_fast_split = fast_split
+        if current_fast_split:
+            logger.info(f"Splitting part {i+1}/{num_parts} (Fast Stream Copy): {start_time:.3f}s to {start_time + part_dur:.3f}s")
+            cmd = [
+                ffmpeg_exe,
+                "-y",
+                "-ss", f"{start_time:.3f}",
+                "-t", f"{part_dur:.3f}",
+                "-i", video_path,
+                "-c", "copy",
+                "-avoid_negative_ts", "make_zero",
+                output_file_path
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                logger.warning(f"Fast split failed (code {res.returncode}): {res.stderr}. Retrying with re-encoding...")
+                current_fast_split = False
+
+        if not current_fast_split:
+            logger.info(f"Splitting part {i+1}/{num_parts} (Re-encoding): {start_time:.3f}s to {start_time + part_dur:.3f}s")
+            cmd = [
+                ffmpeg_exe,
+                "-y",
+                "-ss", f"{start_time:.3f}",
+                "-t", f"{part_dur:.3f}",
+                "-i", video_path,
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-threads", str(os.cpu_count() or 4),
+            ]
+            if has_audio:
+                cmd.extend(["-c:a", "aac"])
+            else:
+                cmd.extend(["-an"])
+            cmd.append(output_file_path)
+
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"Failed to split video part {i+1} via re-encoding: {res.stderr}")
+
+        output_files.append(output_file_path)
+        logger.success(f"Part {i+1} saved to: {output_file_path}")
+
+    # Generate zip archive of all parts
+    zip_path = os.path.join(output_dir, "split_parts.zip")
+    logger.info(f"Creating ZIP archive of all split parts: {zip_path}")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for part_path in output_files:
+            zipf.write(part_path, os.path.basename(part_path))
+    logger.success("ZIP archive created successfully.")
+
+    return output_files
