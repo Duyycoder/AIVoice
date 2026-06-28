@@ -37,7 +37,8 @@ class ComposerWorkflow:
         enable_subtitles: bool = True,
         max_clip_duration: int = 5,
         threads: int = None,
-        transcript_text: str = ""
+        transcript_text: str = "",
+        slice_video: bool = True
     ) -> str:
         """
         Orchestrates the entire flow:
@@ -99,38 +100,90 @@ class ComposerWorkflow:
         if not materials_to_use:
             raise ValueError("No video materials available to compose.")
 
-        # Limit total video duration to 30 minutes (Option 3)
-        MAX_TOTAL_VIDEO_SECONDS = 30 * 60
-        total_video_seconds = 0.0
-        limited_materials = []
-        from moviepy.video.io.VideoFileClip import VideoFileClip
-        for vp in materials_to_use:
-            try:
-                clip = VideoFileClip(vp)
-                dur = clip.duration
-                clip.close()
-                if total_video_seconds + dur > MAX_TOTAL_VIDEO_SECONDS:
-                    break
-                total_video_seconds += dur
-                limited_materials.append(vp)
-            except Exception:
-                continue
-        if limited_materials:
-            materials_to_use = limited_materials
+        # Limit total video duration to 30 minutes (Option 3) only for Auto Fetch mode
+        if auto_fetch:
+            MAX_TOTAL_VIDEO_SECONDS = 30 * 60
+            total_video_seconds = 0.0
+            limited_materials = []
+            from moviepy.video.io.VideoFileClip import VideoFileClip
+            for vp in materials_to_use:
+                try:
+                    clip = VideoFileClip(vp)
+                    dur = clip.duration
+                    clip.close()
+                    if total_video_seconds + dur > MAX_TOTAL_VIDEO_SECONDS:
+                        break
+                    total_video_seconds += dur
+                    limited_materials.append(vp)
+                except Exception:
+                    continue
+            if limited_materials:
+                materials_to_use = limited_materials
 
         # 3. Combine Videos
         merged_video_path = os.path.join(task_dir, "merged.mp4")
-        logger.info(f"Combining {len(materials_to_use)} videos (capped at {MAX_TOTAL_VIDEO_SECONDS}s)...")
-        combine_videos(
-            combined_video_path=merged_video_path,
-            video_paths=materials_to_use,
-            audio_file=audio_path,
-            video_aspect=video_aspect,
-            video_concat_mode=concat_mode,
-            video_transition_mode=None,
-            max_clip_duration=30,  # ensure consistency
-            threads=os.cpu_count() or 4,
-        )
+        
+        is_single_video = len(materials_to_use) == 1
+        bypass_combine = False
+        
+        if is_single_video:
+            single_video_path = materials_to_use[0]
+            # Get single video duration
+            from moviepy.video.io.VideoFileClip import VideoFileClip
+            try:
+                temp_clip = VideoFileClip(single_video_path)
+                video_duration = temp_clip.duration
+                temp_clip.close()
+            except Exception as e:
+                logger.error(f"Failed to get video duration: {e}")
+                video_duration = 0.0
+                
+            # If no subtitles and no BGM, and video is long enough, do a Fast Stream Copy
+            if not enable_subtitles and not bgm_file and video_duration >= audio_duration:
+                logger.info("⚡ Fast Path: Subtitles and BGM disabled, video >= audio. Merging directly via FFmpeg stream copy...")
+                import subprocess
+                ffmpeg_bin = utils.get_ffmpeg_binary()
+                final_video_path = os.path.join(task_dir, "final.mp4")
+                cmd = [
+                    ffmpeg_bin,
+                    "-y",
+                    "-ss", "0",
+                    "-t", f"{audio_duration:.3f}",
+                    "-i", single_video_path,
+                    "-i", audio_path,
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    final_video_path
+                ]
+                logger.info(f"Running ffmpeg command: {' '.join(cmd)}")
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                if res.returncode == 0:
+                    logger.success("⚡ Fast merge completed successfully!")
+                    return final_video_path
+                else:
+                    logger.warning(f"Fast merge failed (code {res.returncode}): {res.stderr}. Falling back to standard flow.")
+            
+            # Otherwise, we can bypass combine_videos, set merged_video_path to the single video directly,
+            # and let generate_video handle virtual resize and virtual trim/loop.
+            logger.info("⚡ Single video detected. Bypassing combine_videos to avoid re-encoding twice.")
+            merged_video_path = single_video_path
+            bypass_combine = True
+
+        if not bypass_combine:
+            logger.info(f"Combining {len(materials_to_use)} videos...")
+            combine_videos(
+                combined_video_path=merged_video_path,
+                video_paths=materials_to_use,
+                audio_file=audio_path,
+                video_aspect=video_aspect,
+                video_concat_mode=concat_mode,
+                video_transition_mode=None,
+                max_clip_duration=30,  # ensure consistency
+                threads=threads or os.cpu_count() or 4,
+                slice_video=slice_video,
+            )
 
         # 4. Final Compose
         final_video_path = os.path.join(task_dir, "final.mp4")
@@ -175,5 +228,33 @@ class ComposerWorkflow:
         )
         
         return final_video_path
+
+    def split_video_into_parts(
+        self,
+        task_id: str,
+        video_path: str,
+        num_parts: int,
+        fast_split: bool = True
+    ) -> list[str]:
+        task_dir = utils.task_dir(task_id)
+        from app.services.video import split_video_file
+        
+        output_files = split_video_file(
+            video_path=video_path,
+            num_parts=num_parts,
+            output_dir=task_dir,
+            fast_split=fast_split
+        )
+        
+        # Save manifest
+        manifest_path = os.path.join(task_dir, "split_manifest.json")
+        import json
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "type": "split",
+                "parts": [os.path.basename(p) for p in output_files]
+            }, f, indent=2)
+            
+        return output_files
 
 composer = ComposerWorkflow()

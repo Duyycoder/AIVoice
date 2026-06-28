@@ -60,7 +60,8 @@ def get_all_tasks():
             mtime = os.path.getmtime(log_path)
             
             final_video = os.path.join(task_dir, "final.mp4")
-            has_video = os.path.exists(final_video)
+            split_manifest = os.path.join(task_dir, "split_manifest.json")
+            has_video = os.path.exists(final_video) or os.path.exists(split_manifest)
             
             tasks_list.append({
                 "id": task_id,
@@ -122,7 +123,41 @@ if "selected_task_id" in st.session_state:
                     log_data = f.read()
                 log_placeholder.code(log_data, language="text")
                 
-            if task_info["has_video"]:
+            split_manifest_path = os.path.join(task_info["path"], "split_manifest.json")
+            if os.path.exists(split_manifest_path):
+                st.success("🎉 Tác vụ chia video hoàn thành thành công!")
+                import json
+                try:
+                    with open(split_manifest_path, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+                    parts = manifest.get("parts", [])
+                    st.write(f"Đã chia video thành {len(parts)} phần:")
+                    zip_path = os.path.join(task_info["path"], "split_parts.zip")
+                    if os.path.exists(zip_path):
+                        with open(zip_path, "rb") as f:
+                            st.download_button(
+                                label="📥 Tải xuống tất cả các phần (ZIP)",
+                                data=f,
+                                file_name="split_parts.zip",
+                                mime="application/zip",
+                                key=f"dl_zip_{selected_task_id}"
+                            )
+                    for idx, part_filename in enumerate(parts):
+                        part_abs_path = os.path.join(task_info["path"], part_filename)
+                        if os.path.exists(part_abs_path):
+                            st.markdown(f"**Phần {idx+1}: {part_filename}**")
+                            st.video(part_abs_path)
+                            with open(part_abs_path, "rb") as f:
+                                st.download_button(
+                                    label=f"📥 Tải xuống phần {idx+1}",
+                                    data=f,
+                                    file_name=part_filename,
+                                    mime="video/mp4",
+                                    key=f"dl_part_{idx}_{selected_task_id}"
+                                )
+                except Exception as e:
+                    st.error(f"Lỗi đọc kết quả chia video: {e}")
+            elif task_info["has_video"]:
                 st.success("🎉 Tác vụ hoàn thành thành công!")
                 st.video(os.path.join(task_info["path"], "final.mp4"))
             else:
@@ -207,13 +242,19 @@ with st.sidebar:
         st.write("")  # Spacer to align with text input label
         st.write("")
         if st.button("📁", help="Chọn thư mục đầu ra"):
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes('-topmost', 1)
-            selected = filedialog.askdirectory(parent=root)
-            root.destroy()
+            import subprocess
+            import sys
+            cmd = [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.reconfigure(encoding='utf-8'); import tkinter as tk; from tkinter import filedialog; root=tk.Tk(); root.withdraw(); root.attributes('-topmost', True); print(filedialog.askdirectory(title='Chọn thư mục')); root.destroy()"
+            ]
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+                selected = res.stdout.strip()
+            except Exception as e:
+                logger.error(f"Error in dir dialog subprocess: {e}")
+                selected = ""
             if selected:
                 st.session_state["output_folder"] = os.path.normpath(selected)
 
@@ -486,7 +527,7 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-tab1, tab2 = st.tabs(["Manual Mode (Upload)", "Auto Mode (Fetch)"])
+tab1, tab2, tab3 = st.tabs(["Manual Mode (Upload)", "Auto Mode (Fetch)", "Split Video (Workflow 3)"])
 
 def save_uploaded_file(uploaded_file, dest_dir):
     os.makedirs(dest_dir, exist_ok=True)
@@ -521,6 +562,24 @@ def merge_audio_files(uploaded_audios, task_dir):
     logger.info(f"Merging {len(sorted_names)} audio files: {sorted_names}")
 
     return _merge_audio_ffmpeg(saved_paths, task_dir)
+
+
+def merge_audio_paths(audio_paths, task_dir):
+    """
+    Ghép nhiều file audio từ đường dẫn cục bộ thành một file duy nhất.
+    """
+    if not audio_paths:
+        return None
+
+    import re
+    def _natural_sort_key(path):
+        return [int(part) if part.isdigit() else part.lower()
+                for part in re.split(r'(\d+)', os.path.basename(path))]
+    sorted_paths = sorted(audio_paths, key=_natural_sort_key)
+    if len(sorted_paths) == 1:
+        return sorted_paths[0]
+
+    return _merge_audio_ffmpeg(sorted_paths, task_dir)
 
 
 def _merge_audio_ffmpeg(saved_paths, task_dir):
@@ -596,21 +655,48 @@ def _merge_audio_moviepy(saved_paths, task_dir):
 
 with tab1:
     st.header("Workflow 1: Manual Mode")
-    st.write("Upload your audio(s) and video/images. Visuals will loop randomly to match audio length. Images show for 4s.")
+    st.write("Upload your audio(s) and video/images, or enter their local paths on your machine. Visuals will loop to match audio length.")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        audio_files_m = st.file_uploader("Upload Audio(s) (Required)", type=["mp3", "wav", "m4a"], accept_multiple_files=True, key="m_audio")
-    with col2:
-        video_files_m = st.file_uploader("Upload Videos/Images", type=["mp4", "mov", "jpg", "png"], accept_multiple_files=True, key="m_videos")
+    input_method_m = st.radio(
+        "Phương thức chọn file (Manual)",
+        ["Upload qua trình duyệt", "Nhập đường dẫn cục bộ (Local Paths)"],
+        horizontal=True,
+        key="m_input_method"
+    )
     
+    audio_files_m = []
+    video_files_m = []
+    local_audio_paths_m = []
+    local_video_paths_m = []
+    
+    if input_method_m == "Upload qua trình duyệt":
+        col1, col2 = st.columns(2)
+        with col1:
+            audio_files_m = st.file_uploader("Upload Audio(s) (Required)", type=["mp3", "wav", "m4a"], accept_multiple_files=True, key="m_audio")
+        with col2:
+            video_files_m = st.file_uploader("Upload Videos/Images", type=["mp4", "mov", "jpg", "png"], accept_multiple_files=True, key="m_videos")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            local_audio_input = st.text_area("Đường dẫn file Audio cục bộ (Mỗi dòng một file, bắt buộc)", key="m_local_audio", help="Ví dụ: G:/Coding/AIVoice/data/inputs/example.wav")
+            if local_audio_input.strip():
+                local_audio_paths_m = [p.strip().strip('"').strip("'") for p in local_audio_input.split('\n') if p.strip()]
+        with col2:
+            local_video_input = st.text_area("Đường dẫn file Video/Image cục bộ (Mỗi dòng một file, bắt buộc)", key="m_local_video", help="Ví dụ: D:/videos/background.mp4")
+            if local_video_input.strip():
+                local_video_paths_m = [p.strip().strip('"').strip("'") for p in local_video_input.split('\n') if p.strip()]
+                
     aspect_m = st.selectbox("Aspect Ratio", [VideoAspect.portrait.value, VideoAspect.landscape.value, VideoAspect.square.value], key="m_aspect")
     subtitles_m = st.checkbox("Enable Whisper Subtitles", value=True, key="m_subs")
+    slice_video_m = st.checkbox("Cắt nhỏ video (Slicing)", value=True, key="m_slice", help="Nếu bật, video dài sẽ bị chia thành các clip ngắn (tối đa 30s) rồi ghép lại. Nếu tắt, hệ thống sẽ giữ nguyên thời lượng clip gốc của bạn.")
+    
+    has_audio = bool(audio_files_m) if input_method_m == "Upload qua trình duyệt" else bool(local_audio_paths_m)
+    has_video = bool(video_files_m) if input_method_m == "Upload qua trình duyệt" else bool(local_video_paths_m)
     
     if st.button("Generate Video (Manual)", type="primary"):
-        if not audio_files_m:
+        if not has_audio:
             st.error("Audio file is required!")
-        elif not video_files_m:
+        elif not has_video:
             st.error("At least one video/image is required!")
         else:
             task_id = str(uuid.uuid4())
@@ -632,10 +718,18 @@ with tab1:
             def run_in_thread():
                 try:
                     logger.info("=== Bắt đầu Workflow 1 (Manual Mode) ===")
-                    audio_path = merge_audio_files(audio_files_m, task_dir)
-                    video_paths = []
-                    for v in video_files_m:
-                        video_paths.append(save_uploaded_file(v, task_dir))
+                    if input_method_m == "Upload qua trình duyệt":
+                        audio_path = merge_audio_files(audio_files_m, task_dir)
+                        video_paths = []
+                        for v in video_files_m:
+                            video_paths.append(save_uploaded_file(v, task_dir))
+                    else:
+                        audio_path = merge_audio_paths(local_audio_paths_m, task_dir)
+                        import re
+                        def _natural_sort_key(path):
+                            return [int(part) if part.isdigit() else part.lower()
+                                    for part in re.split(r'(\d+)', os.path.basename(path))]
+                        video_paths = sorted(local_video_paths_m, key=_natural_sort_key)
                         
                     final_video = composer.run_workflow(
                         task_id=task_id,
@@ -645,7 +739,8 @@ with tab1:
                         bgm_file=bgm_file if enable_bgm else "",
                         video_aspect=VideoAspect(aspect_m),
                         concat_mode=VideoConcatMode.random,
-                        enable_subtitles=subtitles_m
+                        enable_subtitles=subtitles_m,
+                        slice_video=slice_video_m
                     )
                     result["video"] = final_video
                     logger.info("=== Hoàn thành Workflow 1 thành công! ===")
@@ -705,10 +800,26 @@ with tab1:
 
 with tab2:
     st.header("Workflow 2: Auto Fetch")
-    st.write("Upload audio(s). The system will transcribe it, use LLM to infer keywords, and fetch videos automatically.")
+    st.write("Upload audio(s) or enter local paths. The system will transcribe it, use LLM to infer keywords, and fetch videos automatically.")
     st.caption("💡 Nếu bạn đã có file text/markdown gốc, hãy upload để bỏ qua Whisper → tiết kiệm VRAM và thời gian.")
     
-    audio_files_a = st.file_uploader("Upload Audio(s) (Required)", type=["mp3", "wav", "m4a"], accept_multiple_files=True, key="a_audio")
+    input_method_a = st.radio(
+        "Phương thức chọn file (Auto)",
+        ["Upload qua trình duyệt", "Nhập đường dẫn cục bộ (Local Paths)"],
+        horizontal=True,
+        key="a_input_method"
+    )
+    
+    audio_files_a = []
+    local_audio_paths_a = []
+    
+    if input_method_a == "Upload qua trình duyệt":
+        audio_files_a = st.file_uploader("Upload Audio(s) (Required)", type=["mp3", "wav", "m4a"], accept_multiple_files=True, key="a_audio")
+    else:
+        local_audio_input_a = st.text_area("Đường dẫn file Audio cục bộ (Mỗi dòng một file, bắt buộc)", key="a_local_audio", help="Ví dụ: G:/Coding/AIVoice/data/inputs/example.wav")
+        if local_audio_input_a.strip():
+            local_audio_paths_a = [p.strip().strip('"').strip("'") for p in local_audio_input_a.split('\n') if p.strip()]
+
     source_a = st.selectbox("Source", ["pexels", "pixabay", "coverr"], key="a_source")
     
     # Dynamic Source API Key Input field
@@ -740,50 +851,65 @@ with tab2:
     subtitles_a = st.checkbox("Enable Subtitles", value=True, key="a_subs")
     
     # Transcript text file uploader — bypasses Whisper entirely
-    transcript_file_a = st.file_uploader(
+    transcript_files_a = st.file_uploader(
         "📝 Transcript Text File (Tùy chọn — Bỏ qua Whisper)",
         type=["md", "txt"],
-        accept_multiple_files=False,
+        accept_multiple_files=True,
         key="a_transcript",
-        help="Upload file .md hoặc .txt chứa nội dung gốc của audio. Hệ thống sẽ bỏ qua Whisper hoàn toàn, tiết kiệm VRAM và thời gian xử lý."
+        help="Upload file .md hoặc .txt chứa nội dung gốc của audio. Bạn có thể chọn nhiều file, hệ thống sẽ tự động sắp xếp theo thứ tự natural sort."
     )
     
     # Read and clean transcript text
     transcript_text_a = ""
-    if transcript_file_a is not None:
-        raw_text = transcript_file_a.read().decode("utf-8", errors="ignore")
-        # Strip markdown formatting if .md file
+    if transcript_files_a:
         import re
-        def _clean_markdown_simple(text: str) -> str:
-            """Strip markdown formatting, keeping only readable text."""
-            if not text:
-                return ""
-            text = re.sub(r'```[\s\S]*?```', '', text)  # code blocks
-            text = re.sub(r'`[^`]+`', '', text)  # inline code
-            text = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', text)  # images
-            text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)  # links
-            text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # bold
-            text = re.sub(r'\*(.+?)\*', r'\1', text)  # italic
-            text = re.sub(r'__(.+?)__', r'\1', text)  # bold alt
-            text = re.sub(r'_(.+?)_', r'\1', text)  # italic alt
-            text = re.sub(r'^\s*[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)  # hr
-            text = re.sub(r'^\s*>\s*', '', text, flags=re.MULTILINE)  # blockquote
-            text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)  # headers
-            text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)  # bullets
-            text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)  # numbered
-            # Collapse multiple blank lines
-            text = re.sub(r'\n{3,}', '\n\n', text)
-            return text.strip()
+        def _natural_sort_key_file(f):
+            return [int(part) if part.isdigit() else part.lower()
+                    for part in re.split(r'(\d+)', f.name)]
+        sorted_transcript_files = sorted(transcript_files_a, key=_natural_sort_key_file)
         
-        transcript_text_a = _clean_markdown_simple(raw_text)
-        if transcript_text_a:
+        cleaned_contents = []
+        for transcript_file in sorted_transcript_files:
+            raw_text = transcript_file.read().decode("utf-8", errors="ignore")
+            # Strip markdown formatting if .md file
+            import re
+            def _clean_markdown_simple(text: str) -> str:
+                """Strip markdown formatting, keeping only readable text."""
+                if not text:
+                    return ""
+                text = re.sub(r'```[\s\S]*?```', '', text)  # code blocks
+                text = re.sub(r'`[^`]+`', '', text)  # inline code
+                text = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', text)  # images
+                text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)  # links
+                text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # bold
+                text = re.sub(r'\*(.+?)\*', r'\1', text)  # italic
+                text = re.sub(r'__(.+?)__', r'\1', text)  # bold alt
+                text = re.sub(r'_(.+?)_', r'\1', text)  # italic alt
+                text = re.sub(r'^\s*[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)  # hr
+                text = re.sub(r'^\s*>\s*', '', text, flags=re.MULTILINE)  # blockquote
+                text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)  # headers
+                text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)  # bullets
+                text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)  # numbered
+                # Collapse multiple blank lines
+                text = re.sub(r'\n{3,}', '\n\n', text)
+                return text.strip()
+            
+            cleaned = _clean_markdown_simple(raw_text)
+            if cleaned:
+                cleaned_contents.append(cleaned)
+        
+        if cleaned_contents:
+            transcript_text_a = "\n\n".join(cleaned_contents)
             word_count = len(transcript_text_a.split())
-            st.success(f"⚡ Chế độ nhanh: Sẽ bỏ qua Whisper transcription ({word_count:,} từ đã đọc)")
+            file_names_sorted = [f.name for f in sorted_transcript_files]
+            st.success(f"⚡ Chế độ nhanh: Sẽ bỏ qua Whisper transcription ({word_count:,} từ đã đọc từ {len(sorted_transcript_files)} file: {file_names_sorted})")
         else:
-            st.warning("File transcript rỗng, sẽ dùng Whisper như bình thường.")
+            st.warning("Các file transcript đều rỗng hoặc không đọc được, sẽ dùng Whisper như bình thường.")
+            
+    has_audio_a = bool(audio_files_a) if input_method_a == "Upload qua trình duyệt" else bool(local_audio_paths_a)
     
     if st.button("Generate Video (Auto)", type="primary"):
-        if not audio_files_a:
+        if not has_audio_a:
             st.error("Audio file is required!")
         else:
             task_id = str(uuid.uuid4())
@@ -805,7 +931,10 @@ with tab2:
             def run_in_thread():
                 try:
                     logger.info("=== Bắt đầu Workflow 2 (Auto Mode) ===")
-                    audio_path = merge_audio_files(audio_files_a, task_dir)
+                    if input_method_a == "Upload qua trình duyệt":
+                        audio_path = merge_audio_files(audio_files_a, task_dir)
+                    else:
+                        audio_path = merge_audio_paths(local_audio_paths_a, task_dir)
                     
                     final_video = composer.run_workflow(
                         task_id=task_id,
@@ -875,3 +1004,165 @@ with tab2:
                 else:
                     st.success("Video generated successfully!")
                     st.video(final_video)
+
+
+with tab3:
+    st.header("Workflow 3: Split Video")
+    st.write("Chia nhỏ video thành số đoạn bằng nhau. Người dùng có thể upload video hoặc chọn đường dẫn video cục bộ.")
+    
+    input_method_s = st.radio(
+        "Phương thức chọn file (Split)",
+        ["Upload qua trình duyệt", "Nhập đường dẫn cục bộ (Local Paths)"],
+        horizontal=True,
+        key="s_input_method"
+    )
+    
+    uploaded_video_s = None
+    local_video_path_s = ""
+    
+    if input_method_s == "Upload qua trình duyệt":
+        uploaded_video_s = st.file_uploader("Upload Video (Bắt buộc)", type=["mp4", "mov", "avi", "mkv"], key="s_uploaded_video")
+    else:
+        local_video_path_s = st.text_input("Đường dẫn file Video cục bộ (Bắt buộc)", key="s_local_video", help="Ví dụ: D:/videos/background.mp4")
+        if local_video_path_s.strip():
+            local_video_path_s = local_video_path_s.strip().strip('"').strip("'")
+            
+    num_parts_s = st.number_input("Số phần cần chia (N)", min_value=2, max_value=100, value=3, step=1, key="s_num_parts")
+    fast_split_s = st.checkbox("Cắt nhanh không mã hóa lại (Fast Split)", value=True, key="s_fast_split", 
+                               help="Nếu bật, FFmpeg sẽ sử dụng cơ chế stream copy (cực nhanh, không mất chất lượng). Nếu tắt, video sẽ được re-encode (chậm hơn nhưng chính xác khung hình/keyframe).")
+    
+    has_video_s = bool(uploaded_video_s) if input_method_s == "Upload qua trình duyệt" else bool(local_video_path_s)
+    
+    st.info(f"📁 Thư mục lưu kết quả mặc định: `{st.session_state['output_folder']}` (Bạn có thể thay đổi thư mục này ở ô cấu hình đầu trang)")
+    
+    if st.button("Bắt đầu chia Video", type="primary", key="s_run_btn"):
+        if not has_video_s:
+            st.error("Vui lòng tải lên video hoặc nhập đường dẫn video cục bộ!")
+        else:
+            task_id = str(uuid.uuid4())
+            task_dir = utils.task_dir(task_id)
+            os.makedirs(task_dir, exist_ok=True)
+            log_path = os.path.join(task_dir, "run.log")
+            
+            # Start loguru sink
+            sink_id = logger.add(log_path, format="{time:HH:mm:ss} - {message}", level="INFO")
+            
+            st.info("Bắt đầu xử lý... Xem tiến độ ở khung Console Log bên dưới.")
+            log_placeholder = st.empty()
+            
+            import threading
+            import time
+            
+            result = {"parts": None, "error": None, "done": False, "user_output_dir": None}
+            
+            def run_in_thread():
+                try:
+                    import importlib
+                    import app.services.composer
+                    importlib.reload(app.services.composer)
+                    from app.services.composer import composer
+                    
+                    logger.info("=== Bắt đầu Workflow 3 (Split Video) ===")
+                    if input_method_s == "Upload qua trình duyệt":
+                        video_path = save_uploaded_file(uploaded_video_s, task_dir)
+                    else:
+                        video_path = local_video_path_s
+                        if not os.path.exists(video_path):
+                            raise FileNotFoundError(f"Không tìm thấy file video cục bộ: {video_path}")
+                    
+                    output_files = composer.split_video_into_parts(
+                        task_id=task_id,
+                        video_path=video_path,
+                        num_parts=int(num_parts_s),
+                        fast_split=fast_split_s
+                    )
+                    
+                    # Copy split parts to the user-specified output folder for easy access
+                    base_name, _ = os.path.splitext(os.path.basename(video_path))
+                    out_dir_name = f"split_{base_name}_{int(time.time())}"
+                    user_output_dir = os.path.join(st.session_state["output_folder"], out_dir_name)
+                    os.makedirs(user_output_dir, exist_ok=True)
+                    
+                    copied_files = []
+                    for f_path in output_files:
+                        dest_f = os.path.join(user_output_dir, os.path.basename(f_path))
+                        shutil.copy(f_path, dest_f)
+                        copied_files.append(dest_f)
+                    
+                    # Also copy the ZIP file
+                    zip_src = os.path.join(task_dir, "split_parts.zip")
+                    if os.path.exists(zip_src):
+                        shutil.copy(zip_src, os.path.join(user_output_dir, "split_parts.zip"))
+                        
+                    result["parts"] = output_files
+                    result["user_output_dir"] = user_output_dir
+                    logger.info(f"Đã sao chép các phần video sang thư mục đầu ra: {user_output_dir}")
+                    logger.info("=== Hoàn thành Workflow 3 thành công! ===")
+                except Exception as ex:
+                    import traceback
+                    logger.error(f"Lỗi: {ex}")
+                    logger.error(traceback.format_exc())
+                    result["error"] = ex
+                finally:
+                    result["done"] = True
+                    try:
+                        logger.remove(sink_id)
+                    except Exception:
+                        pass
+            
+            thread = threading.Thread(target=run_in_thread, name=f"task_{task_id}")
+            thread.start()
+            
+            # Read and display log in real-time
+            while not result["done"]:
+                time.sleep(0.5)
+                if os.path.exists(log_path):
+                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                        log_data = f.read()
+                    try:
+                        log_placeholder.code(log_data, language="text")
+                    except Exception:
+                        break
+            
+            # Final log update
+            if os.path.exists(log_path):
+                with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                    log_data = f.read()
+                try:
+                    log_placeholder.code(log_data, language="text")
+                except Exception:
+                    pass
+            
+            if result["error"]:
+                st.error(f"Lỗi khi chia video: {result['error']}")
+            elif result["parts"]:
+                parts = result["parts"]
+                user_output_dir = result["user_output_dir"]
+                st.success(f"🎉 Đã chia video thành {len(parts)} phần thành công!")
+                st.info(f"📁 Các phần video đã được lưu tại: `{user_output_dir}`")
+                
+                # Zip file download
+                zip_path = os.path.join(task_dir, "split_parts.zip")
+                if os.path.exists(zip_path):
+                    with open(zip_path, "rb") as f:
+                        st.download_button(
+                            label="📥 Tải xuống tất cả các phần (ZIP)",
+                            data=f,
+                            file_name="split_parts.zip",
+                            mime="application/zip",
+                            key="dl_zip_immediate_workflow3"
+                        )
+                
+                for idx, part_path in enumerate(parts):
+                    part_filename = os.path.basename(part_path)
+                    st.markdown(f"**Phần {idx+1}: {part_filename}**")
+                    st.video(part_path)
+                    with open(part_path, "rb") as f:
+                        st.download_button(
+                            label=f"📥 Tải xuống phần {idx+1}",
+                            data=f,
+                            file_name=part_filename,
+                            mime="video/mp4",
+                            key=f"dl_part_immediate_workflow3_{idx}"
+                        )
+
