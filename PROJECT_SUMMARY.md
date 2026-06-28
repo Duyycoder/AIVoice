@@ -14,13 +14,16 @@ Tài liệu này tổng hợp toàn bộ thông tin chi tiết của dự án **
   2. **Piper (Offline):** Bộ tổng hợp giọng nói cực nhẹ chạy qua mô hình ONNX Runtime, lý tưởng cho CPU hoặc GPU cấp thấp.
   3. **XTTSv2 Voice Cloning (Offline):** Nhân bản giọng nói bất kỳ từ một file âm thanh mẫu (~6 giây) cục bộ qua mô hình Coqui XTTSv2.
   4. **RVC Voice Conversion (Offline):** Chuyển đổi giọng nói (Voice-to-Voice) thông qua Retrieval-based Voice Conversion như một bước hậu xử lý hoặc bộ lọc độc lập.
-  5. **Local AI Spice (Offline):** Tích hợp GGUF LLM cục bộ (thông qua `llama-cpp-python`) để viết lại văn bản đầu vào sinh động trước khi đọc.
+  5. **VieNeu-TTS (Offline/Online):** Động cơ sinh giọng nói tiếng Việt tự nhiên chất lượng cao chạy offline với nhiều chế độ và biểu cảm.
+  6. **Kokoro-Vietnamese (Offline):** Động cơ sinh giọng nói tiếng Việt chạy trên PyTorch siêu nhẹ với nhiều giọng đọc chất lượng cao.
+  7. **Valtec-TTS (Offline):** Động cơ sinh giọng nói tiếng Việt dựa trên VITS chạy offline.
+  8. **Local AI Spice (Offline):** Tích hợp GGUF LLM cục bộ (thông qua `llama-cpp-python`) để viết lại văn bản đầu vào sinh động trước khi đọc.
 
 ### 1.2. Nguyên lý thiết kế (Clean Architecture)
 Dự án áp dụng nguyên lý **Tách biệt Mối quan tâm (Separation of Concerns)**:
 * **Giao diện người dùng (UI/CLI)** tách biệt hoàn toàn khỏi logic xử lý mô hình AI.
 * **Lớp Adapters (Engines)** kế thừa một giao diện chung để có thể thay thế hoặc bổ sung các công nghệ TTS mới mà không ảnh hưởng tới luồng xử lý chính.
-* **Lớp Tiện ích (Utils)** quản lý độc lập các tác vụ phụ trợ như tiền xử lý văn bản, hậu xử lý âm thanh, và chuyển đổi IPA.
+* **Lớp Tiện ích (Utils)** quản lý độc lập các tác vụ phụ trợ như tiền xử lý văn bản, hậu xử lý âm thanh, bộ nhớ đệm (Semantic Cache), và chuyển đổi IPA.
 
 ---
 
@@ -51,11 +54,15 @@ AIVoice/
 │   │   ├── edge.py        # Động cơ Microsoft Edge TTS Online
 │   │   ├── piper.py       # Động cơ Piper TTS ONNX Offline
 │   │   ├── clone.py       # Động cơ nhân bản giọng Coqui XTTSv2 Offline
-│   │   └── rvc_engine.py  # Động cơ đổi giọng nói Voice-to-Voice RVC Offline
+│   │   ├── rvc_engine.py  # Động cơ đổi giọng nói Voice-to-Voice RVC Offline
+│   │   ├── kokoro.py      # Động cơ Kokoro-Vietnamese Offline
+│   │   ├── valtec.py      # Động cơ Valtec-TTS Offline
+│   │   └── vieneu.py      # Động cơ VieNeu-TTS Offline/Online
 │   │
 │   └── utils/             # Các thư viện bổ trợ
 │       ├── audio.py       # Ghép nối file âm thanh, fade-in/out, chuẩn hóa LUFS, cắt nhỏ file cho RVC
 │       ├── text.py        # Làm sạch cú pháp markdown và thuật toán phân chia đoạn văn (chunking)
+│       ├── cache.py       # Bộ quản lý bộ nhớ đệm thông minh Semantic Cache
 │       ├── phoneme.py     # Phiên âm từ tiếng Việt sang IPA (hỗ trợ XTTSv2)
 │       └── local_ai_spice.py # Viết lại văn bản đầu vào sinh động qua mô hình LLM cục bộ
 │

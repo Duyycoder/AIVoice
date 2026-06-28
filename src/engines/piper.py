@@ -9,14 +9,14 @@ class PiperEngine(BaseTTSEngine):
     """Adapter for the Piper TTS engine running local ONNX models."""
     
     def __init__(self, model_path: str = None):
-        self.model_path = model_path
+        self.model_path = None
         self.voice = None
         
         # Lazy loading on first generation to keep initialization lightweight
         if model_path and os.path.exists(model_path):
             try:
                 self._load_model(model_path)
-            except (ImportError, ModuleNotFoundError):
+            except Exception:
                 pass
             
     def _load_model(self, path: str):

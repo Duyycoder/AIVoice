@@ -81,9 +81,20 @@ def chunk_text(text: str, max_words: int = 50, max_chars: int = 240) -> list[str
                     test_chunk = current_chunk + [word]
                     test_str = " ".join(test_chunk)
                     
-                    if (len(test_chunk) > max_words or len(test_str) > max_chars) and current_chunk:
-                        line_sentences.append(" ".join(current_chunk))
-                        current_chunk = [word]
+                    if (len(test_chunk) > max_words or len(test_str) > max_chars):
+                        if current_chunk:
+                            line_sentences.append(" ".join(current_chunk))
+                            if len(word) > max_chars:
+                                word_truncated = word[:max_chars - 3] + "..."
+                                line_sentences.append(word_truncated)
+                                current_chunk = []
+                            else:
+                                current_chunk = [word]
+                        else:
+                            # Single word exceeds max_chars! Truncate it to avoid engine crashes
+                            word_truncated = word[:max_chars - 3] + "..."
+                            line_sentences.append(word_truncated)
+                            current_chunk = []
                     else:
                         current_chunk.append(word)
                         if word.endswith(','):
@@ -137,10 +148,11 @@ _symbols_vi = [
     (re.compile(r'\+'), ' cộng '),
     (re.compile(r'\$'), ' đô la '),
     (re.compile(r'₫'), ' đồng '),
-    (re.compile(r'đ'), ' đồng '),
+    (re.compile(r'(?<=\d)\s*đ\b'), ' đồng '),
 ]
 
 _abbreviations_vi = [
+    (re.compile(r'\bvcl\b', re.IGNORECASE), 'vờ cờ lờ'),
     (re.compile(r'\bSĐT\b', re.IGNORECASE), 'số điện thoại'),
     (re.compile(r'\bSđt\b', re.IGNORECASE), 'số điện thoại'),
     (re.compile(r'\bsđt\b', re.IGNORECASE), 'số điện thoại'),
@@ -190,6 +202,10 @@ def vietnamese_cleaners(text: str) -> str:
         except:
             return m.group(0)
     text = re.sub(r'\b\d+\b', repl_int, text)
+    
+    # Add space around punctuation to prevent G2P/alignment errors
+    text = re.sub(r'([a-z0-9_đà-ỹ]+)([.,!?;:…])', r'\1 \2', text, flags=re.IGNORECASE)
+    text = re.sub(r'([.,!?;:…])([a-z0-9_đà-ỹ]+)', r'\1 \2', text, flags=re.IGNORECASE)
     
     # Clean up standard punctuation/symbols
     text = text.replace(';', ',')

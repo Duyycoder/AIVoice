@@ -615,6 +615,9 @@
                         <option value="edge">Edge-TTS (Online Cloud)</option>
                         <option value="piper">Piper TTS (Offline ONNX)</option>
                         <option value="clone">Clone TTS (Offline XTTSv2)</option>
+                        <option value="valtec">Valtec-TTS (Offline CC BY-NC 4.0)</option>
+                        <option value="kokoro">Kokoro-Vietnamese (Offline PyTorch - Free Commercial)</option>
+                        <option value="vieneu">VieNeu-TTS (Offline ONNX - Free Commercial)</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -624,6 +627,21 @@
             </div>
 
             <!-- Tham số động cơ -->
+            <div id="section-ref-audio" class="form-row" style="display: none; flex-direction: column; gap: 10px;">
+                <div class="form-group" style="width: 100%;">
+                    <label>Giọng nói mẫu (Reference Audio)</label>
+                    <div style="display: flex; gap: 10px; width: 100%;">
+                        <select id="ref_audio" style="flex: 1; min-width: 0;"></select>
+                        <input type="file" id="upload_ref_audio_file" accept=".wav" style="display: none;" onchange="uploadRefAudio()">
+                        <button class="btn" type="button" onclick="document.getElementById('upload_ref_audio_file').click()" style="background: rgba(0, 168, 204, 0.1); color: #00a8cc; border: 1px solid rgba(0, 168, 204, 0.2); padding: 8px 12px; white-space: nowrap; font-size: 14px;">📤 Tải lên giọng mẫu (.wav)</button>
+                    </div>
+                </div>
+                <div class="form-group" style="width: 100%;">
+                    <label>Văn bản giọng mẫu (Không bắt buộc với XTTS, khuyên dùng với VieNeu)</label>
+                    <input type="text" id="ref_text" placeholder="Nhập chính xác câu nói trong file âm thanh mẫu để căn lề tránh rè xèo..." style="width: 100%;">
+                </div>
+            </div>
+
             <div id="engine-edge" class="form-group">
                 <label>Giọng đọc Edge-TTS</label>
                 <select id="voice_edge"></select>
@@ -641,16 +659,109 @@
             </div>
 
             <div id="engine-clone" class="form-row" style="display: none;">
-                <div class="form-group">
-                    <label>Giọng nói mẫu (Reference Audio)</label>
-                    <select id="ref_audio"></select>
-                </div>
-                <div class="form-group">
+                <div class="form-group" style="width: 100%;">
                     <label>Ngôn ngữ (Language Code)</label>
                     <select id="voice_clone">
                         <option value="vi">Tiếng Việt (vi)</option>
                         <option value="en">Tiếng Anh (en)</option>
                     </select>
+                </div>
+            </div>
+
+            <div id="engine-valtec" class="form-row" style="display: none;">
+                <div class="form-group" style="width: 100%;">
+                    <label>Giọng đọc Valtec-TTS (Speaker)</label>
+                    <select id="voice_valtec">
+                        <option value="NF">NF (Nữ miền Bắc)</option>
+                        <option value="SF">SF (Nữ miền Nam)</option>
+                        <option value="NM1">NM1 (Nam miền Bắc 1)</option>
+                        <option value="NM2">NM2 (Nam miền Bắc 2)</option>
+                        <option value="SM">SM (Nam miền Nam)</option>
+                    </select>
+                    <div style="color: #ff4d4d; font-size: 0.85em; margin-top: 5px; font-weight: 500;">
+                        ⚠️ Lưu ý: Động cơ Valtec-TTS có giấy phép CC BY-NC 4.0 phi thương mại. Vui lòng không sử dụng cho các video bật kiếm tiền YouTube.
+                    </div>
+                </div>
+            </div>
+
+            <div id="engine-kokoro" class="form-row" style="display: none;">
+                <div class="form-group" style="width: 100%;">
+                    <label>Giọng đọc Kokoro-Vietnamese</label>
+                    <select id="voice_kokoro">
+                        <option value="diem_trinh">Diễm Trinh (Nữ miền Nam)</option>
+                        <option value="hung_thinh">Hưng Thịnh (Nam miền Nam)</option>
+                        <option value="mai_linh">Mai Linh (Nữ miền Bắc)</option>
+                        <option value="mai_loan">Mai Loan (Nữ miền Bắc)</option>
+                        <option value="manh_dung">Mạnh Dũng (Nam miền Bắc)</option>
+                        <option value="my_yen">Mỹ Yến (Nữ miền Nam)</option>
+                        <option value="ngoc_huyen">Ngọc Huyền (Nữ miền Bắc)</option>
+                        <option value="phat_tai">Phát Tài (Nam miền Nam)</option>
+                        <option value="thanh_dat">Thành Đạt (Nam miền Bắc)</option>
+                        <option value="thuc_trinh">Thục Trinh (Nữ miền Bắc)</option>
+                        <option value="tuan_ngoc">Tuấn Ngọc (Nam miền Bắc)</option>
+                        <option value="storyvert">Storyvert (Nữ miền Bắc)</option>
+                        <option value="duc_an">Đức An (Nam miền Bắc)</option>
+                        <option value="duc_duy">Đức Duy (Nam miền Bắc)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="engine-vieneu" class="form-row" style="display: none; flex-wrap: wrap;">
+                <div class="form-group">
+                    <label>Chế độ VieNeu-TTS (Mode)</label>
+                    <select id="vieneu_mode">
+                        <option value="v3turbo">v3turbo (ONNX - Siêu tốc CPU)</option>
+                        <option value="standard">standard (Tiêu chuẩn)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Giọng đọc VieNeu-TTS</label>
+                    <select id="voice_vieneu" onchange="onVieneuVoiceChange()">
+                        <option value="Ngọc Lan">Ngọc Lan (Nữ - Dịu dàng)</option>
+                        <option value="Gia Bảo">Gia Bảo (Nam - Mượt mà)</option>
+                        <option value="Thái Sơn">Thái Sơn (Nam - Chắc khỏe)</option>
+                        <option value="Đức Trí">Đức Trí (Nam - Rõ ràng)</option>
+                        <option value="Mỹ Duyên">Mỹ Duyên (Nữ - Mượt mà)</option>
+                        <option value="Trúc Ly">Trúc Ly (Nữ - Trẻ trung)</option>
+                        <option value="Xuân Vĩnh">Xuân Vĩnh (Nam - Vui tươi)</option>
+                        <option value="Trọng Hữu">Trọng Hữu (Nam - Uyên bác)</option>
+                        <option value="Bình An">Bình An (Nam - Điềm đạm)</option>
+                        <option value="Ngọc Linh" selected>Ngọc Linh (Nữ - Tươi sáng)</option>
+                        <option value="ref_audio">Sử dụng file giọng mẫu (Clone)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Ngữ điệu / Biểu cảm (Emotion)</label>
+                    <select id="vieneu_emotion">
+                        <option value="natural">Tự nhiên (Natural)</option>
+                        <option value="storytelling">Kể chuyện (Storytelling)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Sự sáng tạo (Temperature)</label>
+                    <input type="number" id="vieneu_temp" min="0.1" max="1.5" step="0.05" value="0.3">
+                </div>
+                <div style="width: 100%; font-size: 13px; color: var(--text-muted); margin-top: -5px; padding-left: 5px;">
+                    💡 Mẹo: Chèn các nhãn biểu cảm trực tiếp vào nội dung như <code>[cười]</code>, <code>[thở dài]</code> hoặc <code>[hắng giọng]</code> để giọng đọc sinh động tự nhiên hơn.
+                </div>
+            </div>
+
+            <!-- Bộ đệm ngữ nghĩa -->
+            <div class="section-header">Bộ đệm ngữ nghĩa (Semantic Cache)</div>
+            <div class="form-row">
+                <div class="toggle-group">
+                    <label>Kích hoạt Semantic Cache</label>
+                    <label class="switch">
+                        <input type="checkbox" id="use_cache">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Độ tương đồng tối thiểu (Similarity Threshold)</label>
+                    <input type="number" id="cache_threshold" value="0.95" min="0.80" max="1.00" step="0.01">
+                </div>
+                <div class="form-group" style="display: flex; align-items: flex-end; margin-bottom: 12px;">
+                    <button class="btn" onclick="clearSemanticCache()" style="background: rgba(255, 68, 68, 0.1); color: #ff4444; border: 1px solid rgba(255, 68, 68, 0.2); padding: 8px 12px;">🗑️ Xóa Cache</button>
                 </div>
             </div>
 
@@ -803,6 +914,7 @@
             loadModelsAndGpu();
             loadVoices();
             loadHistory();
+            updateRefAudioVisibility();
         };
 
         function setHardwareProfile(profile) {
@@ -834,11 +946,26 @@
             document.getElementById('group-batch').style.display = mode === 'batch' ? 'flex' : 'none';
         }
 
+        function updateRefAudioVisibility() {
+            const engine = document.getElementById('engine').value;
+            const vieneuVoice = document.getElementById('voice_vieneu').value;
+            const showRef = (engine === 'clone') || (engine === 'vieneu' && vieneuVoice === 'ref_audio');
+            document.getElementById('section-ref-audio').style.display = showRef ? 'flex' : 'none';
+        }
+
         function onEngineChange() {
             const engine = document.getElementById('engine').value;
             document.getElementById('engine-edge').style.display = engine === 'edge' ? 'flex' : 'none';
             document.getElementById('engine-piper').style.display = engine === 'piper' ? 'flex' : 'none';
             document.getElementById('engine-clone').style.display = engine === 'clone' ? 'flex' : 'none';
+            document.getElementById('engine-valtec').style.display = engine === 'valtec' ? 'flex' : 'none';
+            document.getElementById('engine-kokoro').style.display = engine === 'kokoro' ? 'flex' : 'none';
+            document.getElementById('engine-vieneu').style.display = engine === 'vieneu' ? 'flex' : 'none';
+            updateRefAudioVisibility();
+        }
+
+        function onVieneuVoiceChange() {
+            updateRefAudioVisibility();
         }
 
         function toggleLlmSection() {
@@ -981,6 +1108,69 @@
             player.play();
         }
 
+        function clearSemanticCache() {
+            if (!confirm("Bạn có chắc chắn muốn xóa toàn bộ bộ đệm ngữ nghĩa (Semantic Cache) không?")) {
+                return;
+            }
+            fetch('/api/clear_cache', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert("Đã xóa sạch bộ đệm ngữ nghĩa thành công!");
+                    } else {
+                        alert("Lỗi khi xóa bộ đệm: " + data.message);
+                    }
+                })
+                .catch(err => {
+                    alert("Lỗi kết nối máy chủ: " + err);
+                });
+        }
+
+        function uploadRefAudio() {
+            const fileInput = document.getElementById('upload_ref_audio_file');
+            if (fileInput.files.length === 0) return;
+            
+            const file = fileInput.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const btn = fileInput.nextElementSibling;
+            const originalText = btn.textContent;
+            btn.textContent = "⏳ Đang tải lên...";
+            btn.disabled = true;
+            
+            fetch('/api/upload/ref_audio', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.textContent = originalText;
+                btn.disabled = false;
+                if (data.status === 'success') {
+                    alert("Tải lên tệp giọng mẫu thành công!");
+                    const refSelect = document.getElementById('ref_audio');
+                    refSelect.innerHTML = "";
+                    data.ref_audio.forEach(name => {
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        refSelect.appendChild(opt);
+                    });
+                    refSelect.value = data.uploaded_filename;
+                } else {
+                    alert("Tải lên thất bại: " + data.message);
+                }
+                fileInput.value = "";
+            })
+            .catch(err => {
+                btn.textContent = originalText;
+                btn.disabled = false;
+                alert("Lỗi kết nối máy chủ: " + err);
+                fileInput.value = "";
+            });
+        }
+
         function startGeneration() {
             const consoleDiv = document.getElementById('console');
             consoleDiv.innerHTML = '<div class="console-line">Bắt đầu gửi yêu cầu lên máy chủ...</div>';
@@ -997,7 +1187,9 @@
                 fade_in: parseFloat(document.getElementById('fade_in').value),
                 fade_out: parseFloat(document.getElementById('fade_out').value),
                 output_dir: document.getElementById('output_dir').value,
-                output_name: document.getElementById('output_name').value
+                output_name: document.getElementById('output_name').value,
+                use_cache: document.getElementById('use_cache').checked,
+                cache_threshold: parseFloat(document.getElementById('cache_threshold').value)
             };
 
             // Warning prompt if using rtx5060 on lower memory GPU
@@ -1037,6 +1229,22 @@
                 payload.model = 'xtts_v2';
                 payload.ref_audio = document.getElementById('ref_audio').value;
                 payload.voice = document.getElementById('voice_clone').value;
+            } else if (payload.engine === 'valtec') {
+                payload.voice = document.getElementById('voice_valtec').value;
+            } else if (payload.engine === 'kokoro') {
+                payload.voice = document.getElementById('voice_kokoro').value;
+            } else if (payload.engine === 'vieneu') {
+                payload.vieneu_mode = document.getElementById('vieneu_mode').value;
+                const vieneuVoice = document.getElementById('voice_vieneu').value;
+                if (vieneuVoice === 'ref_audio') {
+                    payload.voice = 'ref_audio';
+                    payload.ref_audio = document.getElementById('ref_audio').value;
+                    payload.ref_text = document.getElementById('ref_text').value.trim();
+                } else {
+                    payload.voice = vieneuVoice;
+                }
+                payload.vieneu_emotion = document.getElementById('vieneu_emotion').value;
+                payload.vieneu_temp = parseFloat(document.getElementById('vieneu_temp').value);
             }
 
             // LLM Spice

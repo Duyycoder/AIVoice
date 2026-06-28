@@ -31,12 +31,12 @@ def download_file(url, output_path):
         sys.exit(1)
 
 def main():
-    parser = argparse.ArgumentParser(description="Download model weights for Piper and/or XTTSv2 clone engines.")
+    parser = argparse.ArgumentParser(description="Download model weights for AIVoice TTS engines.")
     parser.add_argument(
         "--engine",
-        choices=["piper", "clone", "all"],
+        choices=["piper", "clone", "valtec", "kokoro", "vieneu", "all"],
         default="piper",
-        help="Specify which model files to download: 'piper', 'clone', or 'all' (default: piper)."
+        help="Specify which model files to download: 'piper', 'clone', 'valtec', 'kokoro', 'vieneu', or 'all' (default: piper)."
     )
     args = parser.parse_args()
     
@@ -94,6 +94,24 @@ def main():
                 download_file(url, out_path)
             else:
                 print(f"{dest_name} already exists at {out_path}.")
+                
+    # 3. Valtec-TTS model info
+    if args.engine in ["valtec", "all"]:
+        print("\nChecking Valtec-TTS model weights...")
+        print("[INFO] Valtec-TTS weights are automatically downloaded from HuggingFace on its first execution.")
+        print("[INFO] No manual downloading is required.")
+        
+    # 4. Kokoro-Vietnamese model info
+    if args.engine in ["kokoro", "all"]:
+        print("\nChecking Kokoro-Vietnamese model weights...")
+        print("[INFO] Kokoro-Vietnamese weights (pth, voicepack, config) are automatically downloaded from HuggingFace on first execution.")
+        print("[INFO] No manual downloading is required.")
+        
+    # 5. VieNeu-TTS v3 Turbo model info
+    if args.engine in ["vieneu", "all"]:
+        print("\nChecking VieNeu-TTS model weights...")
+        print("[INFO] VieNeu-TTS v3 Turbo ONNX/GGUF model is automatically downloaded from HuggingFace on its first execution.")
+        print("[INFO] No manual downloading is required.")
 
 if __name__ == "__main__":
     main()
