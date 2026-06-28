@@ -11,7 +11,7 @@
 * **VRAM Serialization (Locking):** Flask backend must serialize GPU inference calls via a global `threading.Lock()` to prevent concurrent VRAM OOM.
 * **Path Security & Sanitization:** Absolute external paths are allowed, but writing to critical system directories (`C:\Windows`, `C:\Program Files`) and project code/weight folders (`src/`, `models/`, `.venv/`, `.git/`, `configs/`, `tests/`) is strictly blocked.
 * **Chunking Limit:** Text chunking limit (`max_words`) is set to `50` to improve prosody on modern GPUs while keeping VRAM safe.
-* **Launchers:** Location-independent `.bat` files (`chay_giao_dien.bat`, `kiem_tra_gpu.bat`, `chay_kiem_thu.bat`) resolve the project root (`F:\programfiles\AIVoice`) if moved or run from the Desktop.
+* **Launchers:** Location-independent `.bat` and `.sh` files (`chay_giao_dien.bat`/`.sh`, `kiem_tra_gpu.bat`/`.sh`, `chay_kiem_thu.bat`/`.sh`) resolve the project root dynamically relative to their location, ensuring portability.
 
 ## 2. Global System Layout
 All logic goes in `src/`, config files in `configs/`, models in `models/`, user files in `data/`, templates in `templates/`, and test assets in `tests/test_data/`.

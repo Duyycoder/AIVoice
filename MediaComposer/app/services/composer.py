@@ -76,10 +76,13 @@ class ComposerWorkflow:
             logger.info("Extracting search terms using LLM...")
             search_terms = extract_search_terms(srt_text, amount=5)
             if not search_terms:
-                search_terms = ["nature"] # fallback
-            logger.info(f"Search terms: {search_terms}")
-            
-            # Fetch videos
+                search_terms = ["nature"]  # fallback
+            # Add extra generic terms for richer video pool (Option 4)
+            extra_terms = ["fantasy", "magic", "battle", "adventure"]
+            search_terms.extend(extra_terms)
+            logger.info(f"Search terms (including extras): {search_terms}")
+
+            # Fetch videos (Option 2: increase max_clip_duration, Option 5: increase threads)
             fetched_paths = download_videos(
                 task_id=task_id,
                 search_terms=search_terms,
@@ -87,17 +90,37 @@ class ComposerWorkflow:
                 video_aspect=video_aspect,
                 video_concat_mode=concat_mode,
                 audio_duration=audio_duration,
-                max_clip_duration=max_clip_duration,
-                match_script_order=False
+                max_clip_duration=30,  # increased from default 5 seconds
+                match_script_order=False,
+                threads=os.cpu_count() or 4,  # increased threads (Option 5)
             )
             materials_to_use.extend(fetched_paths)
 
         if not materials_to_use:
             raise ValueError("No video materials available to compose.")
 
+        # Limit total video duration to 30 minutes (Option 3)
+        MAX_TOTAL_VIDEO_SECONDS = 30 * 60
+        total_video_seconds = 0.0
+        limited_materials = []
+        from moviepy.video.io.VideoFileClip import VideoFileClip
+        for vp in materials_to_use:
+            try:
+                clip = VideoFileClip(vp)
+                dur = clip.duration
+                clip.close()
+                if total_video_seconds + dur > MAX_TOTAL_VIDEO_SECONDS:
+                    break
+                total_video_seconds += dur
+                limited_materials.append(vp)
+            except Exception:
+                continue
+        if limited_materials:
+            materials_to_use = limited_materials
+
         # 3. Combine Videos
         merged_video_path = os.path.join(task_dir, "merged.mp4")
-        logger.info(f"Combining {len(materials_to_use)} videos...")
+        logger.info(f"Combining {len(materials_to_use)} videos (capped at {MAX_TOTAL_VIDEO_SECONDS}s)...")
         combine_videos(
             combined_video_path=merged_video_path,
             video_paths=materials_to_use,
@@ -105,8 +128,8 @@ class ComposerWorkflow:
             video_aspect=video_aspect,
             video_concat_mode=concat_mode,
             video_transition_mode=None,
-            max_clip_duration=max_clip_duration,
-            threads=threads
+            max_clip_duration=30,  # ensure consistency
+            threads=os.cpu_count() or 4,
         )
 
         # 4. Final Compose

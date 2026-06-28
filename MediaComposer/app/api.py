@@ -6,8 +6,9 @@ from flask import Blueprint, jsonify
 
 # Setup paths
 mediacomposer_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if mediacomposer_dir not in sys.path:
-    sys.path.append(mediacomposer_dir)
+if mediacomposer_dir in sys.path:
+    sys.path.remove(mediacomposer_dir)
+sys.path.insert(0, mediacomposer_dir)
 
 composer_bp = Blueprint('composer', __name__)
 
@@ -28,7 +29,10 @@ def launch_composer():
         # __file__ is AIVoice/MediaComposer/app/api.py
         # MediaComposer is parent of app, AIVoice is parent of MediaComposer
         aivoice_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        venv_python = os.path.join(aivoice_dir, ".venv", "Scripts", "python.exe")
+        if sys.platform == "win32":
+            venv_python = os.path.join(aivoice_dir, ".venv", "Scripts", "python.exe")
+        else:
+            venv_python = os.path.join(aivoice_dir, ".venv", "bin", "python")
         
         if not os.path.exists(venv_python):
             # Fallback to standard python in path if .venv python is missing

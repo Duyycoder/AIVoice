@@ -5,6 +5,14 @@ that your GPU is correctly detected and ready for inference.
 """
 import sys
 
+# Reconfigure stdout/stderr to UTF-8 on Windows to prevent UnicodeEncodeError with emojis
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 def main():
     print("=" * 60)
     print("AIVoice GPU Diagnostic Report")

@@ -81,15 +81,23 @@ class PiperEngine(BaseTTSEngine):
         except Exception as e_lib:
             print(f"Piper library generation failed: {e_lib}. Falling back to subprocess execution.")
             
-            # Determine path to piper executable. Under .venv/Scripts/piper.exe
+            # Determine path to piper executable.
             src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             proj_dir = os.path.dirname(src_dir)
-            piper_exe = os.path.join(proj_dir, ".venv", "Scripts", "piper.exe")
-            if not os.path.exists(piper_exe):
-                venv_bin = os.path.dirname(sys.executable)
-                piper_exe = os.path.join(venv_bin, "piper.exe")
+            if sys.platform == "win32":
+                piper_exe = os.path.join(proj_dir, ".venv", "Scripts", "piper.exe")
                 if not os.path.exists(piper_exe):
-                    piper_exe = "piper"  # Fallback to system PATH
+                    venv_bin = os.path.dirname(sys.executable)
+                    piper_exe = os.path.join(venv_bin, "piper.exe")
+                    if not os.path.exists(piper_exe):
+                        piper_exe = "piper"  # Fallback to system PATH
+            else:
+                piper_exe = os.path.join(proj_dir, ".venv", "bin", "piper")
+                if not os.path.exists(piper_exe):
+                    venv_bin = os.path.dirname(sys.executable)
+                    piper_exe = os.path.join(venv_bin, "piper")
+                    if not os.path.exists(piper_exe):
+                        piper_exe = "piper"  # Fallback to system PATH
                 
             # 2. Ép môi trường Windows sử dụng UTF-8
             env = os.environ.copy()

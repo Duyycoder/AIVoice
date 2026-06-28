@@ -270,7 +270,7 @@ def save_video(video_url: str, save_dir: str = "") -> str:
                 headers=headers,
                 proxies=config.proxy,
                 verify=_get_tls_verify(),
-                timeout=(60, 240),
+                timeout=(15, 60),
             ).content
         )
 
@@ -310,6 +310,7 @@ def download_videos(
     audio_duration: float = 0.0,
     max_clip_duration: int = 5,
     match_script_order: bool = False,
+    threads: int = 4,
 ) -> List[str]:
     search_videos = search_videos_pexels
     if source == "pixabay":
@@ -332,6 +333,7 @@ def download_videos(
             audio_duration=audio_duration,
             max_clip_duration=max_clip_duration,
             material_directory=material_directory,
+            threads=threads,
         )
 
     valid_video_items = []
@@ -360,8 +362,19 @@ def download_videos(
     if concat_mode_value == VideoConcatMode.random.value:
         random.shuffle(valid_video_items)
 
+    # Build queue up to required duration
+    download_queue = []
     total_duration = 0.0
     for item in valid_video_items:
+        download_queue.append(item)
+        seconds = min(max_clip_duration, item.duration)
+        total_duration += seconds
+        if total_duration > audio_duration:
+            break
+
+    logger.info(f"Downloading {len(download_queue)} videos in parallel with {threads} threads...")
+
+    def _do_download(item):
         try:
             logger.info(f"downloading video: {item.url}")
             saved_video_path = save_video(
@@ -369,16 +382,25 @@ def download_videos(
             )
             if saved_video_path:
                 logger.info(f"video saved: {saved_video_path}")
-                video_paths.append(saved_video_path)
-                seconds = min(max_clip_duration, item.duration)
-                total_duration += seconds
-                if total_duration > audio_duration:
-                    logger.info(
-                        f"total duration of downloaded videos: {total_duration} seconds, skip downloading more"
-                    )
-                    break
+                return saved_video_path
         except Exception as e:
             logger.error(f"failed to download video: {utils.to_json(item)} => {str(e)}")
+        return None
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    if threads > 1 and len(download_queue) > 1:
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = {executor.submit(_do_download, item): item for item in download_queue}
+            for future in as_completed(futures):
+                path = future.result()
+                if path:
+                    video_paths.append(path)
+    else:
+        for item in download_queue:
+            path = _do_download(item)
+            if path:
+                video_paths.append(path)
+
     logger.success(f"downloaded {len(video_paths)} videos")
     return video_paths
 
@@ -391,6 +413,7 @@ def _download_videos_by_script_order(
     audio_duration: float,
     max_clip_duration: int,
     material_directory: str,
+    threads: int = 4,
 ) -> List[str]:
     """
     按脚本文案顺序下载素材。
@@ -430,7 +453,7 @@ def _download_videos_by_script_order(
         f"required duration: {audio_duration} seconds, found duration: {found_duration} seconds"
     )
 
-    video_paths = []
+    download_queue = []
     total_duration = 0.0
     candidate_index = 0
     while candidate_groups and total_duration <= audio_duration:
@@ -441,30 +464,45 @@ def _download_videos_by_script_order(
 
             has_candidate = True
             item = term_items[candidate_index]
-            try:
-                logger.info(
-                    f"downloading ordered video for '{search_term}': {item.url}"
-                )
-                saved_video_path = save_video(
-                    video_url=item.url, save_dir=material_directory
-                )
-                if saved_video_path:
-                    logger.info(f"video saved: {saved_video_path}")
-                    video_paths.append(saved_video_path)
-                    total_duration += min(max_clip_duration, item.duration)
-                    if total_duration > audio_duration:
-                        logger.info(
-                            f"total duration of downloaded videos: {total_duration} seconds, skip downloading more"
-                        )
-                        break
-            except Exception as e:
-                logger.error(
-                    f"failed to download ordered video: {utils.to_json(item)} => {str(e)}"
-                )
-
-        if not has_candidate:
+            download_queue.append((search_term, item))
+            total_duration += min(max_clip_duration, item.duration)
+            if total_duration > audio_duration:
+                break
+        if total_duration > audio_duration or not has_candidate:
             break
         candidate_index += 1
+
+    logger.info(f"Downloading {len(download_queue)} ordered videos in parallel with {threads} threads...")
+    video_paths = []
+
+    def _do_download_ordered(search_term, item):
+        try:
+            logger.info(f"downloading ordered video for '{search_term}': {item.url}")
+            saved_video_path = save_video(
+                video_url=item.url, save_dir=material_directory
+            )
+            if saved_video_path:
+                logger.info(f"video saved: {saved_video_path}")
+                return saved_video_path
+        except Exception as e:
+            logger.error(
+                f"failed to download ordered video: {utils.to_json(item)} => {str(e)}"
+            )
+        return None
+
+    from concurrent.futures import ThreadPoolExecutor
+    if threads > 1 and len(download_queue) > 1:
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = [executor.submit(_do_download_ordered, term, item) for term, item in download_queue]
+            for future in futures:
+                path = future.result()
+                if path:
+                    video_paths.append(path)
+    else:
+        for term, item in download_queue:
+            path = _do_download_ordered(term, item)
+            if path:
+                video_paths.append(path)
 
     logger.success(f"downloaded {len(video_paths)} ordered videos")
     return video_paths
