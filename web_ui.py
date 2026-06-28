@@ -1,6 +1,37 @@
+# Import datasets first to prevent a PyTorch 2.6.0 initialization crash on Windows
+try:
+    import datasets
+except Exception:
+    pass
+
 import os
 import tempfile
 import sys
+
+# Monkey-patch torch.utils._pytree.register_constant for PyTorch 2.6.0+ compatibility with torchao
+try:
+    import torch
+    import torch.utils._pytree
+    if not hasattr(torch.utils._pytree, "register_constant"):
+        torch.utils._pytree.register_constant = lambda cls: cls
+except Exception:
+    pass
+
+# Monkey-patch functorch.compile for torchtune/torchao compilation compatibility under PyTorch 2.6.0
+try:
+    import functorch.compile
+    for name in ['min_cut_rematerialization_partition', 'draw_graph', 'get_aot_graph_name', 'get_graph_being_compiled']:
+        if not hasattr(functorch.compile, name):
+            setattr(functorch.compile, name, lambda *args, **kwargs: None)
+except Exception:
+    pass
+
+# Disable flex_attention compilation in torchtune to prevent PyTorch 2.6.0 compiler issues
+try:
+    import torchtune.utils._import_guard
+    torchtune.utils._import_guard._SUPPORTS_FLEX_ATTENTION = False
+except Exception:
+    pass
 
 # Reconfigure stdout/stderr to UTF-8 on Windows to prevent UnicodeEncodeError with Vietnamese characters
 if sys.platform == "win32":
@@ -60,6 +91,15 @@ dataclasses._get_field = patched_get_field
 try:
     import transformers.utils.import_utils
     transformers.utils.import_utils.is_torchcodec_available = lambda: True
+except Exception:
+    pass
+
+# Monkey-patch transformers to expose GPT2PreTrainedModel at top-level for coqui-tts compatibility
+try:
+    import transformers
+    if not hasattr(transformers, "GPT2PreTrainedModel"):
+        from transformers.models.gpt2.modeling_gpt2 import GPT2PreTrainedModel
+        transformers.GPT2PreTrainedModel = GPT2PreTrainedModel
 except Exception:
     pass
 
