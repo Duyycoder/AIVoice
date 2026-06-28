@@ -105,16 +105,68 @@ echo.
 echo ----------------------------------------------------------------------
 echo [INFO] Dang khoi tao moi truong ao (.venv)...
 echo ----------------------------------------------------------------------
+
+set REUSE_SYSTEM=0
+set RECREATE_VENV=0
+
+:: Check if global python has PyTorch CUDA
+set GLOBAL_TORCH_CUDA=0
+%PYTHON_EXE% -c "import torch; exit(0 if torch.cuda.is_available() else 1)" >nul 2>&1
+if !errorlevel! equ 0 (
+    set GLOBAL_TORCH_CUDA=1
+)
+
+if exist .venv (
+    rem .venv already exists, check if it has torch installed
+    .venv\Scripts\python.exe -c "import torch" >nul 2>&1
+    if !errorlevel! neq 0 (
+        rem .venv exists but doesn't have torch, and global python has torch with CUDA
+        if !GLOBAL_TORCH_CUDA! equ 1 (
+            echo.
+            echo [XAC NHAN] Thu muc .venv da ton tai nhung chua duoc cai dat PyTorch.
+            echo Phat hien PyTorch ho tro CUDA da co san tren Python he thong.
+            set /p CHOOSE_RECREATE="Ban co muon khoi tao lai .venv de ke thua PyTorch he thong (tranh phai tai lai 2.4 GB) khong? (Y/N) [Mac dinh: Y]: "
+            if "!CHOOSE_RECREATE!"=="" set CHOOSE_RECREATE=Y
+            if /i "!CHOOSE_RECREATE!"=="Y" (
+                set RECREATE_VENV=1
+                set REUSE_SYSTEM=1
+            )
+        )
+    ) else (
+        echo [INFO] Thu muc .venv da ton tai va da co PyTorch.
+    )
+) else (
+    rem .venv does not exist
+    if !GLOBAL_TORCH_CUDA! equ 1 (
+        echo.
+        echo [XAC NHAN] Phat hien PyTorch ho tro CUDA da co san tren Python he thong.
+        set /p CHOOSE_REUSE="Ban co muon tao .venv ke thua PyTorch he thong (tranh phai tai lai 2.4 GB) khong? (Y/N) [Mac dinh: Y]: "
+        if "!CHOOSE_REUSE!"=="" set CHOOSE_REUSE=Y
+        if /i "!CHOOSE_REUSE!"=="Y" (
+            set REUSE_SYSTEM=1
+        )
+    )
+)
+
+if !RECREATE_VENV! equ 1 (
+    echo [INFO] Dang xoa thu muc .venv cu...
+    rmdir /s /q .venv >nul 2>&1
+)
+
 if not exist .venv (
-    %PYTHON_EXE% -m venv .venv
-    if %errorlevel% neq 0 (
+    if !REUSE_SYSTEM! equ 1 (
+        echo [INFO] Khoi tao .venv ke thua thu vien he thong - system-site-packages...
+        %PYTHON_EXE% -m venv --system-site-packages .venv
+    ) else (
+        echo [INFO] Khoi tao .venv sach hoan toan...
+        %PYTHON_EXE% -m venv .venv
+    )
+    if !errorlevel! neq 0 (
         echo [ERROR] Khoi tao .venv that bai.
         pause
         exit /b 1
     )
     echo [INFO] Khoi tao .venv thanh cong.
-) else (
-    echo [INFO] Thu muc .venv da ton tai.
 )
 echo.
 
@@ -122,8 +174,8 @@ echo.
 echo ----------------------------------------------------------------------
 echo [INFO] Dang thiet lap pip phien ban thich hop (pip 24.0)...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe -m pip install "pip==24.0"
-if %errorlevel% neq 0 (
+.venv\Scripts\python.exe -m pip install --default-timeout=1000 "pip==24.0"
+if !errorlevel! neq 0 (
     echo [WARNING] Cai dat pip 24.0 that bai.
 )
 echo.
@@ -132,8 +184,8 @@ echo.
 echo ----------------------------------------------------------------------
 echo [INFO] Dang cai dat cac thu vien Python (requirements.txt)...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-if %errorlevel% neq 0 (
+.venv\Scripts\python.exe -m pip install --default-timeout=1000 -r requirements.txt
+if !errorlevel! neq 0 (
     echo [ERROR] Cai dat thu vien that bai.
     pause
     exit /b 1
@@ -147,8 +199,8 @@ echo.
 echo ----------------------------------------------------------------------
 echo [INFO] Dang cai dat rvc-python (--no-deps, tranh xung dot numpy)...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe -m pip install rvc-python>=0.1.5 --no-deps
-if %errorlevel% neq 0 (
+.venv\Scripts\python.exe -m pip install --default-timeout=1000 rvc-python>=0.1.5 --no-deps
+if !errorlevel! neq 0 (
     echo [WARNING] Cai dat rvc-python that bai.
 ) else (
     echo [INFO] Cai dat rvc-python thanh cong.
@@ -160,8 +212,8 @@ if !GIT_OK! equ 1 (
     echo ----------------------------------------------------------------------
     echo [INFO] Dang cai dat thu vien phien am tieng Viet viphoneme...
     echo ----------------------------------------------------------------------
-    .venv\Scripts\python.exe -m pip install git+https://github.com/vunb/viphoneme.git git+https://github.com/vunb/vinorm.git
-    if %errorlevel% neq 0 (
+    .venv\Scripts\python.exe -m pip install --default-timeout=1000 git+https://github.com/vunb/viphoneme.git git+https://github.com/vunb/vinorm.git
+    if !errorlevel! neq 0 (
         echo [WARNING] Cai dat thu vien phien am tu GitHub that bai.
     ) else (
         echo [INFO] Cai dat thu vien phien am thanh cong.
@@ -179,9 +231,13 @@ if !GIT_OK! equ 1 (
     )
     if exist "Kokoro-Vietnamese" (
         cd Kokoro-Vietnamese
-        ..\.venv\Scripts\pip install -e .
+        ..\.venv\Scripts\pip install --default-timeout=1000 -e .
+        if !errorlevel! neq 0 (
+            echo [WARNING] Cấu hình Kokoro-Vietnamese thất bại.
+        ) else (
+            echo [INFO] Cai dat Kokoro-Vietnamese thanh cong.
+        )
         cd ..
-        echo [INFO] Cai dat Kokoro-Vietnamese thanh cong.
     ) else (
         echo [WARNING] Khong the clone Kokoro-Vietnamese tu GitHub.
     )

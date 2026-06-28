@@ -64,14 +64,14 @@ VENV_PYTHON=".venv/bin/python"
 echo "----------------------------------------------------------------------"
 echo "[INFO] Dang thiet lap pip phien ban thich hop (pip 24.0)..."
 echo "----------------------------------------------------------------------"
-$VENV_PYTHON -m pip install "pip==24.0" || echo "[WARNING] Cai dat pip 24.0 that bai."
+$VENV_PYTHON -m pip install --default-timeout=1000 "pip==24.0" || echo "[WARNING] Cai dat pip 24.0 that bai."
 echo
 
 # 5. Install libraries
 echo "----------------------------------------------------------------------"
 echo "[INFO] Dang cai dat cac thu vien Python (requirements.txt)..."
 echo "----------------------------------------------------------------------"
-$VENV_PYTHON -m pip install -r requirements.txt
+$VENV_PYTHON -m pip install --default-timeout=1000 -r requirements.txt
 echo "[INFO] Cai dat thu vien thanh cong."
 echo
 
@@ -79,7 +79,7 @@ echo
 echo "----------------------------------------------------------------------"
 echo "[INFO] Dang cai dat rvc-python (--no-deps, tranh xung dot numpy)..."
 echo "----------------------------------------------------------------------"
-$VENV_PYTHON -m pip install "rvc-python>=0.1.5" --no-deps || echo "[WARNING] Cai dat rvc-python that bai."
+$VENV_PYTHON -m pip install --default-timeout=1000 "rvc-python>=0.1.5" --no-deps || echo "[WARNING] Cai dat rvc-python that bai."
 echo
 
 # 6. Install optional Vietnamese phoneme packages (requires Git)
@@ -87,7 +87,7 @@ if [ "$GIT_OK" -eq 1 ]; then
     echo "----------------------------------------------------------------------"
     echo "[INFO] Dang cai dat thu vien phien am tieng Viet viphoneme..."
     echo "----------------------------------------------------------------------"
-    $VENV_PYTHON -m pip install git+https://github.com/vunb/viphoneme.git git+https://github.com/vunb/vinorm.git || echo "[WARNING] Cai dat thu vien phien am tu GitHub that bai."
+    $VENV_PYTHON -m pip install --default-timeout=1000 git+https://github.com/vunb/viphoneme.git git+https://github.com/vunb/vinorm.git || echo "[WARNING] Cai dat thu vien phien am tu GitHub that bai."
     echo
 fi
 
@@ -101,7 +101,7 @@ if [ "$GIT_OK" -eq 1 ]; then
     fi
     if [ -d "Kokoro-Vietnamese" ]; then
         cd Kokoro-Vietnamese
-        ../.venv/bin/pip install -e .
+        ../.venv/bin/pip install --default-timeout=1000 -e .
         cd ..
         echo "[INFO] Cai dat Kokoro-Vietnamese thanh cong."
     else
