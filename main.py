@@ -127,8 +127,13 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
             return result
         
     # Process text
-    from src.utils.text import clean_markdown, chunk_text
+    from src.utils.text import clean_markdown, chunk_text, vietnamese_cleaners
     cleaned_text = clean_markdown(raw_text)
+    
+    # Pre-clean text for offline engines to normalize numbers and punctuation
+    if args.engine in ["clone", "kokoro", "vieneu", "valtec"]:
+        cleaned_text = vietnamese_cleaners(cleaned_text)
+        
     chunks = chunk_text(cleaned_text, max_words=getattr(args, "max_words", 50))
     
     if not chunks:
@@ -148,6 +153,15 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
         
     result["chunks"] = len(chunks)
     
+    # Initialize Semantic Cache Manager if enabled
+    cache_manager = None
+    if getattr(args, "use_cache", True):
+        try:
+            from src.utils.cache import SemanticCacheManager
+            cache_manager = SemanticCacheManager(similarity_threshold=getattr(args, "cache_threshold", 0.95))
+        except Exception as e:
+            print(f"[CACHE WARNING] Could not initialize SemanticCacheManager: {e}")
+     
     # Generate segments
     print(f"\nProcessing {len(chunks)} text chunks from '{os.path.basename(input_path)}'...")
     temp_files = []
@@ -184,11 +198,17 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
         kwargs["clone_gpt_cond_chunk_len"] = getattr(args, "clone_gpt_cond_chunk_len", 4)
         kwargs["clone_sound_norm_refs"] = getattr(args, "clone_sound_norm_refs", True)
         kwargs["clone_librosa_trim_db"] = getattr(args, "clone_librosa_trim_db", 30)
+        
+        # VieNeu specific parameters
+        kwargs["vieneu_mode"] = getattr(args, "vieneu_mode", "v3turbo")
+        kwargs["vieneu_emotion"] = getattr(args, "vieneu_emotion", "natural")
+        kwargs["temperature"] = getattr(args, "vieneu_temp", getattr(args, "temperature", None))
+        kwargs["ref_text"] = getattr(args, "ref_text", None)
             
         tasks.append((idx, chunk, temp_path, kwargs))
         
     # Determine the number of workers based on the engine
-    if args.engine == "clone":
+    if args.engine in ["clone", "valtec", "kokoro", "vieneu"]:
         max_workers = 1
     elif args.engine == "piper":
         max_workers = 6
@@ -202,6 +222,11 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
         idx, chunk, temp_path, kwargs = task
         preview_text = chunk[:40].replace('\n', ' ')
         try:
+            # Check Semantic Cache first
+            if cache_manager and cache_manager.get(chunk, temp_path):
+                print(f" -> [CACHE HIT] segment {idx+1}/{len(chunks)}: '{preview_text}...'")
+                return idx, True
+                
             # Introduce a small staggered delay to prevent multiple threads hitting the online API simultaneously
             if args.engine == "edge":
                 import random
@@ -211,6 +236,9 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
                 
             success = engine.generate(chunk, temp_path, **kwargs)
             if success:
+                # Save to Semantic Cache before concatenate_wavs cleans up the temp files
+                if cache_manager:
+                    cache_manager.set(chunk, temp_path)
                 print(f" -> Generated segment {idx+1}/{len(chunks)}: '{preview_text}...'")
             else:
                 print(f"Error: Failed to generate audio for segment {idx+1}/{len(chunks)}: '{preview_text}...'", file=sys.stderr)
@@ -1089,8 +1117,8 @@ def main():
         "--engine",
         required=(d_engine is None),
         default=d_engine,
-        choices=["piper", "clone", "edge", "rvc"],
-        help="Selection of the engine (piper, clone, edge, rvc)."
+        choices=["piper", "clone", "edge", "rvc", "valtec", "kokoro", "vieneu"],
+        help="Selection of the engine (piper, clone, edge, rvc, valtec, kokoro, vieneu)."
     )
     parser.add_argument(
         "--model",
@@ -1203,6 +1231,18 @@ def main():
         help="Maximum number of words per text chunk."
     )
     parser.add_argument(
+        "--use_cache",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable/disable Semantic Caching of audio segments (default: False)."
+    )
+    parser.add_argument(
+        "--cache_threshold",
+        type=float,
+        default=0.95,
+        help="Cosine similarity threshold for Semantic Cache matches (default: 0.95)."
+    )
+    parser.add_argument(
         "--hardware_profile",
         choices=["rtx5060", "rtx3060", "cpu"],
         default=d_hardware_profile,
@@ -1263,6 +1303,31 @@ def main():
         help="Trim silence from reference audio using this decibel threshold (default: None)."
     )
     
+    # VieNeu arguments
+    parser.add_argument(
+        "--vieneu_mode",
+        default="v3turbo",
+        choices=["v3turbo", "standard"],
+        help="VieNeu mode (v3turbo, standard)."
+    )
+    parser.add_argument(
+        "--vieneu_emotion",
+        default="natural",
+        choices=["natural", "storytelling"],
+        help="VieNeu reading style emotion (natural, storytelling)."
+    )
+    parser.add_argument(
+        "--vieneu_temp",
+        type=float,
+        default=0.3,
+        help="VieNeu temperature (default: 0.3)."
+    )
+    parser.add_argument(
+        "--ref_text",
+        default=None,
+        help="VieNeu/XTTS voice clone reference transcript text."
+    )
+    
     args = parser.parse_args()
     
     # Initialize TF32 settings early based on user options
@@ -1321,6 +1386,27 @@ def main():
             engine = CloneEngine(args.model)
         except ImportError:
             print("Error: The CloneEngine (XTTSv2) requires coqui-tts, which could not be loaded.", file=sys.stderr)
+            sys.exit(1)
+    elif args.engine == "valtec":
+        try:
+            from src.engines.valtec import ValtecEngine
+            engine = ValtecEngine(args.model)
+        except ImportError:
+            print("Error: The ValtecEngine requires valtec_tts package.", file=sys.stderr)
+            sys.exit(1)
+    elif args.engine == "kokoro":
+        try:
+            from src.engines.kokoro import KokoroEngine
+            engine = KokoroEngine(args.model)
+        except ImportError:
+            print("Error: The KokoroEngine requires kokoro_vietnamese package.", file=sys.stderr)
+            sys.exit(1)
+    elif args.engine == "vieneu":
+        try:
+            from src.engines.vieneu import VieNeuEngine
+            engine = VieNeuEngine(args.model)
+        except ImportError:
+            print("Error: The VieNeuEngine requires vieneu package.", file=sys.stderr)
             sys.exit(1)
     elif args.engine == "rvc":
         if not args.rvc_model:

@@ -18,9 +18,22 @@ def concatenate_wavs(input_paths: list[str], output_path: str, silence_duration:
     if not input_paths:
         return False
         
+    # 1. Use sf.info to quickly scan all valid file headers for the maximum sample rate and channel count
+    valid_srs = []
+    valid_channels = []
+    for path in input_paths:
+        if os.path.exists(path):
+            try:
+                info = sf.info(path)
+                valid_srs.append(info.samplerate)
+                valid_channels.append(info.channels)
+            except Exception:
+                pass
+                
+    samplerate = max(valid_srs) if valid_srs else 24000
+    channels = max(valid_channels) if valid_channels else 1
+    
     combined_audio = []
-    samplerate = None
-    channels = None
     
     for path in input_paths:
         if not os.path.exists(path):
@@ -32,16 +45,31 @@ def concatenate_wavs(input_paths: list[str], output_path: str, silence_duration:
             print(f"Error reading WAV file {path}: {e}")
             continue
             
-        # Initialize configuration from the first valid file
-        if samplerate is None:
-            samplerate = sr
-            if len(data.shape) > 1:
-                channels = data.shape[1]
+        # Determine number of channels dynamically
+        if len(data.shape) > 1:
+            curr_channels = data.shape[1]
+        else:
+            curr_channels = 1
+            
+        # Perform dynamic resampling if there is a sample rate mismatch
+        if sr != samplerate:
+            print(f"Resampling segment from {sr}Hz to {samplerate}Hz...")
+            import librosa
+            if curr_channels > 1:
+                # Stereo or multi-channel: shape is (samples, channels)
+                # Transpose to (channels, samples) for librosa.resample
+                resampled = librosa.resample(data.T, orig_sr=sr, target_sr=samplerate)
+                data = resampled.T
             else:
-                channels = 1
-        elif sr != samplerate:
-            # Standard engines have uniform sample rates, but check just in case
-            print(f"Warning: Samplerate mismatch ({sr} vs {samplerate}) for {path}. Attempting to append anyway.")
+                # Mono: shape is (samples,)
+                data = librosa.resample(data, orig_sr=sr, target_sr=samplerate)
+            
+        # Up-mix mono to stereo/multi-channel if channels > 1 and curr_channels == 1
+        if channels > 1 and curr_channels == 1:
+            if len(data.shape) == 1:
+                data = np.stack([data] * channels, axis=-1)
+            else:
+                data = np.repeat(data, channels, axis=1)
             
         # Append audio data
         combined_audio.append(data)

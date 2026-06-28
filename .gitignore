@@ -61,3 +61,8 @@ MediaComposer/resource/fonts/*.ttc
 data/inputs/Nếu tôi trở thành thánh, một vị quan trên trời sẽ triệu tập tôi đến để huấn luyện ngựa/Chương 1 Đạt Lấy Tuổi Thọ.md
 data/inputs/Nếu tôi trở thành thánh, một vị quan trên trời sẽ triệu tập tôi đến để huấn luyện ngựa/Chương 2 Tuổi thọ ngàn năm.md
 tests/test_data/inputs/benchmark_input.md
+
+# Cloned/sub-repository dependencies
+Kokoro-Vietnamese/
+valtec-tts/
+

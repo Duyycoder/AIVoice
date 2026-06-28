@@ -20,6 +20,10 @@ edge-tts>=7.2.8        # Microsoft Edge online TTS
 piper-tts>=1.2.0       # Piper offline ONNX TTS
 coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS (requires C++ compiler)
 llama-cpp-python==0.2.77 # Local GGUF LLM text rewriting (requires C++ compiler)
+vieneu>=0.3.16         # VieNeu-TTS offline/online Vietnamese TTS
+kokoro-vietnamese      # Kokoro-Vietnamese offline Vietnamese TTS
+valtec-tts             # Valtec-TTS offline Vietnamese TTS (requires C++ compiler)
+sentence-transformers  # Required for Semantic Caching text embeddings
 # NOTE: rvc-python>=0.1.5 is installed separately with --no-deps in setup.bat
 #       because it declares numpy<=1.23.5 which conflicts with coqui-tts.
 
