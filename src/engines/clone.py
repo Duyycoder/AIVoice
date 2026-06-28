@@ -195,8 +195,9 @@ class CloneEngine(BaseTTSEngine):
                 if hasattr(model, "tokenizer"):
                     model.tokenizer.original_language = original_lang
                 
+                cache_key = (tuple(abs_refs), gpt_cond_len, gpt_cond_chunk_len, max_ref_length, sound_norm_refs, librosa_trim_db)
                 # Cache speaker latents/embeddings to speed up inference significantly
-                if (getattr(self, "current_ref_audio", None) != tuple(abs_refs) or 
+                if (getattr(self, "current_cache_key", None) != cache_key or 
                     self.gpt_cond_latent is None or 
                     self.speaker_embedding is None):
                     
@@ -214,6 +215,7 @@ class CloneEngine(BaseTTSEngine):
                     )
                     self.gpt_cond_latent = gpt_cond_latent
                     self.speaker_embedding = speaker_embedding
+                    self.current_cache_key = cache_key
                     self.current_ref_audio = tuple(abs_refs)
                 
                 # Safety check for Vietnamese character limit to prevent CUDA assertion crash

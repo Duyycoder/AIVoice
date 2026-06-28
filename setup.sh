@@ -91,6 +91,26 @@ if [ "$GIT_OK" -eq 1 ]; then
     echo
 fi
 
+# 6c. Install Kokoro-Vietnamese (requires Git)
+if [ "$GIT_OK" -eq 1 ]; then
+    echo "----------------------------------------------------------------------"
+    echo "[INFO] Dang thiet lap va cai dat Kokoro-Vietnamese..."
+    echo "----------------------------------------------------------------------"
+    if [ ! -d "Kokoro-Vietnamese" ]; then
+        git clone https://github.com/iamdinhthuan/Kokoro-Vietnamese.git
+    fi
+    if [ -d "Kokoro-Vietnamese" ]; then
+        cd Kokoro-Vietnamese
+        ../.venv/bin/pip install -e .
+        cd ..
+        echo "[INFO] Cai dat Kokoro-Vietnamese thanh cong."
+    else
+        echo "[WARNING] Khong the clone Kokoro-Vietnamese tu GitHub."
+    fi
+    echo
+fi
+
+
 # 6b. Copy config.toml from example if not exist
 if [ ! -f "MediaComposer/config.toml" ]; then
     echo "----------------------------------------------------------------------"

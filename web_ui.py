@@ -309,6 +309,19 @@ def diagnose_gpu():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/clear_cache', methods=['POST'])
+def clear_cache():
+    """Clears the semantic cache directory and resets FAISS index."""
+    try:
+        from src.utils.cache import SemanticCacheManager
+        cache_mgr = SemanticCacheManager()
+        success = cache_mgr.clear()
+        if success:
+            return jsonify({"status": "success", "message": "Semantic Cache cleared successfully."})
+        return jsonify({"status": "error", "message": "Failed to clear Semantic Cache."}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/generate', methods=['POST'])
 def generate_speech():
     clear_logs()
@@ -378,6 +391,17 @@ def generate_speech():
     clone_gpt_cond_chunk_len = data.get("clone_gpt_cond_chunk_len", config_defaults.get("clone_gpt_cond_chunk_len", 4))
     clone_sound_norm_refs = data.get("clone_sound_norm_refs", config_defaults.get("clone_sound_norm_refs", True))
     clone_librosa_trim_db = data.get("clone_librosa_trim_db", config_defaults.get("clone_librosa_trim_db", 30))
+    # Caching options
+    use_cache = bool(data.get("use_cache", False))
+    cache_threshold = float(data.get("cache_threshold", 0.95))
+    vieneu_mode = data.get("vieneu_mode", "v3turbo")
+    ref_text = data.get("ref_text", "")
+    vieneu_emotion = data.get("vieneu_emotion", "natural")
+    vieneu_temp = data.get("vieneu_temp")
+    if vieneu_temp is not None:
+        vieneu_temp = float(vieneu_temp)
+    else:
+        vieneu_temp = 0.3
     
     # Local GGUF LLM Spicing
     spice_text = bool(data.get("spice_text", False))
@@ -413,6 +437,12 @@ def generate_speech():
             model_name = os.path.abspath(os.path.join("models", "piper", model_name))
         elif engine_name == "clone":
             model_name = os.path.abspath(os.path.join("models", "xtts_v2"))
+        elif engine_name == "valtec":
+            model_name = None
+        elif engine_name == "kokoro":
+            model_name = None
+        elif engine_name == "vieneu":
+            model_name = None
             
     if ref_audio:
         ref_audio = os.path.abspath(os.path.join("data", "voices", ref_audio))
@@ -464,92 +494,126 @@ def generate_speech():
     args.clone_sound_norm_refs = clone_sound_norm_refs
     args.clone_librosa_trim_db = clone_librosa_trim_db
     
+    # Caching options
+    args.use_cache = use_cache
+    args.cache_threshold = cache_threshold
+    args.vieneu_mode = vieneu_mode
+    args.ref_text = ref_text
+    args.vieneu_emotion = vieneu_emotion
+    args.vieneu_temp = vieneu_temp
+    
     # Define generation wrapper to be run inside the serialized lock
     def run_generation():
-        is_gpu_task = (device == "cuda" and engine_name in ["clone", "rvc"]) or bool(rvc_model) or spice_text
-        
-        if is_gpu_task and gpu_inference_lock.locked():
-            add_log("Yêu cầu đang được xếp hàng chờ xử lý (GPU đang bận)...")
+        engine = None
+        try:
+            is_gpu_task = (device == "cuda" and engine_name in ["clone", "rvc", "valtec", "kokoro", "vieneu"]) or bool(rvc_model) or spice_text
             
-        # Serialize GPU tasks
-        with gpu_inference_lock if is_gpu_task else contextlib.nullcontext():
-            add_log(f"Bắt đầu xử lý TTS bằng động cơ: {engine_name.upper()}...")
-            add_log(f"Cấu hình GPU: {hardware_profile.upper()} | Thiết bị: {device.upper()} | FP16: {use_fp16} | TF32: {use_tf32} | Độ dài đoạn: {max_words} từ")
-            
-            # Setup TF32 globally inside the worker thread
+            if is_gpu_task and gpu_inference_lock.locked():
+                add_log("Yêu cầu đang được xếp hàng chờ xử lý (GPU đang bận)...")
+                
+            # Serialize GPU tasks
+            with gpu_inference_lock if is_gpu_task else contextlib.nullcontext():
+                add_log(f"Bắt đầu xử lý TTS bằng động cơ: {engine_name.upper()}...")
+                add_log(f"Cấu hình GPU: {hardware_profile.upper()} | Thiết bị: {device.upper()} | FP16: {use_fp16} | TF32: {use_tf32} | Độ dài đoạn: {max_words} từ")
+                
+                # Setup TF32 globally inside the worker thread
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.backends.cuda.matmul.allow_tf32 = use_tf32
+                        torch.backends.cudnn.allow_tf32 = use_tf32
+                except ImportError:
+                    pass
+                    
+                # Initialize engine plugin
+                if engine_name == "piper":
+                    from src.engines.piper import PiperEngine
+                    engine = PiperEngine(args.model)
+                elif engine_name == "edge":
+                    from src.engines.edge import EdgeEngine
+                    engine = EdgeEngine(args.voice)
+                elif engine_name == "clone":
+                    from src.engines.clone import CloneEngine
+                    engine = CloneEngine(args.model)
+                elif engine_name == "valtec":
+                    from src.engines.valtec import ValtecEngine
+                    engine = ValtecEngine(args.model)
+                elif engine_name == "kokoro":
+                    from src.engines.kokoro import KokoroEngine
+                    engine = KokoroEngine(args.model)
+                elif engine_name == "vieneu":
+                    from src.engines.vieneu import VieNeuEngine
+                    engine = VieNeuEngine(args.model)
+                    
+                from main import process_single_file, process_single_audio_rvc
+                
+                if args.input:
+                    if getattr(args, "is_direct_text", False):
+                        out_name = (args.output_name or f"direct_text_{int(time.time())}").strip()
+                        out_path = os.path.join(args.output_dir, "direct_text", f"{out_name}.wav")
+                    else:
+                        input_base_name = os.path.splitext(os.path.basename(args.input))[0].strip()
+                        out_name = (args.output_name or input_base_name).strip()
+                        out_path = os.path.join(args.output_dir, input_base_name, f"{out_name}.wav")
+                    
+                    if args.engine == "rvc":
+                        result = process_single_audio_rvc(args.input, out_path, args)
+                    else:
+                        result = process_single_file(args.input, out_path, engine, args)
+                        
+                    if result["status"] == "SUCCESS":
+                        add_log(f"Hoàn thành thành công! File lưu tại: {result['output']}")
+                        return True, [result]
+                    else:
+                        add_log(f"Lỗi xử lý: {result['status']}")
+                        return False, [result]
+                else:
+                    # Batch processing
+                    import glob
+                    files = glob.glob(os.path.join(args.input_dir, "*.md")) + glob.glob(os.path.join(args.input_dir, "*.txt"))
+                    if not files:
+                        add_log("Không tìm thấy tệp tin .md hoặc .txt nào trong thư mục đầu vào.")
+                        return False, []
+                    
+                    # Tạo 1 thư mục đầu ra dùng tên thư mục đầu vào
+                    input_dir_name = os.path.basename(os.path.normpath(args.input_dir))
+                    batch_out_dir = os.path.join(args.output_dir, input_dir_name)
+                    os.makedirs(batch_out_dir, exist_ok=True)
+                        
+                    add_log(f"Tìm thấy {len(files)} tệp tin cần xử lý...")
+                    add_log(f"Thư mục đầu ra: {batch_out_dir}")
+                    results = []
+                    all_success = True
+                    
+                    for idx, file_p in enumerate(files):
+                        add_log(f"[{idx+1}/{len(files)}] Đang xử lý tệp: {os.path.basename(file_p)}...")
+                        input_base_name = os.path.splitext(os.path.basename(file_p))[0].strip()
+                        # Lưu phẳng vào 1 thư mục: ThuMucDauVao/TenFile.wav
+                        out_path = os.path.join(batch_out_dir, f"{input_base_name}.wav")
+                        
+                        res = process_single_file(file_p, out_path, engine, args)
+                        results.append(res)
+                        if res["status"] != "SUCCESS":
+                            all_success = False
+                            
+                    add_log(f"Hoàn thành! Tất cả {len(files)} file đã lưu tại: {batch_out_dir}")
+                    return all_success, results
+        finally:
+            # Active VRAM Cleanup (Memory Guard) after processing completes
+            # NOTE: Lệnh này nằm ở cuối hàm run_generation, chạy 1 LẦN DUY NHẤT sau khi hoàn thành
+            # toàn bộ batch file, do đó giữ nguyên khả năng tái sử dụng latents/embeddings cache
+            # của các engine trong suốt quá trình sinh của batch.
+            if engine is not None:
+                del engine
+            import gc
+            gc.collect()
             try:
                 import torch
                 if torch.cuda.is_available():
-                    torch.backends.cuda.matmul.allow_tf32 = use_tf32
-                    torch.backends.cudnn.allow_tf32 = use_tf32
+                    torch.cuda.empty_cache()
+                    add_log("Đã giải phóng bộ nhớ CUDA VRAM thành công.")
             except ImportError:
                 pass
-                
-            # Initialize engine plugin
-            engine = None
-            if engine_name == "piper":
-                from src.engines.piper import PiperEngine
-                engine = PiperEngine(args.model)
-            elif engine_name == "edge":
-                from src.engines.edge import EdgeEngine
-                engine = EdgeEngine(args.voice)
-            elif engine_name == "clone":
-                from src.engines.clone import CloneEngine
-                engine = CloneEngine(args.model)
-                
-            from main import process_single_file, process_single_audio_rvc
-            
-            if args.input:
-                if getattr(args, "is_direct_text", False):
-                    out_name = (args.output_name or f"direct_text_{int(time.time())}").strip()
-                    out_path = os.path.join(args.output_dir, "direct_text", f"{out_name}.wav")
-                else:
-                    input_base_name = os.path.splitext(os.path.basename(args.input))[0].strip()
-                    out_name = (args.output_name or input_base_name).strip()
-                    out_path = os.path.join(args.output_dir, input_base_name, f"{out_name}.wav")
-                
-                if args.engine == "rvc":
-                    result = process_single_audio_rvc(args.input, out_path, args)
-                else:
-                    result = process_single_file(args.input, out_path, engine, args)
-                    
-                if result["status"] == "SUCCESS":
-                    add_log(f"Hoàn thành thành công! File lưu tại: {result['output']}")
-                    return True, [result]
-                else:
-                    add_log(f"Lỗi xử lý: {result['status']}")
-                    return False, [result]
-            else:
-                # Batch processing
-                import glob
-                files = glob.glob(os.path.join(args.input_dir, "*.md")) + glob.glob(os.path.join(args.input_dir, "*.txt"))
-                if not files:
-                    add_log("Không tìm thấy tệp tin .md hoặc .txt nào trong thư mục đầu vào.")
-                    return False, []
-                
-                # Tạo 1 thư mục đầu ra dùng tên thư mục đầu vào
-                input_dir_name = os.path.basename(os.path.normpath(args.input_dir))
-                batch_out_dir = os.path.join(args.output_dir, input_dir_name)
-                os.makedirs(batch_out_dir, exist_ok=True)
-                    
-                add_log(f"Tìm thấy {len(files)} tệp tin cần xử lý...")
-                add_log(f"Thư mục đầu ra: {batch_out_dir}")
-                results = []
-                all_success = True
-                
-                for idx, file_p in enumerate(files):
-                    add_log(f"[{idx+1}/{len(files)}] Đang xử lý tệp: {os.path.basename(file_p)}...")
-                    input_base_name = os.path.splitext(os.path.basename(file_p))[0].strip()
-                    # Lưu phẳng vào 1 thư mục: ThuMucDauVao/TenFile.wav
-                    out_path = os.path.join(batch_out_dir, f"{input_base_name}.wav")
-                    
-                    res = process_single_file(file_p, out_path, engine, args)
-                    results.append(res)
-                    if res["status"] != "SUCCESS":
-                        all_success = False
-                        
-                add_log(f"Hoàn thành! Tất cả {len(files)} file đã lưu tại: {batch_out_dir}")
-                return all_success, results
 
     # Run in a background thread to prevent blocking Flask response
     def async_wrapper():
@@ -632,6 +696,43 @@ try:
     app.register_blueprint(composer_bp, url_prefix="/api/composer")
 except Exception as e:
     print(f"Error integrating MediaComposer: {e}")
+
+@app.route('/api/upload/ref_audio', methods=['POST'])
+def upload_ref_audio():
+    """Uploads a .wav reference audio file to data/voices/ directory."""
+    try:
+        import glob
+        import time
+        if 'file' not in request.files:
+            return jsonify({"status": "error", "message": "No file part in request."}), 400
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"status": "error", "message": "No file selected."}), 400
+            
+        if not file.filename.lower().endswith('.wav'):
+            return jsonify({"status": "error", "message": "Only WAV files are allowed."}), 400
+            
+        from werkzeug.utils import secure_filename
+        filename = secure_filename(file.filename)
+        if not filename:
+            filename = f"uploaded_ref_{int(time.time())}.wav"
+            
+        voices_dir = os.path.join("data", "voices")
+        os.makedirs(voices_dir, exist_ok=True)
+        dest_path = os.path.join(voices_dir, filename)
+        
+        file.save(dest_path)
+        
+        ref_audios = [os.path.basename(p) for p in glob.glob(os.path.join(voices_dir, "*.wav"))]
+        
+        return jsonify({
+            "status": "success",
+            "message": "File uploaded successfully.",
+            "uploaded_filename": filename,
+            "ref_audio": ref_audios
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
     # Open browser automatically after server is ready
