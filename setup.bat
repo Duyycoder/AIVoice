@@ -226,18 +226,18 @@ if !GIT_OK! equ 1 (
     echo ----------------------------------------------------------------------
     echo [INFO] Dang thiet lap va cai dat Kokoro-Vietnamese...
     echo ----------------------------------------------------------------------
-    if not exist "Kokoro-Vietnamese" (
-        git clone https://github.com/iamdinhthuan/Kokoro-Vietnamese.git
+    if not exist "third_party\Kokoro-Vietnamese" (
+        git clone https://github.com/iamdinhthuan/Kokoro-Vietnamese.git third_party\Kokoro-Vietnamese
     )
-    if exist "Kokoro-Vietnamese" (
-        cd Kokoro-Vietnamese
-        ..\.venv\Scripts\pip install --default-timeout=1000 -e .
+    if exist "third_party\Kokoro-Vietnamese" (
+        cd third_party\Kokoro-Vietnamese
+        ..\..\.venv\Scripts\pip install --default-timeout=1000 -e .
         if !errorlevel! neq 0 (
             echo [WARNING] Cấu hình Kokoro-Vietnamese thất bại.
         ) else (
             echo [INFO] Cai dat Kokoro-Vietnamese thanh cong.
         )
-        cd ..
+        cd ..\..
     ) else (
         echo [WARNING] Khong the clone Kokoro-Vietnamese tu GitHub.
     )
@@ -249,18 +249,18 @@ if !GIT_OK! equ 1 (
     echo ----------------------------------------------------------------------
     echo [INFO] Dang thiet lap va cai dat Valtec-TTS...
     echo ----------------------------------------------------------------------
-    if not exist "valtec-tts" (
-        git clone https://github.com/tronghieuit/valtec-tts.git
+    if not exist "third_party\valtec-tts" (
+        git clone https://github.com/tronghieuit/valtec-tts.git third_party\valtec-tts
     )
-    if exist "valtec-tts" (
-        cd valtec-tts
-        ..\.venv\Scripts\pip install --default-timeout=1000 -e .
+    if exist "third_party\valtec-tts" (
+        cd third_party\valtec-tts
+        ..\..\.venv\Scripts\pip install --default-timeout=1000 -e .
         if !errorlevel! neq 0 (
             echo [WARNING] Cấu hình Valtec-TTS thất bại.
         ) else (
             echo [INFO] Cai dat Valtec-TTS thanh cong.
         )
-        cd ..
+        cd ..\..
     ) else (
         echo [WARNING] Khong the clone Valtec-TTS tu GitHub.
     )
@@ -269,11 +269,11 @@ if !GIT_OK! equ 1 (
 
 
 :: 6b. Copy config.toml from example if not exist
-if not exist "MediaComposer\config.toml" (
+if not exist "apps\MediaComposer\config.toml" (
     echo ----------------------------------------------------------------------
     echo [INFO] Dang khoi tao config.toml tu file mau...
     echo ----------------------------------------------------------------------
-    copy "MediaComposer\config.toml.example" "MediaComposer\config.toml" >nul
+    copy "apps\MediaComposer\config.toml.example" "apps\MediaComposer\config.toml" >nul
     if !errorlevel! equ 0 (
         echo [INFO] Khoi tao config.toml thanh cong! Vui long cap nhat API key neu can.
     ) else (
@@ -286,7 +286,7 @@ if not exist "MediaComposer\config.toml" (
 echo ----------------------------------------------------------------------
 echo [INFO] Dang tai trong so mo hinh AI (Piper & XTTSv2)...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe download_models.py --engine all
+.venv\Scripts\python.exe src\download_models.py --engine all
 if %errorlevel% neq 0 (
     echo [WARNING] Qua trinh tai mo hinh bi gian doan.
 )
@@ -296,14 +296,14 @@ echo.
 echo ----------------------------------------------------------------------
 echo [INFO] Dang tien hanh chan doan GPU CUDA...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe check_gpu.py
+.venv\Scripts\python.exe src\check_gpu.py
 echo.
 
 echo ======================================================================
 echo THIET LAP THANH CONG! AIVoice da san sang hoat dong.
 echo Chay ung dung bang lenh:
 echo.
-echo     .venv\Scripts\python.exe main.py
+echo     .venv\Scripts\python.exe src\main.py
 echo.
 echo ======================================================================
 pause

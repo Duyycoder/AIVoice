@@ -18,5 +18,5 @@ if not exist "!PROJ_DIR!\.venv\Scripts\python.exe" (
 )
 
 cd /d "!PROJ_DIR!"
-.venv\Scripts\python.exe check_gpu.py
+.venv\Scripts\python.exe src/check_gpu.py
 pause

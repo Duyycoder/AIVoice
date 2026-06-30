@@ -27,7 +27,7 @@ echo [*] Trinh duyet se tu dong mo khi server san sang.
 echo [*] Dung dong cua so nay khi dang su dung.
 echo.
 
-"%PROJ_DIR%\.venv\Scripts\python.exe" "%PROJ_DIR%\web_ui.py"
+"%PROJ_DIR%\.venv\Scripts\python.exe" "%PROJ_DIR%\src\web_ui.py"
 
 echo.
 echo [!] Server da dung. Nhan phim bat ky de dong.

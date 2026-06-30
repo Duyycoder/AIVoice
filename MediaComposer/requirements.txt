@@ -1,9 +1,0 @@
-streamlit
-moviepy==2.2.1
-requests
-loguru
-pydantic
-faster-whisper
-openai
-Pillow
-numpy

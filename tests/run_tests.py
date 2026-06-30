@@ -76,7 +76,7 @@ def main():
         {
             "name": "test_edge_default",
             "desc": "Edge-TTS online engine with default Vietnamese voice",
-            "args": ["main.py", "--input", "tests/test_data/inputs/test_vi.md", "--engine", "edge", "--voice", "vi-VN-NamMinhNeural"],
+            "args": ["src/main.py", "--input", "tests/test_data/inputs/test_vi.md", "--engine", "edge", "--voice", "vi-VN-NamMinhNeural"],
             "expected_output_name": "test_vi.wav",
             "expect_success": True
         },
@@ -84,7 +84,7 @@ def main():
             "name": "test_edge_hoaimy_fast",
             "desc": "Edge-TTS with HoaiMy neural voice at 1.10x speed without normalization",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input", "tests/test_data/inputs/test_vi.md", 
                 "--engine", "edge", 
                 "--voice", "vi-VN-HoaiMyNeural", 
@@ -98,7 +98,7 @@ def main():
             "name": "test_piper_default",
             "desc": "Piper engine with local vais1000 ONNX model",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input", "tests/test_data/inputs/test_vi.md", 
                 "--engine", "piper", 
                 "--model", "models/piper/vi_VN-vais1000-medium.onnx"
@@ -110,7 +110,7 @@ def main():
             "name": "test_piper_slow",
             "desc": "Piper at 0.8x speed with custom fades (0.3s fade-in/out)",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input", "tests/test_data/inputs/test_vi.md", 
                 "--engine", "piper", 
                 "--model", "models/piper/vi_VN-vais1000-medium.onnx",
@@ -125,7 +125,7 @@ def main():
             "name": "test_clone_vietnamese",
             "desc": "XTTSv2 local cloning using ref_voice.wav in Vietnamese (vi)",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input", "tests/test_data/inputs/test_vi.md", 
                 "--engine", "clone", 
                 "--model", "models/xtts_v2", 
@@ -139,7 +139,7 @@ def main():
             "name": "test_clone_english",
             "desc": "XTTSv2 local cloning using ref_voice.wav in English (en)",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input", "tests/test_data/inputs/test_en.md", 
                 "--engine", "clone", 
                 "--model", "models/xtts_v2", 
@@ -153,7 +153,7 @@ def main():
             "name": "test_phonemize",
             "desc": "XTTSv2 cloning with Vietnamese phonemizer enabled",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input", "tests/test_data/inputs/test_vi.md", 
                 "--engine", "clone", 
                 "--model", "models/xtts_v2", 
@@ -168,7 +168,7 @@ def main():
             "name": "test_batch_processing",
             "desc": "Batch processing mode on tests/test_data/inputs dir using Edge-TTS",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input_dir", "tests/test_data/inputs", 
                 "--engine", "edge", 
                 "--voice", "vi-VN-NamMinhNeural",
@@ -181,7 +181,7 @@ def main():
             "name": "test_config_override",
             "desc": "Edge-TTS using custom config.json configuration override",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input", "tests/test_data/inputs/test_vi.md", 
                 "--config", "tests/test_data/temp_config.json"
             ],
@@ -192,7 +192,7 @@ def main():
             "name": "test_rvc_standalone",
             "desc": "RVC standalone voice conversion with local model weights",
             "args": [
-                "main.py", 
+                "src/main.py", 
                 "--input", "data/voices/ref_voice.wav", 
                 "--engine", "rvc", 
                 "--rvc_model", "models/rvc/ElevenLabs_Adam_FR.pth", 
@@ -204,7 +204,7 @@ def main():
         {
             "name": "test_invalid_engine_error",
             "desc": "Negative test: passing an invalid engine name",
-            "args": ["main.py", "--input", "tests/test_data/inputs/test_vi.md", "--engine", "invalid_engine_name"],
+            "args": ["src/main.py", "--input", "tests/test_data/inputs/test_vi.md", "--engine", "invalid_engine_name"],
             "expected_output_name": None,
             "expect_success": False
         }

@@ -1,0 +1,24 @@
+[app]
+pexels_api_keys = "XKaUEUHt63du0iKRRoBxQStEbSN2Ry5R9vB2xW41ZoVSp0FDZVjXsbQI"
+pixabay_api_keys = []
+coverr_api_keys = []
+openai_api_key = "sk-gemini-YrVwXWGegzkFlevHPdQy7Fpry14HJVirqvnuxukz"
+openai_base_url = "http://localhost:7860/v1"
+openai_model = "gemini-3-flash"
+llm_provider = "Local Gemini"
+video_codec = "h264_nvenc"
+
+[whisper]
+model_size = "medium"
+device = "cuda"
+compute_type = "float32"
+font_name = "Montserrat-Bold.ttf"
+font_size = 42
+text_fore_color = "#FFFFFF"
+stroke_color = "#000000"
+stroke_width = 3.0
+background_style = "Black"
+subtitle_position = "bottom"
+subtitle_bg_alpha = 102
+rounded_subtitle_background = true
+custom_position = 69.0

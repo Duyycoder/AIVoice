@@ -81,7 +81,7 @@ class VieNeuEngine(BaseTTSEngine):
             return False
             
         except Exception as e:
-            print(f"VieNeuEngine generation failed: {e}")
-            import traceback
-            traceback.print_exc()
+            from loguru import logger
+            logger.error(f"VieNeuEngine generation failed: {e}")
+            logger.exception(e)
             return False
