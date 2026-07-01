@@ -1,25 +1,21 @@
 import os
 import sys
 import tempfile
+# Force-load DLLs in exact order: torch -> faster_whisper -> cv2 to prevent Windows C++ CUDA/OpenMP abort
+try:
+    import torch  # noqa: F401
+    import faster_whisper  # noqa: F401
+    import cv2  # noqa: F401
+except Exception:
+    pass
+
 # ── PyTorch / Torchao compatibility patches ──────────────────────────────────
 # torchao is incompatible with PyTorch 2.6. These patches run before any import
 # of torchao or transformers to handle compatibility and reload issues.
 
-# Clean pre-existing monkey patches and cached failed imports from memory
-try:
-    import importlib
-    # Reset torch modules
-    if "torch.library" in sys.modules:
-        importlib.reload(sys.modules["torch.library"])
-    if "torch._decomp" in sys.modules:
-        importlib.reload(sys.modules["torch._decomp"])
-    
-    # Remove cached failed import modules to force a clean reload
-    for k in list(sys.modules.keys()):
-        if k == "transformers" or k.startswith("transformers.") or k == "torchao" or k.startswith("torchao.") or "vieneu" in k:
-            sys.modules.pop(k, None)
-except Exception:
-    pass
+# Clean pre-existing monkey patches and cached failed imports from memory is no longer needed
+# as we have installed compatible library versions.
+
 
 # 1. register_constant patch
 try:
@@ -100,18 +96,6 @@ try:
     torch.library.register_fake = _safe_register_fake
 except Exception:
     pass
-except Exception:
-    pass
-
-# Force-import torchao so C++ operators are registered exactly once
-try:
-    import torchao  # noqa: F401
-except Exception:
-    pass
-
-# Force-import transformers.modeling_utils (it lazy-loads torchao)
-try:
-    from transformers import PreTrainedModel  # noqa: F401
 except Exception:
     pass
 
@@ -654,7 +638,13 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-tab1, tab2, tab3, tab4 = st.tabs(["Manual Mode (Upload)", "Auto Mode (Fetch)", "Split Video (Workflow 3)", "Auto Translate & Sub (Workflow 4)"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Manual Mode (Upload)", 
+    "Auto Mode (Fetch)", 
+    "Split Video (Workflow 3)", 
+    "Auto Translate & Sub (Workflow 4)",
+    "📖 AI Storytelling 2D"
+])
 
 def save_uploaded_file(uploaded_file, dest_dir):
     os.makedirs(dest_dir, exist_ok=True)
@@ -925,6 +915,135 @@ with tab1:
                     st.success("Video generated successfully!")
                     st.video(final_video)
 
+with tab5:
+    st.header("📖 AI Storytelling 2D")
+    st.subheader("📚 CONTEXT WINDOW")
+    
+    from app.services.storytelling.context_manager import ContextManager
+    import os
+    
+    all_contexts = ContextManager.list_all_contexts()
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        selected_story = st.selectbox("Bộ truyện", ["Tạo mới..."] + all_contexts)
+        
+    with col2:
+        if st.button("➕ Tạo mới"):
+            st.session_state.create_context_modal = True
+            
+    if selected_story == "Tạo mới..." or st.session_state.get("create_context_modal"):
+        with st.form("new_context_form"):
+            st.write("Tạo bộ truyện mới")
+            new_story_name = st.text_input("Tên bộ truyện", value="Người Trên Vạn Người")
+            new_story_slug = st.text_input("Slug (không dấu, cách nhau bởi _)", value="Nguoi_Tren_Van_Nguoi")
+            new_genre = st.text_input("Thể loại", value="xianxia")
+            submitted = st.form_submit_button("Tạo")
+            if submitted:
+                if new_story_slug:
+                    ctx_mgr = ContextManager(new_story_slug)
+                    ctx_mgr.create_context(new_story_name, new_genre)
+                    st.success("Tạo thành công!")
+                    st.session_state.create_context_modal = False
+                    st.rerun()
+                    
+    elif selected_story and selected_story != "Tạo mới...":
+        ctx_mgr = ContextManager(selected_story)
+        ctx = ctx_mgr.load_context()
+        
+        st.write("Nhân vật:")
+        chars = ctx_mgr.list_characters()
+        for char in chars:
+            status = "✅ Face embedding OK" if char.has_embedding else "⚠️ Chưa có embedding"
+            st.write(f"👤 **{char.name}**: {status} - {char.description}")
+            
+        with st.expander("➕ Thêm/Cập nhật nhân vật"):
+            with st.form("char_form"):
+                char_name = st.text_input("Tên nhân vật")
+                char_desc = st.text_input("Mô tả")
+                char_keywords = st.text_input("Keywords (EN)")
+                ref_img = st.file_uploader("Upload ảnh chân dung", type=["png", "jpg", "jpeg"])
+                
+                if st.form_submit_button("Lưu nhân vật"):
+                    ref_path = ""
+                    if ref_img:
+                        ref_dir = os.path.join("storage", "contexts", selected_story, "temp")
+                        os.makedirs(ref_dir, exist_ok=True)
+                        ref_path = os.path.join(ref_dir, ref_img.name)
+                        with open(ref_path, "wb") as f:
+                            f.write(ref_img.getbuffer())
+                    
+                    ctx_mgr.add_character(char_name, char_desc, char_keywords, ref_path)
+                    
+                    if ref_path:
+                        try:
+                            from app.services.storytelling.face_extractor import extract_and_save_face_embedding
+                            import re
+                            slug = re.sub(r'[^a-zA-Z0-9]+', '_', char_name.lower()).strip('_')
+                            emb_path = os.path.join(ctx_mgr.chars_dir, slug, "face.ipadpt")
+                            extract_and_save_face_embedding(ref_path, emb_path, device="cpu")
+                            
+                            char = ctx_mgr.get_character(slug)
+                            if char:
+                                char.has_embedding = True
+                                ctx_mgr.save_context()
+                            st.success("Trích xuất face embedding thành công!")
+                        except Exception as e:
+                            st.error(f"Lỗi extract face: {e}")
+                    
+                    st.rerun()
+
+        st.markdown("---")
+        st.subheader("📁 DỮ LIỆU ĐẦU VÀO & CHẠY PIPELINE")
+        
+        col_md, col_audio, col_srt = st.columns(3)
+        with col_md:
+            md_file = st.file_uploader("File kịch bản (.md)", type=["md"])
+        with col_audio:
+            audio_file = st.file_uploader("File audio (.mp3, .wav)", type=["mp3", "wav"])
+        with col_srt:
+            srt_file = st.file_uploader("File phụ đề (.srt) - Tuỳ chọn", type=["srt"])
+            
+        if st.button("🚀 Chạy Pipeline AI Storytelling"):
+            if not md_file or not audio_file:
+                st.error("Vui lòng tải lên kịch bản và audio!")
+            else:
+                st.info("Đang khởi tạo Task...")
+                
+                # Lưu file upload ra thư mục tạm
+                temp_dir = os.path.join("storage", "contexts", selected_story, "temp")
+                os.makedirs(temp_dir, exist_ok=True)
+                
+                md_path = os.path.join(temp_dir, md_file.name)
+                audio_path = os.path.join(temp_dir, audio_file.name)
+                
+                with open(md_path, "wb") as f: f.write(md_file.getbuffer())
+                with open(audio_path, "wb") as f: f.write(audio_file.getbuffer())
+                
+                srt_path = ""
+                if srt_file:
+                    srt_path = os.path.join(temp_dir, srt_file.name)
+                    with open(srt_path, "wb") as f: f.write(srt_file.getbuffer())
+                
+                # Giao diện Progress Bar
+                progress_text = st.empty()
+                progress_bar = st.progress(0)
+                
+                def update_ui(msg, pct):
+                    progress_text.text(msg)
+                    progress_bar.progress(pct / 100.0)
+                
+                try:
+                    from app.services.storytelling.orchestrator import StorytellingOrchestrator
+                    orchestrator = StorytellingOrchestrator(ctx_mgr)
+                    final_video = orchestrator.run_pipeline(md_path, audio_path, srt_path, progress_callback=update_ui)
+                    
+                    st.success("🎉 Đã hoàn thành AI Storytelling Video!")
+                    st.video(final_video)
+                except Exception as e:
+                    st.error(f"❌ Có lỗi xảy ra trong quá trình chạy Pipeline: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
 with tab2:
     st.header("Workflow 2: Auto Fetch")
     st.write("Upload audio(s) or enter local paths. The system will transcribe it, use LLM to infer keywords, and fetch videos automatically.")
@@ -1185,14 +1304,6 @@ with tab3:
             
             def run_in_thread():
                 try:
-                    import importlib
-                    import app.services.video
-                    importlib.reload(app.services.video)
-                    import app.services.subtitle
-                    importlib.reload(app.services.subtitle)
-                    
-                    import app.services.composer
-                    importlib.reload(app.services.composer)
                     from app.services.composer import composer
                     
                     logger.info("=== Bắt đầu Workflow 3 (Split Video) ===")
@@ -1461,18 +1572,6 @@ with tab4:
             
             def run_in_thread():
                 try:
-                    import importlib
-                    import app.services.video
-                    importlib.reload(app.services.video)
-                    import app.services.subtitle
-                    importlib.reload(app.services.subtitle)
-                    import app.services.translation
-                    importlib.reload(app.services.translation)
-                    import app.services.dubbing
-                    importlib.reload(app.services.dubbing)
-                    
-                    import app.services.composer
-                    importlib.reload(app.services.composer)
                     from app.services.composer import composer
                     
                     logger.info("=== Bắt đầu Workflow 4 (Auto Translate & Sub) ===")

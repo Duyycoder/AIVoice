@@ -22,6 +22,7 @@ coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS (requires C++ compiler)
 llama-cpp-python>=0.3.16 # Local GGUF LLM text rewriting (requires C++ compiler)
 vieneu>=0.3.16         # VieNeu-TTS offline/online Vietnamese TTS
 neucodec>=0.0.6        # Neural audio codec for VieNeu TTS voice cloning standard mode
+torchao==0.16.0        # Lock to 0.16.0 to remain compatible with PyTorch 2.6.0 and prevent ImportError
 sentence-transformers  # Required for Semantic Caching text embeddings
 # NOTE: rvc-python>=0.1.5 is installed separately with --no-deps in setup.bat
 #       because it declares numpy<=1.23.5 which conflicts with coqui-tts.

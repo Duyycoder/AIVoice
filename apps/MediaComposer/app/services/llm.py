@@ -53,3 +53,16 @@ def extract_search_terms(subtitle_text: str, amount: int = 5) -> list[str]:
         logger.error(f"Failed to extract search terms: {e}. Falling back to offline keyword extraction.")
         words = [w for w in re.split(r'\W+', subtitle_text) if len(w) > 3]
         return words[:amount] if words else ["nature"]
+
+class LLMNotConfiguredError(Exception):
+    """Ngoại lệ khi chưa cấu hình API Key."""
+    pass
+
+def get_llm_client() -> tuple[OpenAI, str]:
+    """Trả về (OpenAI client, model_name) dựa trên config hiện tại."""
+    api_key = config.app.get("openai_api_key", "")
+    base_url = config.app.get("openai_base_url", "https://api.openai.com/v1")
+    model = config.app.get("openai_model", "gpt-4o-mini")
+    if not api_key:
+        raise LLMNotConfiguredError("Chưa cấu hình API Key. Vào Global Settings để thiết lập.")
+    return OpenAI(api_key=api_key, base_url=base_url), model

@@ -6,9 +6,12 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Import datasets first to prevent a PyTorch 2.6.0 initialization crash on Windows
+# Force-load DLLs in exact order: torch -> faster_whisper -> datasets -> cv2 to prevent Windows C++ CUDA/OpenMP abort
 try:
-    import datasets
+    import torch  # noqa: F401
+    import faster_whisper  # noqa: F401
+    import datasets  # noqa: F401
+    import cv2  # noqa: F401
 except Exception:
     pass
 

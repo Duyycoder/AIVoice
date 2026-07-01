@@ -11,7 +11,7 @@ video_codec = "h264_nvenc"
 [whisper]
 model_size = "medium"
 device = "cuda"
-compute_type = "float32"
+compute_type = "float16"
 font_name = "Montserrat-Bold.ttf"
 font_size = 42
 text_fore_color = "#FFFFFF"
@@ -19,6 +19,6 @@ stroke_color = "#000000"
 stroke_width = 3.0
 background_style = "Black"
 subtitle_position = "bottom"
-subtitle_bg_alpha = 102
+subtitle_bg_alpha = 255
 rounded_subtitle_background = true
 custom_position = 69.0
