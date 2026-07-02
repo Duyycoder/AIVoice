@@ -112,6 +112,8 @@ class StorytellingPipeline:
             checkpoint = "stablediffusionapi/anything-v5"
             
         import os
+        # Tắt hf_transfer để tránh lỗi file lock khi download model
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
         # Uu tien dung HF_HOME de dong bo cache voi toan bo du an AIVoice
         cache_dir = os.environ.get("HF_HOME")
         if not cache_dir:
