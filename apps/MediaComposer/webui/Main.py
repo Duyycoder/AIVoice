@@ -950,20 +950,49 @@ with tab5:
         ctx_mgr = ContextManager(selected_story)
         ctx = ctx_mgr.load_context()
         
-        st.write("Nhân vật:")
+        st.write("Quản lý nhân vật:")
         chars = ctx_mgr.list_characters()
-        for char in chars:
-            status = "✅ Face embedding OK" if char.has_embedding else "⚠️ Chưa có embedding"
-            st.write(f"👤 **{char.name}**: {status} - {char.description}")
+        char_options = ["[+] Thêm nhân vật mới"] + [c.name for c in chars]
+        
+        # Determine defaults
+        selected_char_name = st.selectbox("Chọn nhân vật để xem/sửa", char_options)
+        is_new = selected_char_name == "[+] Thêm nhân vật mới"
+        
+        def_name = "" if is_new else selected_char_name
+        def_desc = ""
+        def_kw = ""
+        selected_slug = ""
+        has_face = False
+        
+        if not is_new:
+            for c in chars:
+                if c.name == selected_char_name:
+                    def_desc = c.description
+                    def_kw = c.keywords_en
+                    selected_slug = c.slug
+                    has_face = c.has_embedding
+                    break
+        
+        status_text = "Trạng thái Face Embedding: " + ("✅ Đã có" if has_face else "⚠️ Chưa có") if not is_new else ""
+        if status_text:
+            st.info(status_text)
             
-        with st.expander("➕ Thêm/Cập nhật nhân vật"):
-            with st.form("char_form"):
-                char_name = st.text_input("Tên nhân vật")
-                char_desc = st.text_input("Mô tả")
-                char_keywords = st.text_input("Keywords (EN)")
-                ref_img = st.file_uploader("Upload ảnh chân dung", type=["png", "jpg", "jpeg"])
+        with st.form("char_form"):
+            char_name = st.text_input("Tên nhân vật", value=def_name)
+            char_desc = st.text_input("Mô tả ngoại hình (cho LLM)", value=def_desc)
+            char_keywords = st.text_input("Keywords (cho SD)", value=def_kw)
+            ref_img = st.file_uploader("Upload ảnh chân dung (ghi đè ảnh cũ nếu có)", type=["png", "jpg", "jpeg"])
+            
+            col_save, col_del = st.columns([1, 1])
+            with col_save:
+                submit_save = st.form_submit_button("💾 Lưu nhân vật")
+            with col_del:
+                submit_del = st.form_submit_button("🗑️ Xóa nhân vật")
                 
-                if st.form_submit_button("Lưu nhân vật"):
+            if submit_save:
+                if not char_name:
+                    st.error("Tên không được để trống!")
+                else:
                     ref_path = ""
                     if ref_img:
                         ref_dir = os.path.join("storage", "contexts", selected_story, "temp")
@@ -977,72 +1006,436 @@ with tab5:
                     if ref_path:
                         try:
                             from app.services.storytelling.face_extractor import extract_and_save_face_embedding
+                            from app.services.storytelling.hardware_adapter import get_hardware_config
                             import re
                             slug = re.sub(r'[^a-zA-Z0-9]+', '_', char_name.lower()).strip('_')
                             emb_path = os.path.join(ctx_mgr.chars_dir, slug, "face.ipadpt")
-                            extract_and_save_face_embedding(ref_path, emb_path, device="cpu")
+                            hw_config = get_hardware_config()
+                            extract_and_save_face_embedding(ref_path, emb_path, device=hw_config["face_device"])
                             
                             char = ctx_mgr.get_character(slug)
                             if char:
                                 char.has_embedding = True
                                 ctx_mgr.save_context()
-                            st.success("Trích xuất face embedding thành công!")
+                            st.success("Đã lưu nhân vật và trích xuất Face Embedding thành công!")
                         except Exception as e:
                             st.error(f"Lỗi extract face: {e}")
+                    else:
+                        st.success("Đã lưu thông tin nhân vật!")
                     
                     st.rerun()
+                    
+            if submit_del:
+                if is_new:
+                    st.warning("Chưa chọn nhân vật để xóa!")
+                else:
+                    success = ctx_mgr.delete_character(selected_slug)
+                    if success:
+                        st.success(f"Đã xóa nhân vật {selected_char_name}")
+                        st.rerun()
+                    else:
+                        st.error("Xóa thất bại!")
 
         st.markdown("---")
-        st.subheader("📁 DỮ LIỆU ĐẦU VÀO & CHẠY PIPELINE")
+        st.markdown("---")
+        st.subheader("⚙️ CẤU HÌNH PHẦN CỨNG & TĂNG TỐC")
         
-        col_md, col_audio, col_srt = st.columns(3)
-        with col_md:
-            md_file = st.file_uploader("File kịch bản (.md)", type=["md"])
-        with col_audio:
-            audio_file = st.file_uploader("File audio (.mp3, .wav)", type=["mp3", "wav"])
-        with col_srt:
-            srt_file = st.file_uploader("File phụ đề (.srt) - Tuỳ chọn", type=["srt"])
+        from app.services.storytelling.hardware_adapter import get_hardware_profile, get_hardware_config
+        current_hw_profile = get_hardware_profile()
+        hw_profile_opts = ["auto", "cuda_high", "cuda_low", "cpu"]
+        hw_profile_labels = [
+            "🤖 Tự động tối ưu (Auto-Detect)",
+            "⚡ Tăng tốc tối đa (GPU >= 8GB VRAM - e.g. RTX 5060)",
+            "💾 Tiết kiệm VRAM (GPU <= 6GB VRAM)",
+            "💻 Chỉ chạy CPU (CPU Only)"
+        ]
+        
+        if current_hw_profile not in hw_profile_opts:
+            current_hw_profile = "auto"
             
-        if st.button("🚀 Chạy Pipeline AI Storytelling"):
-            if not md_file or not audio_file:
-                st.error("Vui lòng tải lên kịch bản và audio!")
-            else:
-                st.info("Đang khởi tạo Task...")
+        selected_hw_label = st.selectbox(
+            "Chế độ chạy mô hình AI:",
+            hw_profile_labels,
+            index=hw_profile_opts.index(current_hw_profile),
+            help="Tự động tối ưu sẽ nhận diện card đồ hoạ và dung lượng VRAM thực tế của máy bạn để đưa ra cấu hình tối ưu nhất."
+        )
+        selected_hw_profile = hw_profile_opts[hw_profile_labels.index(selected_hw_label)]
+        
+        if selected_hw_profile != current_hw_profile:
+            config.storytelling["hardware_profile"] = selected_hw_profile
+            config.save_config()
+            st.success(f"Đã cập nhật cấu hình phần cứng thành: {selected_hw_profile}!")
+            st.rerun()
+            
+        hw_config_active = get_hardware_config()
+        st.info(f"💡 Hồ sơ phần cứng hoạt động: **{hw_config_active['profile_name']}** (SD Device: `{hw_config_active['sd_device']}`, CPU Offload: `{hw_config_active['enable_cpu_offload']}`, Face Device: `{hw_config_active['face_device']}`).")
+        
+        st.markdown("---")
+        st.subheader("📁 DỮ LIỆU ĐẦU VÀO & THỰC THI PIPELINE")
+        
+        from app.services.storytelling.orchestrator import StorytellingOrchestrator
+        from app.services.storytelling.models import Scene
+        orchestrator = StorytellingOrchestrator(ctx_mgr)
+        current_state = orchestrator.load_state()
+        
+        exec_mode = st.radio(
+            "⚡ Chế độ thực thi Pipeline:",
+            [
+                "🛑 3 Trạm Tương Tác (Human-in-the-Loop Studio)", 
+                "⚡ Chạy Tự Động Toàn Bộ (Skip Checkpoints)",
+                "📦 Chạy Hàng Loạt (Batch Processing)"
+            ],
+            index=0,
+            horizontal=True
+        )
+        
+        if exec_mode.startswith("⚡"):
+            col_md, col_audio, col_srt = st.columns(3)
+            with col_md:
+                md_file = st.file_uploader("File kịch bản (.md)", type=["md"], key="auto_md")
+            with col_audio:
+                audio_file = st.file_uploader("File audio (.mp3, .wav)", type=["mp3", "wav"], key="auto_audio")
+            with col_srt:
+                srt_file = st.file_uploader("File phụ đề (.srt) - Tuỳ chọn", type=["srt"], key="auto_srt")
                 
-                # Lưu file upload ra thư mục tạm
-                temp_dir = os.path.join("storage", "contexts", selected_story, "temp")
-                os.makedirs(temp_dir, exist_ok=True)
-                
-                md_path = os.path.join(temp_dir, md_file.name)
-                audio_path = os.path.join(temp_dir, audio_file.name)
-                
-                with open(md_path, "wb") as f: f.write(md_file.getbuffer())
-                with open(audio_path, "wb") as f: f.write(audio_file.getbuffer())
-                
-                srt_path = ""
-                if srt_file:
-                    srt_path = os.path.join(temp_dir, srt_file.name)
-                    with open(srt_path, "wb") as f: f.write(srt_file.getbuffer())
-                
-                # Giao diện Progress Bar
-                progress_text = st.empty()
-                progress_bar = st.progress(0)
-                
-                def update_ui(msg, pct):
-                    progress_text.text(msg)
-                    progress_bar.progress(pct / 100.0)
-                
-                try:
-                    from app.services.storytelling.orchestrator import StorytellingOrchestrator
-                    orchestrator = StorytellingOrchestrator(ctx_mgr)
-                    final_video = orchestrator.run_pipeline(md_path, audio_path, srt_path, progress_callback=update_ui)
+            if st.button("🚀 Chạy Tự Động Toàn Bộ Pipeline", key="btn_auto_run"):
+                if not md_file or not audio_file:
+                    st.error("Vui lòng tải lên kịch bản và audio!")
+                else:
+                    st.info("Đang khởi tạo Task...")
+                    temp_dir = os.path.join("storage", "contexts", selected_story, "temp")
+                    os.makedirs(temp_dir, exist_ok=True)
+                    md_path = os.path.join(temp_dir, md_file.name)
+                    audio_path = os.path.join(temp_dir, audio_file.name)
+                    with open(md_path, "wb") as f: f.write(md_file.getbuffer())
+                    with open(audio_path, "wb") as f: f.write(audio_file.getbuffer())
+                    srt_path = ""
+                    if srt_file:
+                        srt_path = os.path.join(temp_dir, srt_file.name)
+                        with open(srt_path, "wb") as f: f.write(srt_file.getbuffer())
                     
-                    st.success("🎉 Đã hoàn thành AI Storytelling Video!")
-                    st.video(final_video)
-                except Exception as e:
-                    st.error(f"❌ Có lỗi xảy ra trong quá trình chạy Pipeline: {e}")
-                    import traceback
-                    st.code(traceback.format_exc())
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                    def update_ui(msg, pct):
+                        progress_text.text(msg)
+                        progress_bar.progress(pct / 100.0)
+                        
+                    try:
+                        final_video = orchestrator.run_pipeline(md_path, audio_path, srt_path, progress_callback=update_ui)
+                        st.success("🎉 Đã hoàn thành AI Storytelling Video!")
+                        st.video(final_video)
+                    except Exception as e:
+                        st.error(f"❌ Có lỗi xảy ra trong quá trình chạy Pipeline: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+        elif exec_mode.startswith("📦"):
+            st.markdown("### 📦 Chạy Hàng Loạt (Batch Processing)")
+            st.info("Hệ thống sẽ tự động tìm các file .md và file audio (.mp3, .wav) trong thư mục Input, sắp xếp và ghép cặp chúng theo thứ tự tên file, sau đó render hàng loạt.")
+            
+            batch_input_dir = st.text_input("📁 Thư mục Input (chứa .md và audio)", placeholder="VD: D:\\Projects\\AudioBooks\\Chuong1_10")
+            batch_output_dir = st.text_input("💾 Thư mục Output (nơi lưu video mp4)", placeholder="VD: D:\\Projects\\AudioBooks\\Output")
+            
+            if batch_input_dir and os.path.isdir(batch_input_dir):
+                import glob
+                import re
+                
+                def natural_keys(text):
+                    return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
+                
+                md_files = glob.glob(os.path.join(batch_input_dir, "*.md"))
+                md_files.sort(key=natural_keys)
+                
+                audio_files = [f for f in glob.glob(os.path.join(batch_input_dir, "*.*")) if f.endswith(('.mp3', '.wav'))]
+                audio_files.sort(key=natural_keys)
+                
+                st.write(f"Tìm thấy **{len(md_files)}** file kịch bản và **{len(audio_files)}** file audio.")
+                
+                pairs = []
+                for i in range(min(len(md_files), len(audio_files))):
+                    pairs.append({
+                        "md": md_files[i],
+                        "audio": audio_files[i]
+                    })
+                
+                if pairs:
+                    st.markdown("#### 📋 Preview Ghép Cặp (Natural Sort)")
+                    preview_data = [{"Kịch Bản (.md)": os.path.basename(p["md"]), "Âm Thanh": os.path.basename(p["audio"])} for p in pairs]
+                    st.table(preview_data)
+                    
+                    if batch_output_dir and st.button("🚀 Bắt Đầu Chạy Hàng Loạt", key="btn_run_batch"):
+                        os.makedirs(batch_output_dir, exist_ok=True)
+                        st.info("Đang xử lý Batch... Vui lòng không đóng trình duyệt!")
+                        
+                        progress_text = st.empty()
+                        progress_bar = st.progress(0)
+                        
+                        success_count = 0
+                        import shutil
+                        
+                        for idx, pair in enumerate(pairs):
+                            md_path = pair["md"]
+                            audio_path = pair["audio"]
+                            base_name = os.path.splitext(os.path.basename(md_path))[0]
+                            
+                            progress_text.text(f"Đang xử lý video {idx+1}/{len(pairs)}: {base_name}...")
+                            progress_bar.progress(idx / len(pairs))
+                            
+                            try:
+                                # Tạo temp dir riêng cho mỗi task để tránh trùng lặp state
+                                temp_dir = os.path.join("storage", "contexts", selected_story, "temp", f"batch_{idx}")
+                                os.makedirs(temp_dir, exist_ok=True)
+                                
+                                temp_md = os.path.join(temp_dir, os.path.basename(md_path))
+                                temp_audio = os.path.join(temp_dir, os.path.basename(audio_path))
+                                shutil.copy2(md_path, temp_md)
+                                shutil.copy2(audio_path, temp_audio)
+                                
+                                # Clear state cũ
+                                orchestrator.clear_state()
+                                
+                                # Chạy pipeline
+                                final_video = orchestrator.run_pipeline(temp_md, temp_audio, srt_path="", progress_callback=None)
+                                
+                                # Move và đổi tên sang output dir
+                                out_file = os.path.join(batch_output_dir, f"{base_name}.mp4")
+                                shutil.copy2(final_video, out_file)
+                                success_count += 1
+                                st.success(f"✅ Đã hoàn thành: {base_name}")
+                                
+                                # Dọn dẹp rác (nếu cần)
+                                try: shutil.rmtree(temp_dir)
+                                except: pass
+                                
+                            except Exception as e:
+                                st.error(f"❌ Lỗi khi xử lý {base_name}: {e}")
+                                logger.error(f"Batch Error on {base_name}: {e}")
+                                
+                        progress_bar.progress(1.0)
+                        progress_text.text(f"Đã hoàn thành toàn bộ Batch! ({success_count}/{len(pairs)} thành công)")
+                        st.balloons()
+        elif exec_mode.startswith("🛑"):
+            st.markdown("### 🎙️ Human-in-the-Loop Studio")
+            
+            step_status = current_state.get("step", "INIT") if current_state else "INIT"
+            
+            col_stat1, col_stat2 = st.columns([3, 1])
+            with col_stat1:
+                st.info(f"📍 **Trạng thái hiện tại:** `{step_status}`")
+            with col_stat2:
+                if current_state and st.button("🗑️ Reset Trạng Thái / Làm Lại", key="btn_reset_state"):
+                    orchestrator.clear_state()
+                    st.rerun()
+                    
+            if step_status == "INIT":
+                st.markdown("#### 🚩 Trạm 1: Upload Dữ Liệu & Phân Tách Kịch Bản")
+                col_md, col_audio, col_srt = st.columns(3)
+                with col_md:
+                    md_file = st.file_uploader("File kịch bản (.md)", type=["md"], key="st1_md")
+                with col_audio:
+                    audio_file = st.file_uploader("File audio (.mp3, .wav)", type=["mp3", "wav"], key="st1_audio")
+                with col_srt:
+                    srt_file = st.file_uploader("File phụ đề (.srt) - Tuỳ chọn", type=["srt"], key="st1_srt")
+                
+                use_whisper = st.checkbox("Sử dụng AI Whisper để dịch Audio (Khuyên dùng cho video dài, Tốn VRAM)", value=True)
+                    
+                if st.button("▶ Chạy Trạm 1: Tạo Script & Prompt LLM", key="btn_run_st1"):
+                    if not md_file or not audio_file:
+                        st.error("Vui lòng tải lên kịch bản và audio!")
+                    else:
+                        temp_dir = os.path.join("storage", "contexts", selected_story, "temp")
+                        os.makedirs(temp_dir, exist_ok=True)
+                        md_path = os.path.join(temp_dir, md_file.name)
+                        audio_path = os.path.join(temp_dir, audio_file.name)
+                        with open(md_path, "wb") as f: f.write(md_file.getbuffer())
+                        with open(audio_path, "wb") as f: f.write(audio_file.getbuffer())
+                        srt_path = ""
+                        if srt_file:
+                            srt_path = os.path.join(temp_dir, srt_file.name)
+                            with open(srt_path, "wb") as f: f.write(srt_file.getbuffer())
+                            
+                        progress_text = st.empty()
+                        progress_bar = st.progress(0)
+                        def update_ui(msg, pct):
+                            progress_text.text(msg)
+                            progress_bar.progress(pct / 100.0)
+                            
+                        try:
+                            orchestrator.step1_generate_script(
+                                md_path, audio_path, srt_path, 
+                                progress_callback=update_ui, 
+                                use_whisper=use_whisper
+                            )
+                            st.success("✅ Trạm 1 hoàn thành! Đang chuyển sang Script Studio...")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Lỗi Trạm 1: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+                            
+            elif step_status == "SCRIPT_READY":
+                st.markdown("#### 📝 Trạm 1 — Script Studio: Chỉnh Sửa Lời Thoại & Prompt")
+                scenes_data = current_state.get("scenes", [])
+                
+                import pandas as pd
+                df_scenes = pd.DataFrame([
+                    {
+                        "ID": s["scene_id"],
+                        "Bắt đầu (s)": round(s["start_time"], 2),
+                        "Kết thúc (s)": round(s["end_time"], 2),
+                        "Lời thoại (VI)": s["text_vi"],
+                        "Prompt (EN)": s["image_prompt"]
+                    } for s in scenes_data
+                ])
+                
+                st.caption("💡 Bạn có thể nhấp cú đúp vào bất kỳ ô nào để chỉnh sửa trực tiếp Lời thoại hoặc Prompt tiếng Anh trước khi AI vẽ hình.")
+                edited_df = st.data_editor(df_scenes, use_container_width=True, num_rows="fixed", key="script_editor")
+                
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button("💾 Lưu Thay Đổi Kịch Bản", key="btn_save_script"):
+                        for idx, row in edited_df.iterrows():
+                            scenes_data[idx]["text_vi"] = row["Lời thoại (VI)"]
+                            scenes_data[idx]["image_prompt"] = row["Prompt (EN)"]
+                        scenes_obj = [Scene(**s) for s in scenes_data]
+                        orchestrator.save_state("SCRIPT_READY", scenes_obj, current_state["task_dir"], current_state.get("audio_path", ""), current_state.get("srt_path", ""), current_state.get("md_path", ""))
+                        st.success("Đã lưu chỉnh sửa kịch bản!")
+                with col_btn2:
+                    if st.button("▶ Xác Nhận & Sang Trạm 2 (Sinh Ảnh SD)", key="btn_to_st2", type="primary"):
+                        for idx, row in edited_df.iterrows():
+                            scenes_data[idx]["text_vi"] = row["Lời thoại (VI)"]
+                            scenes_data[idx]["image_prompt"] = row["Prompt (EN)"]
+                        scenes_obj = [Scene(**s) for s in scenes_data]
+                        orchestrator.save_state("SCRIPT_READY", scenes_obj, current_state["task_dir"], current_state.get("audio_path", ""), current_state.get("srt_path", ""), current_state.get("md_path", ""))
+                        
+                        progress_text = st.empty()
+                        progress_bar = st.progress(0)
+                        def update_ui(msg, pct):
+                            progress_text.text(msg)
+                            progress_bar.progress(pct / 100.0)
+                        try:
+                            orchestrator.step2_generate_images(scenes_obj, current_state["task_dir"], progress_callback=update_ui)
+                            st.success("✅ Trạm 2 hoàn thành! Đang chuyển sang Storyboard Studio...")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Lỗi Trạm 2: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+                            
+            elif step_status == "STORYBOARD_READY":
+                st.markdown("#### 🖼️ Trạm 2 — Storyboard Studio: Kiểm Duyệt & Re-roll Ảnh")
+                scenes_data = current_state.get("scenes", [])
+                
+                st.write("Dưới đây là storyboard các cảnh đã vẽ. Bạn có thể Re-roll từng ảnh hoặc tự tải lên ảnh ngoại tuyến thay thế.")
+                
+                cols_per_row = 3
+                grid_cols = st.columns(cols_per_row)
+                for idx, s_dict in enumerate(scenes_data):
+                    col = grid_cols[idx % cols_per_row]
+                    with col:
+                        st.markdown(f"**Cảnh #{s_dict['scene_id']+1}** (`{s_dict['start_time']:.1f}s - {s_dict['end_time']:.1f}s`)")
+                        img_path = s_dict.get("frame_path", "")
+                        if img_path and os.path.exists(img_path):
+                            st.image(img_path, use_container_width=True)
+                        else:
+                            st.warning("Chưa có ảnh hoặc mất file")
+                        st.caption(f"🌱 Seed: `{s_dict.get('accepted_seed', -1)}`")
+                        with st.expander("📝 Prompt Cảnh #" + str(s_dict['scene_id']+1)):
+                            new_p = st.text_area("Sửa prompt nếu cần:", value=s_dict["image_prompt"], key=f"p_edit_{idx}")
+                            
+                        c_rr, c_up = st.columns([1, 1])
+                        with c_rr:
+                            if st.button("🔄 Re-roll", key=f"rr_{idx}"):
+                                with st.spinner(f"Đang vẽ lại Cảnh #{idx+1}..."):
+                                    try:
+                                        orchestrator.reroll_scene(idx, new_seed=-1, new_prompt=new_p)
+                                        st.success(f"Đã re-roll Cảnh #{idx+1}!")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Lỗi: {e}")
+                        with c_up:
+                            up_img = st.file_uploader("📤 Upload", type=["png", "jpg", "jpeg"], key=f"up_{idx}", label_visibility="collapsed")
+                            if up_img is not None:
+                                try:
+                                    # Guard: if frame_path is empty (not yet generated), save to task_dir
+                                    save_path = img_path if img_path else os.path.join(
+                                        current_state.get("task_dir", "storage/tasks"), "draft_frames", f"scene_{idx:03d}.png"
+                                    )
+                                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                                    with open(save_path, "wb") as f:
+                                        f.write(up_img.getbuffer())
+                                    # Update state so frame_path reflects upload
+                                    scenes_data[idx]["frame_path"] = save_path
+                                    from app.services.storytelling.models import Scene as SceneModel
+                                    scenes_obj_upd = [SceneModel(**s) for s in scenes_data]
+                                    orchestrator.save_state(current_state["step"], scenes_obj_upd, current_state["task_dir"], current_state.get("audio_path", ""), current_state.get("srt_path", ""), current_state.get("md_path", ""))
+                                    st.success(f"Đã thay ảnh Cảnh #{idx+1}!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Lỗi lưu ảnh: {e}")
+
+                                    
+                st.markdown("---")
+                if st.button("▶ Xác Nhận Storyboard & Sang Trạm 3 (Render Final)", key="btn_to_st3", type="primary"):
+                    scenes_obj = [Scene(**s) for s in scenes_data]
+                    orchestrator.save_state("RENDER_READY", scenes_obj, current_state["task_dir"], current_state.get("audio_path", ""), current_state.get("srt_path", ""), current_state.get("md_path", ""))
+                    st.rerun()
+                    
+            elif step_status in ["RENDER_READY", "DONE"]:
+                st.markdown("#### 🎬 Trạm 3 — Render Studio: Hậu Kỳ Upscale & Nhạc Nền")
+                scenes_data = current_state.get("scenes", [])
+                scenes_obj = [Scene(**s) for s in scenes_data]
+                
+                from app.services.model_downloader import ensure_models_ready
+                mod_status = ensure_models_ready(download_if_missing=False)
+                realesrgan_ready = mod_status.get("realesrgan") == "ready"
+                
+                col_opt1, col_opt2 = st.columns(2)
+                with col_opt1:
+                    en_upscale = st.toggle("✨ Bật AI Upscaler (RealESRGAN 4x)", value=realesrgan_ready)
+                    if en_upscale and not realesrgan_ready:
+                        st.warning("⚠️ Model RealESRGAN chưa được tải! Hệ thống sẽ dùng bộ lọc LANCZOS chất lượng cao thay thế hoặc tự động tải khi render.")
+                with col_opt2:
+                    bgm_file = st.file_uploader("🎵 Nhạc nền BGM (.mp3, .wav) - Tuỳ chọn", type=["mp3", "wav"], key="st3_bgm")
+                    bgm_vol = st.slider("Âm lượng BGM", min_value=0.0, max_value=1.0, value=0.15, step=0.05, key="st3_vol")
+                    burn_subtitles = st.checkbox("Gắn cứng phụ đề (Subtitles) vào Video", value=True)
+                    
+                if st.button("🎬 Xuất Video Final Ngay", key="btn_run_st3", type="primary"):
+                    bgm_path = ""
+                    if bgm_file:
+                        bgm_path = os.path.join(current_state["task_dir"], bgm_file.name)
+                        with open(bgm_path, "wb") as f: f.write(bgm_file.getbuffer())
+                        
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                    def update_ui(msg, pct):
+                        progress_text.text(msg)
+                        progress_bar.progress(pct / 100.0)
+                        
+                    try:
+                        final_vid = orchestrator.step3_render_final(
+                            scenes=scenes_obj,
+                            task_dir=current_state["task_dir"],
+                            audio_path=current_state.get("audio_path", ""),
+                            srt_path=current_state.get("srt_path", ""),
+                            bgm_path=bgm_path,
+                            bgm_volume=bgm_vol,
+                            enable_upscaling=en_upscale,
+                            burn_subtitles=burn_subtitles,
+                            progress_callback=update_ui
+                        )
+                        st.success("🎉 CHÚC MỪNG! Video Final đã xuất thành công!")
+                        st.video(final_vid)
+                    except Exception as e:
+                        st.error(f"❌ Lỗi Trạm 3: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+                        
+                if step_status == "DONE":
+                    final_vid_check = os.path.join(current_state["task_dir"], "final_video.mp4")
+                    if os.path.exists(final_vid_check):
+                        st.markdown("---")
+                        st.subheader("📺 Video Hoàn Chỉnh Trước Đó:")
+                        st.video(final_vid_check)
 
 with tab2:
     st.header("Workflow 2: Auto Fetch")

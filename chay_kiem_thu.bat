@@ -18,5 +18,11 @@ if not exist "!PROJ_DIR!\.venv\Scripts\python.exe" (
 )
 
 cd /d "!PROJ_DIR!"
+
+rem -- Thiet lap thu muc Cache cuc bo trong du an --
+set "HF_HOME=!PROJ_DIR!\models\.cache\huggingface"
+set "TORCH_HOME=!PROJ_DIR!\models\.cache\torch"
+set "XDG_CACHE_HOME=!PROJ_DIR!\models\.cache\xdg"
+
 .venv\Scripts\python.exe tests/run_tests.py
 pause

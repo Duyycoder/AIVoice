@@ -22,3 +22,20 @@ subtitle_position = "bottom"
 subtitle_bg_alpha = 255
 rounded_subtitle_background = true
 custom_position = 69.0
+
+[storytelling]
+aspect_ratio = "16:9"
+image_width = 896
+image_height = 512
+enable_upscaling = false
+upscaler_model = "RealESRGAN_x4plus_anime_6B"
+output_width = 1920
+output_height = 1080
+video_fps = 24
+subtitle_font = "Arial"
+subtitle_font_size = 28
+subtitle_color = "white"
+subtitle_border = 2
+subtitle_position = "bottom"
+num_inference_steps = 8
+guidance_scale = 1.5

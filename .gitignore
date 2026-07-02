@@ -41,9 +41,9 @@ scratch_*.py
 
 # Storage and runtime files
 storage/
-MediaComposer/storage/
-/MediaComposer/models/
-MediaComposer/config.toml
+apps/MediaComposer/storage/
+apps/MediaComposer/models/
+apps/MediaComposer/config.toml
 
 
 # Video files
@@ -53,8 +53,8 @@ MediaComposer/config.toml
 *.mov
 
 # MediaComposer assets
-MediaComposer/resource/songs/*.mp3
-MediaComposer/resource/fonts/*.ttc
+apps/MediaComposer/resource/songs/*.mp3
+apps/MediaComposer/resource/fonts/*.ttc
 
 
 

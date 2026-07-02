@@ -16,6 +16,7 @@ except ImportError:
     pass
 
 from app.services.storytelling.models import StoryContext
+from app.config import load_storytelling_config
 
 class StyleBuffer:
     MAX_SIZE = 8
@@ -101,6 +102,11 @@ class StorytellingPipeline:
         except ImportError:
             raise ImportError("Vui lòng cài đặt diffusers và torch")
 
+        from app.services.storytelling.hardware_adapter import get_hardware_config
+        hw_config = get_hardware_config()
+        self.device = hw_config["sd_device"]
+        dtype = torch.float16 if hw_config["use_fp16"] else torch.float32
+
         checkpoint = self.context.checkpoint if self.context and self.context.checkpoint else "stablediffusionapi/anything-v5"
         if checkpoint == "anything-v5":
             checkpoint = "stablediffusionapi/anything-v5"
@@ -109,20 +115,14 @@ class StorytellingPipeline:
         cache_dir = os.path.join(os.getcwd(), "storage", "models")
         os.makedirs(cache_dir, exist_ok=True)
         
-        logger.info(f"Loading SD Pipeline with {checkpoint} into {cache_dir}")
+        logger.info(f"Loading SD Pipeline with {checkpoint} into {cache_dir} (dtype={dtype})")
         self._pipe = StableDiffusionPipeline.from_pretrained(
             checkpoint,
-            torch_dtype=torch.float16,
+            torch_dtype=dtype,
             safety_checker=None,
             cache_dir=cache_dir
         )
         
-        logger.info("Loading TAESD VAE")
-        try:
-            self._pipe.vae = AutoencoderTiny.from_pretrained("madebyollin/taesd", torch_dtype=torch.float16, cache_dir=cache_dir)
-        except Exception as e:
-            logger.warning(f"Could not load TAESD: {e}")
-            
         logger.info("Loading Hyper-SD LoRA")
         self._pipe.scheduler = LCMScheduler.from_config(self._pipe.scheduler.config)
         try:
@@ -133,15 +133,33 @@ class StorytellingPipeline:
             
         logger.info("Loading IP-Adapter FaceID")
         try:
+            from huggingface_hub import hf_hub_download
+            ip_model_path = hf_hub_download(
+                repo_id="h94/IP-Adapter-FaceID",
+                filename="ip-adapter-faceid_sd15.bin",
+                cache_dir=cache_dir
+            )
             self._pipe.load_ip_adapter("h94/IP-Adapter-FaceID", subfolder=None, weight_name="ip-adapter-faceid_sd15.bin", cache_dir=cache_dir)
+            # THÊM BƯỚC 5: Giới hạn IP-Adapter Scale để không làm biến dạng pose/tay chân
+            self._pipe.set_ip_adapter_scale(0.6)
             self._ip_adapter_loaded = True
         except Exception as e:
             logger.warning(f"Could not load IP-Adapter FaceID: {e}")
             
         logger.info("Using PyTorch 2.0+ native Scaled Dot-Product Attention (SDPA)")
             
-        self._pipe = self._pipe.to(self.device)
-        logger.info("Pipeline warmup completed.")
+        if hw_config["enable_cpu_offload"]:
+            try:
+                self._pipe.enable_model_cpu_offload()
+                if hasattr(self._pipe, "vae") and self._pipe.vae is not None:
+                    self._pipe.vae.enable_slicing()
+                logger.info("Pipeline warmup completed with CPU Offload (VRAM Save).")
+            except Exception as e:
+                logger.warning(f"Không thể bật CPU Offload: {e}. Fallback load trực tiếp model lên thiết bị: {self.device}")
+                self._pipe = self._pipe.to(self.device)
+        else:
+            self._pipe = self._pipe.to(self.device)
+            logger.info(f"Pipeline warmup completed directly on device {self.device} (Maximum Speed).")
 
     def _get_combined_embedding(self, face_embedding: Optional[np.ndarray]) -> Optional[list]:
         if face_embedding is None or not self._ip_adapter_loaded:
@@ -169,15 +187,25 @@ class StorytellingPipeline:
         negative_prompt: str,
         face_embedding: Optional[np.ndarray],
         seed: int = -1,
-        width: int = 512,
-        height: int = 512,
-        num_steps: int = 2,
-        guidance_scale: float = 0.0
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        num_steps: Optional[int] = None,
+        guidance_scale: Optional[float] = None
     ) -> Tuple[Image.Image, int]:
         
         self.warmup()
         import torch
         
+        st_config = load_storytelling_config()
+        if width is None:
+            width = st_config.get("image_width", 896)
+        if height is None:
+            height = st_config.get("image_height", 512)
+        if num_steps is None:
+            num_steps = st_config.get("num_inference_steps", 2)
+        if guidance_scale is None:
+            guidance_scale = st_config.get("guidance_scale", 0.0)
+            
         if seed == -1:
             seed = torch.randint(0, 2147483647, (1,)).item()
             
@@ -209,14 +237,26 @@ class StorytellingPipeline:
         face_embedding: Optional[np.ndarray],
         batch_size: int = 4,
         seeds: Optional[List[int]] = None,
-        num_steps: int = 2,
-        guidance_scale: float = 0.0,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        num_steps: Optional[int] = None,
+        guidance_scale: Optional[float] = None,
         quality_mode: bool = False
     ) -> List[Tuple[Image.Image, int]]:
         
         self.warmup()
         import torch
         
+        st_config = load_storytelling_config()
+        if width is None:
+            width = st_config.get("image_width", 896)
+        if height is None:
+            height = st_config.get("image_height", 512)
+        if num_steps is None:
+            num_steps = st_config.get("num_inference_steps", 2)
+        if guidance_scale is None:
+            guidance_scale = st_config.get("guidance_scale", 0.0)
+            
         if seeds is None or len(seeds) != batch_size:
             seeds = [torch.randint(0, 2147483647, (1,)).item() for _ in range(batch_size)]
             
@@ -231,23 +271,27 @@ class StorytellingPipeline:
                 pass
                 
         ip_adapter_image_embeds = self._get_combined_embedding(face_embedding)
-        if ip_adapter_image_embeds is not None:
-            ip_adapter_image_embeds = [embed.repeat(batch_size, 1) for embed in ip_adapter_image_embeds]
             
         kwargs = {}
         if ip_adapter_image_embeds is not None:
             kwargs["ip_adapter_image_embeds"] = ip_adapter_image_embeds
             
         quality_prompt = "masterpiece, best quality, highres, " + prompt
-        images = self._pipe(
-            prompt=[quality_prompt] * batch_size,
-            negative_prompt=[negative_prompt] * batch_size,
-            num_inference_steps=num_steps,
-            guidance_scale=guidance_scale,
-            num_images_per_prompt=1,
-            generator=generators,
-            **kwargs
-        ).images
+        images = []
+        
+        logger.info(f"Generating {batch_size} images sequentially to save VRAM...")
+        for i in range(batch_size):
+            img = self._pipe(
+                prompt=quality_prompt,
+                negative_prompt=negative_prompt,
+                num_inference_steps=num_steps,
+                guidance_scale=guidance_scale,
+                width=width,
+                height=height,
+                generator=generators[i],
+                **kwargs
+            ).images[0]
+            images.append(img)
         
         if quality_mode:
             try:
@@ -259,17 +303,35 @@ class StorytellingPipeline:
 
     def release(self) -> None:
         if self._pipe is not None:
+            # Unload lora weights if possible to break references
+            try:
+                self._pipe.unload_lora_weights()
+            except:
+                pass
+                
+            # Xóa _pipe thay vì can thiệp vào các module con vì CPU offload hook có thể bị break
             del self._pipe
             self._pipe = None
             self._ip_adapter_loaded = False
             
+        # QUAN TRỌNG: Phải xóa sạch các Tensor đang được giữ trong StyleBuffer
+        if hasattr(self, 'style_buffer') and self.style_buffer is not None:
+            self.style_buffer.clear()
+            
         import gc
+        # Gọi gc.collect() nhiều lần để đảm bảo Python dọn dẹp sạch cyclic references
         gc.collect()
+        gc.collect()
+        
         try:
             import torch
             if torch.cuda.is_available():
+                # BẮT BUỘC: Đồng bộ hóa toàn bộ luồng GPU trước khi xóa bộ nhớ đệm
+                # Tránh lỗi CUDA illegal memory access khi kernel đang chạy ngầm
+                torch.cuda.synchronize()
                 torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
         except ImportError:
             pass
             
-        logger.info("StorytellingPipeline released VRAM.")
+        logger.info("StorytellingPipeline VRAM đã được giải phóng hoàn toàn.")

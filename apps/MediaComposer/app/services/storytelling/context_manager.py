@@ -24,12 +24,17 @@ class ContextManager:
         os.makedirs(self.chars_dir, exist_ok=True)
         
         default_style = (
-            "anime style, 2D flat illustration, cel shaded, clean lineart, Anything V5, \n"
-            "xianxia cultivation setting, traditional Chinese aesthetics, vibrant colors,\n"
-            "sharp details, high quality\n"
+            "(flat color, minimalist anime, clean lineart, Anything V5:1.1), \n"
+            "simple background, minimalist background, \n"
+            "xianxia cultivation setting, sharp details\n"
             "---\n"
-            "realistic, 3D render, photograph, photorealistic, nsfw, extra limbs, \n"
-            "bad anatomy, low quality, blurry, western cartoon, chibi (trừ khi yêu cầu)"
+            "(worst quality:2), (low quality:2), (normal quality:2), lowres, \n"
+            "(bad anatomy:1.4), (bad hands:1.5), (mutated hands:1.4), \n"
+            "text, error, missing fingers, extra digit, fewer digits, \n"
+            "cropped, jpeg artifacts, signature, watermark, username, \n"
+            "(extra limbs:1.4), (deformed:1.3), blurry, bad face, \n"
+            "realistic, 3D render, photograph, photorealistic, nsfw, \n"
+            "western cartoon, out of frame"
         )
         with open(self.style_file, "w", encoding="utf-8") as f:
             f.write(default_style)
@@ -143,6 +148,25 @@ class ContextManager:
             if c.slug == slug:
                 return c
         return None
+
+    def delete_character(self, slug: str) -> bool:
+        if not self._context:
+            self.load_context()
+        initial_len = len(self._context.characters)
+        self._context.characters = [c for c in self._context.characters if c.slug != slug]
+        if len(self._context.characters) < initial_len:
+            self.save_context()
+            
+            # Optionally delete character directory
+            char_dir = os.path.join(self.chars_dir, slug)
+            if os.path.exists(char_dir):
+                import shutil
+                try:
+                    shutil.rmtree(char_dir)
+                except Exception:
+                    pass
+            return True
+        return False
 
     def list_characters(self) -> List[Character]:
         if not self._context:

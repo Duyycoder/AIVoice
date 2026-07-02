@@ -21,6 +21,24 @@ class Config:
             "device": default_device,
             "compute_type": default_compute
         }
+        self.storytelling = {
+            "aspect_ratio": "16:9",
+            "image_width": 896,
+            "image_height": 512,
+            "enable_upscaling": True,
+            "upscaler_model": "RealESRGAN_x4plus_anime_6B",
+            "output_width": 1920,
+            "output_height": 1080,
+            "video_fps": 24,
+            "subtitle_font": "Arial",
+            "subtitle_font_size": 28,
+            "subtitle_color": "white",
+            "subtitle_border": 2,
+            "subtitle_position": "bottom",
+            "num_inference_steps": 8,
+            "guidance_scale": 1.5,
+            "hardware_profile": "auto",
+        }
         self.proxy = None
         self.load_config()
 
@@ -32,13 +50,16 @@ class Config:
                     self.app.update(data["app"])
                 if "whisper" in data:
                     self.whisper.update(data["whisper"])
+                if "storytelling" in data:
+                    self.storytelling.update(data["storytelling"])
                 if "proxy" in data:
                     self.proxy = data["proxy"]
 
     def save_config(self):
         data = {
             "app": self.app,
-            "whisper": self.whisper
+            "whisper": self.whisper,
+            "storytelling": self.storytelling
         }
         if self.proxy is not None:
             data["proxy"] = self.proxy
@@ -46,3 +67,8 @@ class Config:
             toml.dump(data, f)
 
 config = Config()
+
+def load_storytelling_config() -> dict:
+    config.load_config()
+    return config.storytelling
+

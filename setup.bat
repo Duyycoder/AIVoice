@@ -1,6 +1,17 @@
 @echo off
 setlocal enabledelayedexpansion
 
+rem -- Thiet lap thu muc Cache cuc bo trong du an --
+set "PROJ_DIR=%~dp0"
+if "%PROJ_DIR:~-1%"=="\" set "PROJ_DIR=%PROJ_DIR:~0,-1%"
+set "HF_HOME=%PROJ_DIR%\models\.cache\huggingface"
+set "TORCH_HOME=%PROJ_DIR%\models\.cache\torch"
+set "XDG_CACHE_HOME=%PROJ_DIR%\models\.cache\xdg"
+
+set DOWNLOAD_MC_MODELS=0
+if /i "%~1"=="--download-models" set DOWNLOAD_MC_MODELS=1
+if /i "%~2"=="--download-models" set DOWNLOAD_MC_MODELS=1
+
 echo ======================================================================
 echo          AIVoice Auto-Setup Tool for Windows (Python 3.11)
 echo ======================================================================
@@ -182,6 +193,24 @@ echo.
 
 :: 5. Install libraries
 echo ----------------------------------------------------------------------
+echo [INFO] Dang kiem tra phan cung GPU de toi uu hoa cai dat...
+echo ----------------------------------------------------------------------
+set IS_RTX_50=0
+wmic path win32_VideoController get name | findstr /i "RTX 50" >nul
+if !errorlevel! equ 0 (
+    set IS_RTX_50=1
+    echo [INFO] Phat hien GPU dong RTX 50-Series (Blackwell) tren may tinh nay.
+    echo [INFO] Bat dau tai va cai dat truoc PyTorch phien ban CUDA 12.8 (cu128)...
+    .venv\Scripts\python.exe -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    if !errorlevel! neq 0 (
+        echo [WARNING] Cai dat PyTorch CUDA 12.8 that bai. He thong se thu cai dat phien ban mac dinh.
+    ) else (
+        echo [INFO] Cai dat PyTorch CUDA 12.8 thanh cong!
+    )
+)
+
+echo.
+echo ----------------------------------------------------------------------
 echo [INFO] Dang cai dat cac thu vien Python (requirements.txt)...
 echo ----------------------------------------------------------------------
 .venv\Scripts\python.exe -m pip install --default-timeout=1000 -r requirements.txt
@@ -289,6 +318,20 @@ echo ----------------------------------------------------------------------
 .venv\Scripts\python.exe src\download_models.py --engine all
 if %errorlevel% neq 0 (
     echo [WARNING] Qua trinh tai mo hinh bi gian doan.
+)
+echo.
+
+:: 7b. Check/Download MediaComposer Storytelling Models
+echo ----------------------------------------------------------------------
+echo [INFO] Kiem tra va tai mo hinh AI Storytelling (RealESRGAN, IP-Adapter)...
+echo ----------------------------------------------------------------------
+if !DOWNLOAD_MC_MODELS! equ 1 (
+    .venv\Scripts\python.exe apps\MediaComposer\app\services\model_downloader.py --download
+) else (
+    .venv\Scripts\python.exe apps\MediaComposer\app\services\model_downloader.py --check-only
+    if !errorlevel! neq 0 (
+        echo [WARNING] Mot so model Storytelling chua co. Chay setup.bat --download-models de tai ve ngay, hoac ung dung se tu dong tai khi can.
+    )
 )
 echo.
 

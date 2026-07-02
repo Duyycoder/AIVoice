@@ -12,3 +12,27 @@ video_codec = "h264_nvenc"
 model_size = "medium"
 device = "cuda"
 compute_type = "float32"
+
+[storytelling]
+# Tỷ lệ ảnh: "16:9" | "9:16" | "1:1"
+aspect_ratio = "16:9"
+# Kích thước sinh ảnh (SD1.5 tối ưu, bội số của 64, tỷ lệ gần đúng 16:9)
+image_width  = 896
+image_height = 512
+# Upscaler
+enable_upscaling = true
+upscaler_model   = "RealESRGAN_x4plus_anime_6B"
+# Output video
+output_width   = 1920
+output_height  = 1080
+video_fps      = 24
+# Subtitle
+subtitle_font      = "Arial"
+subtitle_font_size = 28
+subtitle_color     = "white"
+subtitle_border    = 2
+subtitle_position  = "bottom"
+# Số bước inference SD
+num_inference_steps = 2
+guidance_scale      = 0.0
+

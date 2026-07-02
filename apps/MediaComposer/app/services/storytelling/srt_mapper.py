@@ -55,7 +55,9 @@ def map_scenes_to_timeline(
     srt_path: str = "",
     audio_path: str = "",
     silence_gap_threshold: float = 0.5,
-    total_audio_duration: float = 0.0
+    total_audio_duration: float = 0.0,
+    use_whisper: bool = True,
+    md_path: str = ""
 ) -> List[Scene]:
     """
     total_audio_duration: tổng thời lượng audio (giây).
@@ -66,11 +68,44 @@ def map_scenes_to_timeline(
 
     if not srt_path or not os.path.exists(srt_path):
         if audio_path and os.path.exists(audio_path):
-            logger.info("No SRT provided, generating via Whisper...")
-            srt_path = create_subtitle(audio_file=audio_path, language="vi")
-            if not srt_path:
-                logger.warning("Failed to generate SRT via Whisper. Using uniform duration fallback.")
-                return _fallback_uniform_duration(scenes, total_audio_duration)
+            if use_whisper:
+                logger.info("No SRT provided, generating via Whisper...")
+                from app.services.subtitle import create_subtitle, release_whisper_model
+                srt_path = create_subtitle(audio_file=audio_path, language="vi")
+                release_whisper_model()
+                if not srt_path:
+                    logger.warning("Failed to generate SRT via Whisper. Using uniform duration fallback.")
+                    return _fallback_uniform_duration(scenes, total_audio_duration)
+            else:
+                logger.info("No-Whisper mode: generating subtitle based on word-count proportional timing from scenes.")
+                from app.services.subtitle import utils
+                
+                word_counts = [max(len(s.text_vi.split()), 1) for s in scenes]
+                total_words = sum(word_counts)
+                
+                MARGIN_SECONDS = 0.1
+                usable_duration = max(total_audio_duration - MARGIN_SECONDS * 2, 1.0)
+                
+                current_time = MARGIN_SECONDS
+                lines = []
+                for idx, (scene, wcount) in enumerate(zip(scenes, word_counts), start=1):
+                    proportion = wcount / total_words if total_words > 0 else 0
+                    segment_duration = max(usable_duration * proportion, 0.3)
+                    
+                    scene.start_time = current_time
+                    scene.end_time = current_time + segment_duration
+                    scene.duration_sec = segment_duration
+                    
+                    lines.append(utils.text_to_srt(idx, scene.text_vi, scene.start_time, scene.end_time))
+                    current_time = scene.end_time
+                
+                temp_dir = os.path.dirname(audio_path)
+                srt_path = os.path.join(temp_dir, os.path.basename(audio_path) + ".srt")
+                with open(srt_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(lines) + "\n")
+                
+                logger.info(f"Subtitle from scenes created: {srt_path} ({len(scenes)} segments)")
+                return scenes
         else:
             logger.warning("No SRT and no Audio provided. Using uniform duration fallback.")
             return _fallback_uniform_duration(scenes, total_audio_duration)
