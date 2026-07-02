@@ -21,7 +21,7 @@ piper-tts>=1.2.0       # Piper offline ONNX TTS
 coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS (requires C++ compiler)
 llama-cpp-python==0.3.31 # Local GGUF LLM text rewriting (requires C++ compiler)
 vieneu==3.0.9          # VieNeu-TTS offline/online Vietnamese TTS
-neucodec==0.0.5        # Neural audio codec for VieNeu TTS voice cloning standard mode
+neucodec>=0.0.6        # Neural audio codec for VieNeu TTS voice cloning standard mode
 torchao==0.16.0        # Lock to 0.16.0 to remain compatible with PyTorch 2.6.0 and prevent ImportError
 sentence-transformers  # Required for Semantic Caching text embeddings
 # NOTE: rvc-python>=0.1.5 is installed separately with --no-deps in setup.bat
@@ -55,7 +55,7 @@ scipy
 
 # Audio File Manipulation & Digital Signal Processing
 soundfile>=0.12.1      # Read/write WAV files
-numpy>=1.26.0,<2.0.0   # Pinned range: >=1.26.0 for coqui-tts, <2.0 to avoid ABI breaks
+numpy>=2.0.2           # Required >=2.0.2 by neucodec
 librosa>=0.10.0        # Audio feature analysis and processing
 pyloudnorm>=0.1.1      # LUFS volume normalization (required by src/utils/audio.py)
 
