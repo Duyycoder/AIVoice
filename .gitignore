@@ -43,7 +43,12 @@ scratch_*.py
 storage/
 apps/MediaComposer/storage/
 apps/MediaComposer/models/
-apps/MediaComposer/config.toml
+
+# Config files (local secrets/settings)
+config.toml
+
+# Global glossary
+global_glossary*
 
 
 # Video files
