@@ -74,6 +74,4 @@ moviepy==2.2.1
 faster-whisper==1.2.1
 openai
 streamlit
-
-
-
+opencv-python
