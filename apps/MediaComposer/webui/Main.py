@@ -925,7 +925,7 @@ with tab5:
     all_contexts = ContextManager.list_all_contexts()
     col1, col2 = st.columns([3, 1])
     with col1:
-        selected_story = st.selectbox("Bộ truyện", ["Tạo mới..."] + all_contexts)
+        selected_story = st.selectbox("Bộ truyện", ["Tạo mới..."] + all_contexts, key="selected_story_slug")
         
     with col2:
         if st.button("➕ Tạo mới"):
@@ -944,6 +944,7 @@ with tab5:
                     ctx_mgr.create_context(new_story_name, new_genre)
                     st.success("Tạo thành công!")
                     st.session_state.create_context_modal = False
+                    st.session_state.selected_story_slug = new_story_slug
                     st.rerun()
                     
     elif selected_story and selected_story != "Tạo mới...":
@@ -1037,6 +1038,143 @@ with tab5:
                         st.error("Xóa thất bại!")
 
         st.markdown("---")
+        
+        st.subheader("📚 BÓC TÁCH NHÂN VẬT TỰ ĐỘNG")
+        st.write("Tải lên các chương truyện để tự động bóc tách nhân vật và tìm kiếm ngoại hình trên mạng.")
+        
+        if "pending_characters" in st.session_state and st.session_state.pending_characters:
+            if st.session_state.get("pending_story_slug") != selected_story:
+                del st.session_state.pending_characters
+                st.rerun()
+            else:
+                st.info("📋 BẠN CÓ NHÂN VẬT CHƯA LƯU. VUI LÒNG DUYỆT VÀ LƯU BÊN DƯỚI!")
+                with st.form("confirm_chars_form"):
+                    st.write("Vui lòng kiểm tra lại thông tin và hình ảnh nhân vật trước khi lưu.")
+                    saved_chars_count = 0
+                    
+                    for idx, char in enumerate(st.session_state.pending_characters):
+                        st.markdown(f"### 👤 {char['name']}")
+                        save_this = st.checkbox(f"Lưu {char['name']}", value=True, key=f"save_char_{idx}")
+                        
+                        c_name = st.text_input("Tên nhân vật", value=char['name'], key=f"name_char_{idx}")
+                        c_desc = st.text_area("Mô tả ngoại hình (tiếng Việt)", value=char['description'], key=f"desc_char_{idx}")
+                        c_kw = st.text_input("Keywords (Stable Diffusion - tiếng Anh)", value=char['keywords_en'], key=f"kw_char_{idx}")
+                        
+                        image_urls = char.get("image_urls", [])
+                        selected_img_url = ""
+                        if image_urls:
+                            st.write("Ảnh chân dung từ internet:")
+                            img_opts = ["Không dùng ảnh mạng (tải lên ảnh riêng sau)"] + image_urls
+                            cols = st.columns(min(len(image_urls), 4))
+                            for img_idx, url in enumerate(image_urls[:4]):
+                                with cols[img_idx]:
+                                    st.image(url, use_container_width=True)
+                            selected_img_url = st.radio("Chọn ảnh dùng làm Face Embedding:", img_opts, key=f"img_select_{idx}")
+                        else:
+                            st.info("Không tìm thấy ảnh trên mạng.")
+                            
+                        char["final_name"] = c_name
+                        char["final_description"] = c_desc
+                        char["final_keywords_en"] = c_kw
+                        char["final_image_url"] = selected_img_url if selected_img_url != "Không dùng ảnh mạng (tải lên ảnh riêng sau)" else ""
+                        char["should_save"] = save_this
+                        st.markdown("---")
+                        
+                    col_ok, col_cancel = st.columns([1, 1])
+                    with col_ok:
+                        submitted_confirm = st.form_submit_button("💾 Xác nhận lưu các nhân vật")
+                    with col_cancel:
+                        submitted_cancel = st.form_submit_button("❌ Hủy bỏ kết quả")
+                        
+                    if submitted_confirm:
+                        with st.spinner("Đang lưu nhân vật và tải ảnh..."):
+                            import tempfile
+                            import requests
+                            for char in st.session_state.pending_characters:
+                                if char["should_save"]:
+                                    name = char["final_name"]
+                                    desc = char["final_description"]
+                                    kw = char["final_keywords_en"]
+                                    img_url = char["final_image_url"]
+                                    
+                                    ref_path = ""
+                                    if img_url:
+                                        try:
+                                            suffix = ".jpg"
+                                            if ".png" in img_url.lower(): suffix = ".png"
+                                            elif ".webp" in img_url.lower(): suffix = ".webp"
+                                            r = requests.get(img_url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+                                            if r.status_code == 200:
+                                                temp_dir = os.path.join("storage", "contexts", selected_story, "temp")
+                                                os.makedirs(temp_dir, exist_ok=True)
+                                                import re
+                                                char_slug = re.sub(r'[^a-zA-Z0-9]+', '_', name.lower()).strip('_')
+                                                ref_path = os.path.join(temp_dir, f"{char_slug}_web{suffix}")
+                                                with open(ref_path, "wb") as f:
+                                                    f.write(r.content)
+                                        except Exception as e:
+                                            st.error(f"Lỗi tải ảnh {name}: {e}")
+                                            ref_path = ""
+                                            
+                                    ctx_mgr.add_character(name, desc, kw, ref_path)
+                                    if ref_path and os.path.exists(ref_path):
+                                        try:
+                                            from app.services.storytelling.face_extractor import extract_and_save_face_embedding
+                                            from app.services.storytelling.hardware_adapter import get_hardware_config
+                                            import re
+                                            slug = re.sub(r'[^a-zA-Z0-9]+', '_', name.lower()).strip('_')
+                                            emb_path = os.path.join(ctx_mgr.chars_dir, slug, "face.ipadpt")
+                                            hw_config = get_hardware_config()
+                                            extract_and_save_face_embedding(ref_path, emb_path, device=hw_config["face_device"])
+                                            
+                                            char_obj = ctx_mgr.get_character(slug)
+                                            if char_obj:
+                                                char_obj.has_embedding = True
+                                                ctx_mgr.save_context()
+                                        except Exception as e:
+                                            st.warning(f"Lỗi face embedding {name}: {e}")
+                                            
+                                    saved_chars_count += 1
+                                    
+                            st.success(f"Đã lưu thành công {saved_chars_count} nhân vật!")
+                            del st.session_state.pending_characters
+                            st.rerun()
+                            
+                    if submitted_cancel:
+                        del st.session_state.pending_characters
+                        st.info("Đã hủy kết quả bóc tách.")
+                        st.rerun()
+        
+        if "pending_characters" not in st.session_state or not st.session_state.pending_characters:
+            with st.form("extract_chars_form"):
+                uploaded_chapters = st.file_uploader("Tải lên chương truyện (.txt)", type=["txt"], accept_multiple_files=True)
+                enable_web_search = st.checkbox("Tìm kiếm thông tin & hình ảnh trên mạng", value=True)
+                submit_extract = st.form_submit_button("🔍 Bắt đầu bóc tách")
+                
+                if submit_extract:
+                    if not uploaded_chapters:
+                        st.warning("Vui lòng tải lên ít nhất một file chương truyện.")
+                    else:
+                        chapter_texts = []
+                        for f in uploaded_chapters:
+                            content = f.read().decode("utf-8", errors="ignore")
+                            chapter_texts.append(content)
+                            
+                        with st.spinner("Đang bóc tách nhân vật bằng LLM (có thể mất 10-30s)..."):
+                            from app.services.storytelling.character_extractor import process_chapters_and_extract_characters
+                            extracted_chars = process_chapters_and_extract_characters(
+                                chapter_texts=chapter_texts,
+                                story_name=ctx.story_name,
+                                genre=ctx.genre,
+                                enable_web_search=enable_web_search
+                            )
+                            if extracted_chars:
+                                st.session_state.pending_characters = extracted_chars
+                                st.session_state.pending_story_slug = selected_story
+                                st.rerun()
+                            else:
+                                st.warning("Không phát hiện nhân vật nào trong văn bản tải lên.")
+
         st.markdown("---")
         st.subheader("⚙️ CẤU HÌNH PHẦN CỨNG & TĂNG TỐC")
         
