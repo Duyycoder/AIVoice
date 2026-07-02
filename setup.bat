@@ -196,7 +196,7 @@ echo ----------------------------------------------------------------------
 echo [INFO] Dang kiem tra phan cung GPU de toi uu hoa cai dat...
 echo ----------------------------------------------------------------------
 set IS_RTX_50=0
-wmic path win32_VideoController get name | findstr /i "RTX 50" >nul
+powershell -Command "if ((Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name) -match 'RTX 50') { exit 0 } else { exit 1 }" >nul 2>&1
 if !errorlevel! equ 0 (
     set IS_RTX_50=1
     echo [INFO] Phat hien GPU dong RTX 50-Series (Blackwell) tren may tinh nay.
