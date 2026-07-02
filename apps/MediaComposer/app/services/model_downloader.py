@@ -12,7 +12,13 @@ except ImportError:
 # MediaComposer root directory
 MC_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MODELS_DIR = os.path.join(MC_ROOT, "models")
-CACHE_DIR = os.path.join(MODELS_DIR, "diffusers_cache")
+
+# Uu tien dung HF_HOME de dong bo cache voi toan bo du an AIVoice
+hf_home = os.environ.get("HF_HOME")
+if hf_home:
+    CACHE_DIR = hf_home
+else:
+    CACHE_DIR = os.path.join(MODELS_DIR, "diffusers_cache")
 
 REQUIRED_MODELS = {
     "realesrgan": {

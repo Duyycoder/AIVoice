@@ -112,7 +112,10 @@ class StorytellingPipeline:
             checkpoint = "stablediffusionapi/anything-v5"
             
         import os
-        cache_dir = os.path.join(os.getcwd(), "storage", "models")
+        # Uu tien dung HF_HOME de dong bo cache voi toan bo du an AIVoice
+        cache_dir = os.environ.get("HF_HOME")
+        if not cache_dir:
+            cache_dir = os.path.join(os.getcwd(), "storage", "models")
         os.makedirs(cache_dir, exist_ok=True)
         
         logger.info(f"Loading SD Pipeline with {checkpoint} into {cache_dir} (dtype={dtype})")

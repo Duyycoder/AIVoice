@@ -8,6 +8,11 @@ set "HF_HOME=%PROJ_DIR%\models\.cache\huggingface"
 set "TORCH_HOME=%PROJ_DIR%\models\.cache\torch"
 set "XDG_CACHE_HOME=%PROJ_DIR%\models\.cache\xdg"
 
+:: Thiet lap thu muc TEMP/TMP cuc bo ngan hon de tranh loi Windows Long Path khi pip install llama-cpp-python
+set "TEMP=%PROJ_DIR%\.tmp"
+set "TMP=%PROJ_DIR%\.tmp"
+if not exist "%PROJ_DIR%\.tmp" mkdir "%PROJ_DIR%\.tmp"
+
 set DOWNLOAD_MC_MODELS=0
 if /i "%~1"=="--download-models" set DOWNLOAD_MC_MODELS=1
 if /i "%~2"=="--download-models" set DOWNLOAD_MC_MODELS=1
