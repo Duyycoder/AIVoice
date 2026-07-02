@@ -1,5 +1,7 @@
 import os
 import sys
+# PHẢI set TRƯỚC KHI import bất kỳ thứ gì (huggingface_hub đọc env var này lúc import)
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 import tempfile
 # Force-load DLLs in exact order: torch -> faster_whisper -> cv2 to prevent Windows C++ CUDA/OpenMP abort
 try:
@@ -190,11 +192,11 @@ if "selected_task_id" in st.session_state:
         
         col_back, col_del = st.columns([1, 1])
         with col_back:
-            if st.button("⬅️ Quay lại danh sách", use_container_width=True):
+            if st.button("⬅️ Quay lại danh sách", width="stretch"):
                 del st.session_state["selected_task_id"]
                 st.rerun()
         with col_del:
-            if st.button("🗑️ Xóa sạch tác vụ này", type="primary", use_container_width=True):
+            if st.button("🗑️ Xóa sạch tác vụ này", type="primary", width="stretch"):
                 shutil.rmtree(task_info["path"], ignore_errors=True)
                 del st.session_state["selected_task_id"]
                 st.success("Đã xóa dữ liệu tác vụ!")
@@ -282,7 +284,7 @@ with st.expander("📊 Quản lý tác vụ chạy ngầm (Task Manager)", expan
             with col_time:
                 st.write(time_str)
             with col_action:
-                if st.button("Xem chi tiết & Log", key=f"btn_{t['id']}", use_container_width=True):
+                if st.button("Xem chi tiết & Log", key=f"btn_{t['id']}", width="stretch"):
                     st.session_state["selected_task_id"] = t["id"]
                     st.rerun()
 st.divider()
@@ -1068,7 +1070,7 @@ with tab5:
                             cols = st.columns(min(len(image_urls), 4))
                             for img_idx, url in enumerate(image_urls[:4]):
                                 with cols[img_idx]:
-                                    st.image(url, use_container_width=True)
+                                    st.image(url, width="stretch")
                             selected_img_url = st.radio("Chọn ảnh dùng làm Face Embedding:", img_opts, key=f"img_select_{idx}")
                         else:
                             st.info("Không tìm thấy ảnh trên mạng.")
@@ -1272,6 +1274,7 @@ with tab5:
             
             batch_input_dir = st.text_input("📁 Thư mục Input (chứa .md và audio)", placeholder="VD: D:\\Projects\\AudioBooks\\Chuong1_10")
             batch_output_dir = st.text_input("💾 Thư mục Output (nơi lưu video mp4)", placeholder="VD: D:\\Projects\\AudioBooks\\Output")
+            fast_batch_mode = st.checkbox("⚡ Chế độ Siêu Tốc (Tắt upscale RealESRGAN, dùng bộ lọc Lanczos - Giữ SD trên VRAM để xử lý batch siêu nhanh)", value=True)
             
             if batch_input_dir and os.path.isdir(batch_input_dir):
                 import glob
@@ -1330,9 +1333,15 @@ with tab5:
                                 
                                 # Clear state cũ
                                 orchestrator.clear_state()
+                                try:
+                                    import gc, torch
+                                    gc.collect()
+                                    if torch.cuda.is_available():
+                                        torch.cuda.empty_cache()
+                                except: pass
                                 
                                 # Chạy pipeline
-                                final_video = orchestrator.run_pipeline(temp_md, temp_audio, srt_path="", progress_callback=None)
+                                final_video = orchestrator.run_pipeline(temp_md, temp_audio, srt_path="", progress_callback=None, enable_upscaling=not fast_batch_mode)
                                 
                                 # Move và đổi tên sang output dir
                                 out_file = os.path.join(batch_output_dir, f"{base_name}.mp4")
@@ -1342,6 +1351,12 @@ with tab5:
                                 
                                 # Dọn dẹp rác (nếu cần)
                                 try: shutil.rmtree(temp_dir)
+                                except: pass
+                                try:
+                                    import gc, torch
+                                    gc.collect()
+                                    if torch.cuda.is_available():
+                                        torch.cuda.empty_cache()
                                 except: pass
                                 
                             except Exception as e:
@@ -1426,7 +1441,7 @@ with tab5:
                 ])
                 
                 st.caption("💡 Bạn có thể nhấp cú đúp vào bất kỳ ô nào để chỉnh sửa trực tiếp Lời thoại hoặc Prompt tiếng Anh trước khi AI vẽ hình.")
-                edited_df = st.data_editor(df_scenes, use_container_width=True, num_rows="fixed", key="script_editor")
+                edited_df = st.data_editor(df_scenes, width="stretch", num_rows="fixed", key="script_editor")
                 
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
@@ -1473,7 +1488,7 @@ with tab5:
                         st.markdown(f"**Cảnh #{s_dict['scene_id']+1}** (`{s_dict['start_time']:.1f}s - {s_dict['end_time']:.1f}s`)")
                         img_path = s_dict.get("frame_path", "")
                         if img_path and os.path.exists(img_path):
-                            st.image(img_path, use_container_width=True)
+                            st.image(img_path, width="stretch")
                         else:
                             st.warning("Chưa có ảnh hoặc mất file")
                         st.caption(f"🌱 Seed: `{s_dict.get('accepted_seed', -1)}`")

@@ -11,7 +11,7 @@ try:
     if not hasattr(torch.utils._pytree, 'register_constant'):
         torch.utils._pytree.register_constant = lambda *args, **kwargs: None
     # ------------------------------------------
-    from diffusers import StableDiffusionPipeline, LCMScheduler, AutoencoderTiny
+    from diffusers import StableDiffusionPipeline, EulerDiscreteScheduler, DPMSolverMultistepScheduler, AutoencoderTiny
 except ImportError:
     pass
 
@@ -98,7 +98,7 @@ class StorytellingPipeline:
             if not hasattr(torch.utils._pytree, 'register_constant'):
                 torch.utils._pytree.register_constant = lambda *args, **kwargs: None
             # ------------------------------------------
-            from diffusers import StableDiffusionPipeline, LCMScheduler, AutoencoderTiny
+            from diffusers import StableDiffusionPipeline, EulerDiscreteScheduler, DPMSolverMultistepScheduler, AutoencoderTiny
         except ImportError:
             raise ImportError("Vui lòng cài đặt diffusers và torch")
 
@@ -128,13 +128,34 @@ class StorytellingPipeline:
             cache_dir=cache_dir
         )
         
-        logger.info("Loading Hyper-SD LoRA")
-        self._pipe.scheduler = LCMScheduler.from_config(self._pipe.scheduler.config)
-        try:
-            self._pipe.load_lora_weights("ByteDance/Hyper-SD", weight_name="Hyper-SD15-2steps-lora.safetensors", cache_dir=cache_dir)
-            self._pipe.fuse_lora()
-        except Exception as e:
-            logger.warning(f"Could not load Hyper-SD LoRA: {e}")
+        from app.config import load_storytelling_config
+        st_config = load_storytelling_config()
+        num_steps = st_config.get("num_inference_steps", 8)
+        
+        if num_steps >= 15:
+            logger.info("High Quality Mode: Using DPMSolverMultistepScheduler without Hyper-SD LoRA")
+            self._pipe.scheduler = DPMSolverMultistepScheduler.from_config(self._pipe.scheduler.config, use_karras_sigmas=True)
+        else:
+            logger.info("Fast Mode: Loading Hyper-SD LoRA")
+            self._pipe.scheduler = EulerDiscreteScheduler.from_config(self._pipe.scheduler.config)
+            
+            if num_steps <= 2:
+                lora_name = "Hyper-SD15-2steps-lora.safetensors"
+            elif num_steps <= 4:
+                lora_name = "Hyper-SD15-4steps-lora.safetensors"
+            else:
+                guidance = st_config.get("guidance_scale", 1.5)
+                if guidance > 1.2:
+                    lora_name = "Hyper-SD15-8steps-CFG-lora.safetensors"
+                else:
+                    lora_name = "Hyper-SD15-8steps-lora.safetensors"
+
+            try:
+                self._pipe.load_lora_weights("ByteDance/Hyper-SD", weight_name=lora_name, cache_dir=cache_dir)
+                self._pipe.fuse_lora()
+                logger.info(f"Loaded Hyper-SD LoRA: {lora_name}")
+            except Exception as e:
+                logger.warning(f"Could not load Hyper-SD LoRA: {e}")
             
         logger.info("Loading IP-Adapter FaceID")
         try:
@@ -267,11 +288,15 @@ class StorytellingPipeline:
             
         generators = [torch.Generator(device=self.device).manual_seed(s) for s in seeds]
         
+        original_scheduler = None
         if quality_mode:
-            num_steps = 8
-            guidance_scale = 5.0
+            num_steps = 25
+            guidance_scale = 7.0
             try:
                 self._pipe.unfuse_lora()
+                original_scheduler = self._pipe.scheduler
+                from diffusers import DPMSolverMultistepScheduler
+                self._pipe.scheduler = DPMSolverMultistepScheduler.from_config(self._pipe.scheduler.config, use_karras_sigmas=True)
             except:
                 pass
                 
@@ -301,6 +326,8 @@ class StorytellingPipeline:
         if quality_mode:
             try:
                 self._pipe.fuse_lora()
+                if original_scheduler is not None:
+                    self._pipe.scheduler = original_scheduler
             except:
                 pass
                 

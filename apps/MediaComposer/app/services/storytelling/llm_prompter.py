@@ -22,10 +22,10 @@ def _call_llm(messages: List[dict], max_tokens: int = 500) -> str:
 def _build_system_prompt(context: StoryContext) -> str:
     char_list = [{"name": c.name, "description": c.description, "keywords": c.keywords_en} for c in context.characters]
     
-    return f"""You are an expert anime storyboard artist and prompt engineer for xianxia/cultivation novels.
+    return f"""You are an expert prompt engineer for cinematic Stable Diffusion image generation.
 IMPORTANT: You are a TEXT-ONLY AI. DO NOT generate images. Your only job is to write a TEXT string (a prompt) that will be used by another system.
 
-Given Vietnamese text from a cultivation novel scene, output a JSON object matching exactly this schema:
+Given Vietnamese text from a novel scene, output a JSON object matching exactly this schema:
 {{
   "image_prompt": "tag1, tag2, tag3",
   "characters": ["Name1", "Name2"],
@@ -33,12 +33,12 @@ Given Vietnamese text from a cultivation novel scene, output a JSON object match
 }}
 
 **CRITICAL SD PROMPT RULES:**
-1. **ENGLISH ONLY TAGS:** The "image_prompt" MUST be strictly in ENGLISH. NO Vietnamese allowed! Use a comma-separated list of tags (e.g., "1boy, standing, sword"). DO NOT write full sentences.
-2. **STYLE PREFIX:** Always start the prompt with: "(flat color, minimalist anime, clean lineart, Anything V5:1.1), "
-3. **STRICT CHARACTER APPEARANCE (CRITICAL):** If a `primary_character` is in the scene, you MUST EXACTLY COPY ALL tags from their `keywords` in the JSON below into your prompt. If the character is male, you may gently add: "mature male, handsome, tall, well-built" but DO NOT make them overly muscular like a bodybuilder. Stick strictly to their context window.
-4. **SINGLE CHARACTER FOCUS:** Use the tag "solo" if a character is present. DO NOT use "2boys", "2girls", etc. Use diverse camera angles (e.g., "wide shot", "cowboy shot", "medium shot", "from below", "over-the-shoulder") based on the Director's Note.
-5. **ESTABLISHING SHOTS & SCENERY (CRITICAL):** The storyboard needs MORE background and landscape shots to feel like a real movie! If a scene introduces a new location, or focuses heavily on the atmosphere/building/sky, you MUST use "scenery, no humans, establishing shot, detailed environment" and COMPLETELY EXCLUDE all character tags. We do NOT want characters in every single frame. NEVER use "simple background". ALWAYS describe a specific, detailed location with cinematic lighting and depth of field.
-6. **ACTION & CONTINUITY:** You MUST read the "Director's Note" to understand the flow. Extract the EXACT action from the text (e.g., "drinking tea", "fighting") and ensure the background aligns with the Director's Note for continuity.
+1. **SIMPLE TAGS ONLY (ENGLISH):** The "image_prompt" MUST be strictly in ENGLISH. Use ONLY a simple, comma-separated list of keywords/tags (e.g., "mountain peak, cloudy sky, sunset"). NO full sentences, NO complex grammar.
+2. **ENVIRONMENT FIRST (CRITICAL):** Your PRIMARY focus is the background and environment. Start your tags by describing the scenery in high detail (e.g., "detailed background, majestic scenery, vast landscape, ancient temple, cinematic lighting, depth of field"). Characters are secondary elements placed within this environment. NEVER use "simple background" or "white background".
+3. **STYLE PREFIX:** Always start the prompt with: "(highly detailed background, cinematic lighting, Anything V5:1.1), "
+4. **CHARACTER HANDLING:** If a `primary_character` is in the scene, copy their `keywords` from the JSON below, but keep it brief. Add "solo" if there is only one character. DO NOT over-describe characters to the point it ruins the background. If the scene is purely a landscape or establishing shot, use "no humans, scenery". Must clearly describe male characters as not effeminate. But not muscular, unless it's in the character's original description. Minimize using the word 'young' to avoid sounding effeminate.
+5. **CAMERA & LIGHTING:** Use camera tags (e.g., "wide shot, extreme long shot, establishing shot, drone view") to show off the environment. Add lighting and atmosphere tags (e.g., "radiant light, misty atmosphere, dark ambiance, ray of tracing").
+6. **ACTION & CONTINUITY:** Read the "Director's Note" to understand the visual context and ensure the environment matches the story's progression.
 
 Known characters: {json.dumps(char_list, ensure_ascii=False)}
 Story genre: {context.genre}"""
@@ -78,10 +78,10 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, retries: int = 1
                 continue
             raw_prompt = data.get("image_prompt", "").strip()
             if raw_prompt:
-                style_prefix = "(flat color, minimalist anime, clean lineart, Anything V5:1.1)"
-                old_style = "(anime style, 2D flat illustration, cel shaded, clean lineart, Anything V5:1.1)"
+                style_prefix = "(highly detailed background, cinematic lighting, Anything V5:1.1)"
+                old_style = "(flat color, minimalist anime, clean lineart, Anything V5:1.1)"
                 raw_prompt = raw_prompt.replace(old_style, "").strip(", ")
-                if not raw_prompt.startswith("(flat color") and not raw_prompt.startswith("flat color"):
+                if not raw_prompt.startswith("(highly detailed background"):
                     scene.image_prompt = f"{style_prefix}, {raw_prompt}"
                 else:
                     scene.image_prompt = raw_prompt
@@ -96,7 +96,7 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, retries: int = 1
             logger.warning(f"Failed to decode JSON from LLM on attempt {attempt+1}. Content: {cleaned_content}")
             
     # Fallback if failed
-    scene.image_prompt = "(flat color, minimalist anime, clean lineart, Anything V5:1.1), 1boy, traditional chinese clothing, simple background"
+    scene.image_prompt = "(highly detailed background, cinematic lighting, Anything V5:1.1), scenery, majestic landscape, cinematic, depth of field"
     return False
 
 def generate_storyboard_context(scenes: List[Scene]) -> dict:

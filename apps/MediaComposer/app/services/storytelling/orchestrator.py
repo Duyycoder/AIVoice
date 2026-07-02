@@ -192,7 +192,14 @@ class StorytellingOrchestrator:
             scene.accepted_seed = seed
             scene.frame_path = frame_path
             
-        pipe.release()
+        # Giải phóng rác bộ nhớ CUDA tạm thời mà không hủy mô hình SD nếu không cần thiết
+        try:
+            import gc, torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
         
         state = self.load_state() or {}
         audio_path = state.get("audio_path", "")
@@ -235,6 +242,14 @@ class StorytellingOrchestrator:
 
         # NOTE: enable_upscaling is a per-render runtime flag.
         # We do NOT write it to config.toml to avoid mutating the global config file.
+        if enable_upscaling:
+            # Chỉ khi cần upscale RealESRGAN mới giải phóng Stable Diffusion để nhường trọn vẹn 8GB VRAM
+            try:
+                from app.services.storytelling.image_generator import StorytellingPipeline
+                StorytellingPipeline().release()
+            except Exception as e:
+                logger.warning(f"Could not release SD pipeline: {e}")
+
         from app.services.storytelling.hardware_adapter import get_hardware_config
         hw_config = get_hardware_config()
         update_prog("5. Hậu kỳ (postprocess)...", 10)
@@ -276,7 +291,8 @@ class StorytellingOrchestrator:
         md_path: str, 
         audio_path: str, 
         srt_path: str, 
-        progress_callback: Optional[Callable[[str, int], None]] = None
+        progress_callback: Optional[Callable[[str, int], None]] = None,
+        enable_upscaling: bool = True
     ) -> str:
         """
         Chạy tự động toàn bộ pipeline từ đầu đến cuối (Skip checkpoints) và trả về path video final.
@@ -294,6 +310,7 @@ class StorytellingOrchestrator:
         final_video_path = self.step3_render_final(
             scenes, task_dir, audio_path, resolved_srt, 
             burn_subtitles=should_burn,
+            enable_upscaling=enable_upscaling,
             progress_callback=progress_callback
         )
         return final_video_path

@@ -16,6 +16,22 @@ from app.config import load_storytelling_config
 # Absolute path to MediaComposer root (safe regardless of CWD)
 _MC_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+# Global cache for RealESRGAN model to avoid reloading across batch iterations
+_realesrgan_cache = None
+_realesrgan_cache_key = None
+
+def free_realesrgan_cache():
+    global _realesrgan_cache, _realesrgan_cache_key
+    _realesrgan_cache = None
+    _realesrgan_cache_key = None
+    try:
+        import gc, torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
 class PostProcessor:
     def __init__(self, device: str = "cuda", enable_upscaling: Optional[bool] = None):
         self.device = device
@@ -84,9 +100,11 @@ class PostProcessor:
                 w, h = image.size
                 upscaled = image.resize((w * scale, h * scale), Image.Resampling.LANCZOS)
             else:
-                if self._realesrgan_model is None:
+                global _realesrgan_cache, _realesrgan_cache_key
+                cache_key = (weight_path, self.device, scale)
+                if _realesrgan_cache is None or _realesrgan_cache_key != cache_key:
                     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=4)
-                    self._realesrgan_model = RealESRGANer(
+                    _realesrgan_cache = RealESRGANer(
                         scale=scale,
                         model_path=weight_path,
                         model=model,
@@ -96,6 +114,8 @@ class PostProcessor:
                         half=True if self.device == "cuda" else False,
                         device=torch.device(self.device)
                     )
+                    _realesrgan_cache_key = cache_key
+                self._realesrgan_model = _realesrgan_cache
 
                 img_cv = np.array(image)[:, :, ::-1]
                 output, _ = self._realesrgan_model.enhance(img_cv, outscale=scale)
@@ -139,5 +159,14 @@ class PostProcessor:
             
             if on_progress:
                 on_progress(i + 1, total)
+                
+        # Dọn dẹp rác VRAM sau khi hoàn thành toàn bộ post-process cho video này
+        try:
+            import gc, torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
                 
         return final_paths
