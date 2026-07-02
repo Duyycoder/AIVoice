@@ -199,8 +199,8 @@ set IS_RTX_50=0
 powershell -Command "if ((Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name) -match 'RTX 50') { exit 0 } else { exit 1 }" >nul 2>&1
 if !errorlevel! equ 0 (
     set IS_RTX_50=1
-    echo [INFO] Phat hien GPU dong RTX 50-Series (Blackwell) tren may tinh nay.
-    echo [INFO] Bat dau tai va cai dat truoc PyTorch phien ban CUDA 12.8 (cu128)...
+    echo [INFO] Phat hien GPU dong RTX 50-Series Blackwell tren may tinh nay.
+    echo [INFO] Bat dau tai va cai dat truoc PyTorch phien ban CUDA 12.8 cu128...
     .venv\Scripts\python.exe -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
     if !errorlevel! neq 0 (
         echo [WARNING] Cai dat PyTorch CUDA 12.8 that bai. He thong se thu cai dat phien ban mac dinh.
