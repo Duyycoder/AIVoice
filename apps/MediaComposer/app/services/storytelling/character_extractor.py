@@ -139,23 +139,34 @@ def process_chapters_and_extract_characters(
 ) -> List[Dict[str, Any]]:
     """
     Luồng điều phối chính:
-    1. Gộp văn bản (cắt bớt nếu quá dài).
-    2. Gọi bóc tách nhân vật.
-    3. Trích xuất chi tiết qua Web Search (nếu bật).
+    1. Lần lượt duyệt qua từng file (chương). Cắt bớt nếu file quá dài.
+    2. Gọi bóc tách nhân vật cho từng file.
+    3. Gộp danh sách nhân vật (lọc trùng lặp theo tên).
+    4. Trích xuất chi tiết qua Web Search (nếu bật) cho các nhân vật độc nhất.
     """
-    full_text = "\n\n".join(chapter_texts)
-    # Giới hạn số lượng ký tự để tránh vượt quá context window (vd: ~80k ký tự)
-    if len(full_text) > 80000:
-        full_text = full_text[:80000] + "\n...[Nội dung đã được cắt bớt để đảm bảo giới hạn xử lý]..."
-        
-    logger.info("Bắt đầu bóc tách nhân vật từ văn bản...")
-    initial_chars = extract_characters_from_text(full_text, genre)
+    all_initial_chars = []
+    seen_names = set()
     
-    if not initial_chars:
+    logger.info(f"Bắt đầu xử lý tuần tự {len(chapter_texts)} file...")
+    
+    for idx, text in enumerate(chapter_texts):
+        if len(text) > 80000:
+            text = text[:80000] + "\n...[Nội dung đã được cắt bớt để đảm bảo giới hạn xử lý]..."
+            
+        logger.info(f"Bóc tách nhân vật từ file thứ {idx+1}/{len(chapter_texts)}...")
+        chars = extract_characters_from_text(text, genre)
+        
+        for char in chars:
+            name = char.get("name", "")
+            if name and name not in seen_names:
+                seen_names.add(name)
+                all_initial_chars.append(char)
+    
+    if not all_initial_chars:
         return []
         
     final_chars = []
-    for char in initial_chars:
+    for char in all_initial_chars:
         name = char.get("name", "")
         desc = char.get("text_description", "")
         if not name:

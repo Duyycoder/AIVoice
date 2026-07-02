@@ -1147,7 +1147,7 @@ with tab5:
         
         if "pending_characters" not in st.session_state or not st.session_state.pending_characters:
             with st.form("extract_chars_form"):
-                uploaded_chapters = st.file_uploader("Tải lên chương truyện (.txt)", type=["txt"], accept_multiple_files=True)
+                uploaded_chapters = st.file_uploader("Tải lên chương truyện (.txt, .md)", type=["txt", "md"], accept_multiple_files=True)
                 enable_web_search = st.checkbox("Tìm kiếm thông tin & hình ảnh trên mạng", value=True)
                 submit_extract = st.form_submit_button("🔍 Bắt đầu bóc tách")
                 
