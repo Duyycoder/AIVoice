@@ -205,6 +205,9 @@ if !errorlevel! neq 0 (
 )
 echo.
 
+:: Cai dat truoc numpy<2.0.0 de tranh viec torch/torchvision tu dong cai dat numpy 2.x (gay xung dot voi coqui-tts va rvc)
+.venv\Scripts\python.exe -m pip install --default-timeout=1000 "numpy<2.0.0"
+
 :: 5. Install libraries
 echo ----------------------------------------------------------------------
 echo [INFO] Dang kiem tra phan cung GPU de toi uu hoa cai dat...
