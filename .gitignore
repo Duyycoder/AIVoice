@@ -68,4 +68,5 @@ valtec-tts/
 
 # Temporary directories
 .tmp/
+.t/
 

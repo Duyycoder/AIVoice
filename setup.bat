@@ -8,10 +8,19 @@ set "HF_HOME=%PROJ_DIR%\models\.cache\huggingface"
 set "TORCH_HOME=%PROJ_DIR%\models\.cache\torch"
 set "XDG_CACHE_HOME=%PROJ_DIR%\models\.cache\xdg"
 
-:: Thiet lap thu muc TEMP/TMP cuc bo ngan hon de tranh loi Windows Long Path khi pip install llama-cpp-python
-set "TEMP=%PROJ_DIR%\.tmp"
-set "TMP=%PROJ_DIR%\.tmp"
-if not exist "%PROJ_DIR%\.tmp" mkdir "%PROJ_DIR%\.tmp"
+:: Thiet lap thu muc TEMP/TMP cuc bo sieu ngan de tranh loi Windows Long Path (vi du: llama-cpp-python)
+set "TEMP_DIR=%SystemDrive%\.t"
+mkdir "%TEMP_DIR%" >nul 2>&1
+if not exist "%TEMP_DIR%" (
+    set "TEMP_DIR=%USERPROFILE%\.t"
+    mkdir "%TEMP_DIR%" >nul 2>&1
+)
+if not exist "%TEMP_DIR%" (
+    set "TEMP_DIR=%PROJ_DIR%\.t"
+    mkdir "%TEMP_DIR%" >nul 2>&1
+)
+set "TEMP=%TEMP_DIR%"
+set "TMP=%TEMP_DIR%"
 
 set DOWNLOAD_MC_MODELS=0
 if /i "%~1"=="--download-models" set DOWNLOAD_MC_MODELS=1
@@ -218,7 +227,7 @@ echo.
 echo ----------------------------------------------------------------------
 echo [INFO] Dang cai dat cac thu vien Python (requirements.txt)...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe -m pip install --default-timeout=1000 -r requirements.txt
+.venv\Scripts\python.exe -m pip install --default-timeout=1000 -r requirements.txt --prefer-binary
 if !errorlevel! neq 0 (
     echo [ERROR] Cai dat thu vien that bai.
     pause
