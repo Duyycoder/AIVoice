@@ -20,7 +20,7 @@ edge-tts>=7.2.8        # Microsoft Edge online TTS
 piper-tts>=1.2.0       # Piper offline ONNX TTS
 coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS (requires C++ compiler)
 llama-cpp-python==0.3.31 # Local GGUF LLM text rewriting (requires C++ compiler)
-vieneu>=0.3.16         # VieNeu-TTS offline/online Vietnamese TTS
+vieneu==3.0.9          # VieNeu-TTS offline/online Vietnamese TTS
 neucodec>=0.0.6        # Neural audio codec for VieNeu TTS voice cloning standard mode
 torchao==0.16.0        # Lock to 0.16.0 to remain compatible with PyTorch 2.6.0 and prevent ImportError
 sentence-transformers  # Required for Semantic Caching text embeddings
