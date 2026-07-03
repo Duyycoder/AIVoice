@@ -673,7 +673,7 @@ def combine_videos(
                 shuffle_transition = random.choice(transition_funcs)
                 clip = shuffle_transition(clip)
 
-            if clip.duration > max_clip_duration:
+            if slice_video and clip.duration > max_clip_duration:
                 clip = clip.subclipped(0, max_clip_duration)
                 
             # wirte clip to temp file
