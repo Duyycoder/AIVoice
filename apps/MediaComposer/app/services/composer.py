@@ -56,11 +56,11 @@ class ComposerWorkflow:
             # Fast path: user provided transcript text, skip Whisper entirely
             logger.info("⚡ Transcript text provided — skipping Whisper transcription")
             srt_text = transcript_text
-            if enable_subtitles:
+            if enable_subtitles and audio_path:
                 subtitle_path = os.path.join(task_dir, "subtitle.srt")
                 audio_dur = self._get_audio_duration(audio_path)
                 create_subtitle_from_text(transcript_text, audio_dur, subtitle_path)
-        elif enable_subtitles or auto_fetch:
+        elif (enable_subtitles or auto_fetch) and audio_path:
             # Original path: use Whisper for transcription
             logger.info("Generating subtitles from audio (Whisper)...")
             subtitle_path = os.path.join(task_dir, "subtitle.srt")
@@ -71,7 +71,7 @@ class ComposerWorkflow:
 
         # 2. Materials
         materials_to_use = video_paths or []
-        audio_duration = self._get_audio_duration(audio_path)
+        audio_duration = self._get_audio_duration(audio_path) if audio_path else 0.0
         
         if auto_fetch:
             logger.info("Extracting search terms using LLM...")
@@ -139,7 +139,13 @@ class ComposerWorkflow:
                 video_duration = 0.0
                 
             # If no subtitles and no BGM, and video is long enough, do a Fast Stream Copy
-            if not enable_subtitles and not bgm_file and video_duration >= audio_duration:
+            if not enable_subtitles and not bgm_file and not audio_path:
+                logger.info("⚡ Fast Path: Single video, no audio/subtitles/BGM. Copying directly...")
+                import shutil
+                final_video_path = os.path.join(task_dir, "final.mp4")
+                shutil.copy(single_video_path, final_video_path)
+                return final_video_path
+            elif not enable_subtitles and not bgm_file and audio_path and video_duration >= audio_duration:
                 logger.info("⚡ Fast Path: Subtitles and BGM disabled, video >= audio. Merging directly via FFmpeg stream copy...")
                 import subprocess
                 ffmpeg_bin = utils.get_ffmpeg_binary()

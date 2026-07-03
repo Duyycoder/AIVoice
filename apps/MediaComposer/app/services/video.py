@@ -544,20 +544,25 @@ def combine_videos(
     threads: int = None,
     slice_video: bool = True,
 ) -> str:
-    audio_clip = AudioFileClip(audio_file)
-    try:
-        # 这里只需要读取旁白音频时长来决定素材视频拼接长度；后续不会再使用
-        # audio_clip。读取完成后立即关闭，避免早退或异常路径泄漏文件句柄。
-        audio_duration = audio_clip.duration
-    finally:
-        close_clip(audio_clip)
-    logger.info(f"audio duration: {audio_duration} seconds")
-    logger.info(f"maximum clip duration: {max_clip_duration} seconds")
-    required_video_duration = _get_required_video_duration(audio_duration)
-    logger.info(
-        f"required video duration: {required_video_duration:.2f} seconds "
-        f"(audio duration + {_VIDEO_DURATION_SAFETY_MARGIN:.2f}s safety margin)"
-    )
+    if audio_file:
+        audio_clip = AudioFileClip(audio_file)
+        try:
+            # 这里只需要读取旁白音频时长来决定素材视频拼接长度；后续不会再使用
+            # audio_clip。读取完成后立即关闭，避免早退或异常路径泄漏文件句柄。
+            audio_duration = audio_clip.duration
+        finally:
+            close_clip(audio_clip)
+        logger.info(f"audio duration: {audio_duration} seconds")
+        logger.info(f"maximum clip duration: {max_clip_duration} seconds")
+        required_video_duration = _get_required_video_duration(audio_duration)
+        logger.info(
+            f"required video duration: {required_video_duration:.2f} seconds "
+            f"(audio duration + {_VIDEO_DURATION_SAFETY_MARGIN:.2f}s safety margin)"
+        )
+    else:
+        audio_duration = None
+        required_video_duration = float("inf")
+        logger.info("No audio file provided. Merging video clips sequentially.")
 
     # 兼容 API 直接调用时未传转场模式的情况，避免后续访问 .value 时崩溃。
     transition_value = getattr(video_transition_mode, "value", video_transition_mode)
@@ -703,7 +708,7 @@ def combine_videos(
                     pass
     
     # loop processed clips until the video duration covers the audio duration and the small safety margin.
-    if video_duration < required_video_duration:
+    if audio_file and video_duration < required_video_duration:
         logger.warning(
             f"video duration ({video_duration:.2f}s) is shorter than required duration "
             f"({required_video_duration:.2f}s), looping clips to match audio length."
@@ -1089,9 +1094,12 @@ def generate_video(
     audio_clip = None
     try:
         video_clip = _open_video_clip_quietly(video_path)
-        audio_clip = AudioFileClip(audio_path).with_effects(
-            [afx.MultiplyVolume(params.voice_volume)]
-        )
+        if audio_path:
+            audio_clip = AudioFileClip(audio_path).with_effects(
+                [afx.MultiplyVolume(params.voice_volume)]
+            )
+        else:
+            audio_clip = None
 
         # Virtual resizing if size doesn't match target aspect ratio
         clip_w, clip_h = video_clip.size
@@ -1115,16 +1123,17 @@ def generate_video(
                 video_clip = CompositeVideoClip([background, clip_resized])
 
         # Virtual trim or loop to match audio duration
-        required_duration = audio_clip.duration
-        if video_clip.duration > required_duration:
-            logger.info(f"Trimming video virtually in generate_video: {video_clip.duration:.2f}s -> {required_duration:.2f}s")
-            video_clip = video_clip.subclipped(0, required_duration)
-        elif video_clip.duration < required_duration:
-            logger.info(f"Looping video virtually in generate_video: {video_clip.duration:.2f}s -> {required_duration:.2f}s")
-            try:
-                video_clip = video_clip.with_effects([vfx.Loop(duration=required_duration)])
-            except Exception as e:
-                logger.error(f"Failed to loop video virtually: {e}")
+        if audio_clip:
+            required_duration = audio_clip.duration
+            if video_clip.duration > required_duration:
+                logger.info(f"Trimming video virtually in generate_video: {video_clip.duration:.2f}s -> {required_duration:.2f}s")
+                video_clip = video_clip.subclipped(0, required_duration)
+            elif video_clip.duration < required_duration:
+                logger.info(f"Looping video virtually in generate_video: {video_clip.duration:.2f}s -> {required_duration:.2f}s")
+                try:
+                    video_clip = video_clip.with_effects([vfx.Loop(duration=required_duration)])
+                except Exception as e:
+                    logger.error(f"Failed to loop video virtually: {e}")
 
         def make_textclip(text):
             return TextClip(
@@ -1153,22 +1162,36 @@ def generate_video(
                         afx.AudioLoop(duration=video_clip.duration),
                     ]
                 )
-                audio_clip = CompositeAudioClip([audio_clip, bgm_clip])
+                if audio_clip:
+                    audio_clip = CompositeAudioClip([audio_clip, bgm_clip])
+                elif video_clip.audio:
+                    audio_clip = CompositeAudioClip([video_clip.audio, bgm_clip])
+                else:
+                    audio_clip = bgm_clip
             except Exception as e:
                 logger.error(f"failed to add bgm: {str(e)}")
 
-        video_clip = video_clip.with_audio(audio_clip)
+        if audio_clip:
+            video_clip = video_clip.with_audio(audio_clip)
+            
         # 显式沿用输入音频的采样率；如果取不到，再回退到 MoviePy 默认的 44100Hz。
         # 这样可以减少 different runtime environments, especially Docker...
-        output_audio_fps = int(getattr(audio_clip, "fps", 0) or 44100)
+        if video_clip.audio:
+            output_audio_fps = int(getattr(video_clip.audio, "fps", 0) or 44100)
+            has_audio_track = True
+        else:
+            output_audio_fps = 44100
+            has_audio_track = False
+            
         _write_videofile_with_codec_fallback(
             video_clip,
             output_file=output_file,
             codec=_get_configured_video_codec(),
-            audio_codec=audio_codec,
-            audio_fps=output_audio_fps,
-            audio_bitrate=audio_bitrate,
-            temp_audiofile_path=_get_temp_audio_dir(output_dir),
+            audio_codec=audio_codec if has_audio_track else None,
+            audio=has_audio_track,
+            audio_fps=output_audio_fps if has_audio_track else None,
+            audio_bitrate=audio_bitrate if has_audio_track else None,
+            temp_audiofile_path=_get_temp_audio_dir(output_dir) if has_audio_track else None,
             threads=params.n_threads or os.cpu_count() or 4,
             logger=None,
             fps=fps,

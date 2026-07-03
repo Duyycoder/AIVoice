@@ -812,11 +812,9 @@ with tab1:
     has_audio = bool(audio_files_m) if input_method_m == "Upload qua trình duyệt" else bool(local_audio_paths_m)
     has_video = bool(video_files_m) if input_method_m == "Upload qua trình duyệt" else bool(local_video_paths_m)
     
-    if st.button("Generate Video (Manual)", type="primary"):
-        if not has_audio:
-            st.error("Audio file is required!")
-        elif not has_video:
-            st.error("At least one video/image is required!")
+    if st.button("Generate / Ghép xuất (Manual)", type="primary"):
+        if not has_audio and not has_video:
+            st.error("Vui lòng tải lên/nhập đường dẫn ít nhất một file Audio hoặc Video/Image!")
         else:
             task_id = str(uuid.uuid4())
             task_dir = utils.task_dir(task_id)
@@ -832,37 +830,74 @@ with tab1:
             import threading
             import time
             
-            result = {"video": None, "error": None, "done": False}
+            result = {"video": None, "audio": None, "error": None, "done": False}
             
             def run_in_thread():
                 try:
-                    logger.info("=== Bắt đầu Workflow 1 (Manual Mode) ===")
-                    if input_method_m == "Upload qua trình duyệt":
-                        audio_path = merge_audio_files(audio_files_m, task_dir)
-                        video_paths = []
-                        for v in video_files_m:
-                            video_paths.append(save_uploaded_file(v, task_dir))
-                    else:
-                        audio_path = merge_audio_paths(local_audio_paths_m, task_dir)
-                        import re
-                        def _natural_sort_key(path):
-                            return [int(part) if part.isdigit() else part.lower()
-                                    for part in re.split(r'(\d+)', os.path.basename(path))]
-                        video_paths = sorted(local_video_paths_m, key=_natural_sort_key)
+                    if has_audio and not has_video:
+                        logger.info("=== Bắt đầu Workflow 1 (Chỉ ghép Audio) ===")
+                        if input_method_m == "Upload qua trình duyệt":
+                            audio_path = merge_audio_files(audio_files_m, task_dir)
+                        else:
+                            audio_path = merge_audio_paths(local_audio_paths_m, task_dir)
+                        result["audio"] = audio_path
+                        logger.info("=== Hoàn thành ghép Audio thành công! ===")
                         
-                    final_video = composer.run_workflow(
-                        task_id=task_id,
-                        audio_path=audio_path,
-                        video_paths=video_paths,
-                        auto_fetch=False,
-                        bgm_file=bgm_file if enable_bgm else "",
-                        video_aspect=VideoAspect(aspect_m),
-                        concat_mode=VideoConcatMode.random,
-                        enable_subtitles=subtitles_m,
-                        slice_video=slice_video_m
-                    )
-                    result["video"] = final_video
-                    logger.info("=== Hoàn thành Workflow 1 thành công! ===")
+                    elif not has_audio and has_video:
+                        logger.info("=== Bắt đầu Workflow 1 (Chỉ ghép Video) ===")
+                        if input_method_m == "Upload qua trình duyệt":
+                            video_paths = []
+                            for v in video_files_m:
+                                video_paths.append(save_uploaded_file(v, task_dir))
+                        else:
+                            import re
+                            def _natural_sort_key(path):
+                                return [int(part) if part.isdigit() else part.lower()
+                                        for part in re.split(r'(\d+)', os.path.basename(path))]
+                            video_paths = sorted(local_video_paths_m, key=_natural_sort_key)
+                        
+                        final_video = composer.run_workflow(
+                            task_id=task_id,
+                            audio_path=None,
+                            video_paths=video_paths,
+                            auto_fetch=False,
+                            bgm_file=bgm_file if enable_bgm else "",
+                            video_aspect=VideoAspect(aspect_m),
+                            concat_mode=VideoConcatMode.random,
+                            enable_subtitles=False,
+                            slice_video=slice_video_m
+                        )
+                        result["video"] = final_video
+                        logger.info("=== Hoàn thành Workflow 1 (Chỉ ghép Video) thành công! ===")
+                        
+                    else:
+                        logger.info("=== Bắt đầu Workflow 1 (Ghép cả Audio và Video) ===")
+                        if input_method_m == "Upload qua trình duyệt":
+                            audio_path = merge_audio_files(audio_files_m, task_dir)
+                            video_paths = []
+                            for v in video_files_m:
+                                video_paths.append(save_uploaded_file(v, task_dir))
+                        else:
+                            audio_path = merge_audio_paths(local_audio_paths_m, task_dir)
+                            import re
+                            def _natural_sort_key(path):
+                                return [int(part) if part.isdigit() else part.lower()
+                                        for part in re.split(r'(\d+)', os.path.basename(path))]
+                            video_paths = sorted(local_video_paths_m, key=_natural_sort_key)
+                            
+                        final_video = composer.run_workflow(
+                            task_id=task_id,
+                            audio_path=audio_path,
+                            video_paths=video_paths,
+                            auto_fetch=False,
+                            bgm_file=bgm_file if enable_bgm else "",
+                            video_aspect=VideoAspect(aspect_m),
+                            concat_mode=VideoConcatMode.random,
+                            enable_subtitles=subtitles_m,
+                            slice_video=slice_video_m
+                        )
+                        result["video"] = final_video
+                        logger.info("=== Hoàn thành Workflow 1 thành công! ===")
                 except Exception as ex:
                     import traceback
                     logger.error(f"Lỗi: {ex}")
@@ -904,8 +939,21 @@ with tab1:
                     pass
                 
             if result["error"]:
-                st.error(f"Error during video generation: {result['error']}")
-            elif result["video"]:
+                st.error(f"Error during processing: {result['error']}")
+            elif result.get("audio"):
+                final_audio = result["audio"]
+                if output_path:
+                    out_dir = os.path.dirname(os.path.abspath(output_path))
+                    os.makedirs(out_dir, exist_ok=True)
+                    suffix = os.path.splitext(final_audio)[1] or ".wav"
+                    out_path_audio = os.path.splitext(output_path)[0] + suffix
+                    shutil.copy(final_audio, out_path_audio)
+                    st.success(f"Audio generated and saved to: {out_path_audio}")
+                    st.audio(out_path_audio)
+                else:
+                    st.success("Audio generated successfully!")
+                    st.audio(final_audio)
+            elif result.get("video"):
                 final_video = result["video"]
                 if output_path:
                     out_dir = os.path.dirname(os.path.abspath(output_path))

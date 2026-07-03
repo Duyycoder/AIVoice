@@ -39,4 +39,4 @@ subtitle_border = 2
 subtitle_position = "bottom"
 num_inference_steps = 25
 guidance_scale = 7.0
-hardware_profile = "cuda_high"
+hardware_profile = "cuda_low"
