@@ -863,7 +863,7 @@ with tab1:
                             auto_fetch=False,
                             bgm_file=bgm_file if enable_bgm else "",
                             video_aspect=VideoAspect(aspect_m),
-                            concat_mode=VideoConcatMode.random,
+                            concat_mode=VideoConcatMode.sequential,
                             enable_subtitles=False,
                             slice_video=slice_video_m
                         )
@@ -892,7 +892,7 @@ with tab1:
                             auto_fetch=False,
                             bgm_file=bgm_file if enable_bgm else "",
                             video_aspect=VideoAspect(aspect_m),
-                            concat_mode=VideoConcatMode.random,
+                            concat_mode=VideoConcatMode.sequential,
                             enable_subtitles=subtitles_m,
                             slice_video=slice_video_m
                         )
