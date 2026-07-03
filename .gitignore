@@ -18,7 +18,7 @@ __pycache__/
 *.njsproj
 *.sln
 *.swp
-
+0.1.5
 # Output wav files in root
 /*.wav
 
