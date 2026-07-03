@@ -224,6 +224,12 @@ class ComposerWorkflow:
             n_threads=threads
         )
         
+        if not audio_path and not bgm_file and not enable_subtitles:
+            logger.info("⚡ Fast Path: No additional audio/bgm/subtitles required. Bypassing generate_video re-encoding...")
+            import shutil
+            shutil.copy(merged_video_path, final_video_path)
+            return final_video_path
+
         logger.info("Generating final video...")
         generate_video(
             video_path=merged_video_path,

@@ -338,6 +338,8 @@ def concat_video_clips_with_ffmpeg(
             str(threads or os.cpu_count() or 4),
             "-pix_fmt",
             "yuv420p",
+            "-c:a",
+            "aac",
             output_file,
         ]
 
@@ -601,7 +603,7 @@ def combine_videos(
                 )
 
             start_time = end_time
-            if not slice_video or video_concat_mode.value == VideoConcatMode.sequential.value:
+            if not slice_video:
                 break
 
     subclipped_items = _prioritize_unique_source_clips(
