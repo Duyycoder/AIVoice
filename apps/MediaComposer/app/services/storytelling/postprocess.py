@@ -108,7 +108,7 @@ class PostProcessor:
                         scale=scale,
                         model_path=weight_path,
                         model=model,
-                        tile=0,
+                        tile=512, # Hạ xuống 512 để dứt điểm tình trạng lẹm sang Shared RAM, đảm bảo max tốc độ
                         tile_pad=10,
                         pre_pad=0,
                         half=True if self.device == "cuda" else False,

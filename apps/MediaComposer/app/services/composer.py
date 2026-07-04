@@ -279,7 +279,8 @@ class ComposerWorkflow:
         tts_engine: str = "edge",
         tts_voice: str = "",
         ducking_ratio: float = 90.0,
-        auto_clone: bool = False
+        auto_clone: bool = False,
+        clean_audio: bool = False
     ) -> str:
         """
         Orchestrates the automatic translation and subtitling workflow:
@@ -294,6 +295,7 @@ class ComposerWorkflow:
         from app.services.translation import translate_srt
         from app.services.video import burn_subtitles_ffmpeg, generate_video
         from app.services.subtitle import release_whisper_model
+        from app.services.audio_cleaner import isolate_vocals
         
         task_dir = utils.task_dir(task_id)
         logger.info(f"Starting automatic translation workflow for video: {video_path}")
@@ -319,6 +321,11 @@ class ComposerWorkflow:
             logger.error(f"Failed to extract audio: {res.stderr}")
             raise RuntimeError(f"Failed to extract audio track: {res.stderr}")
             
+        whisper_audio_path = audio_path
+        if clean_audio:
+            logger.info("clean_audio is enabled. Running vocal isolation with Demucs...")
+            whisper_audio_path = isolate_vocals(audio_path, task_dir)
+            
         # 2. Whisper Transcription
         logger.info(f"Transcribing audio with Whisper (Source Language: {source_lang})...")
         source_srt_path = os.path.join(task_dir, "source_subtitles.srt")
@@ -330,7 +337,7 @@ class ComposerWorkflow:
         elif source_lang.lower() in ["chinese", "zh"]:
             whisper_lang = "zh"
             
-        create_subtitle(audio_path, source_srt_path, language=whisper_lang)
+        create_subtitle(whisper_audio_path, source_srt_path, language=whisper_lang)
         
         if not os.path.exists(source_srt_path) or os.path.getsize(source_srt_path) == 0:
             logger.error("Whisper transcription did not generate any subtitles.")

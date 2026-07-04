@@ -640,12 +640,13 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Manual Mode (Upload)", 
     "Auto Mode (Fetch)", 
     "Split Video (Workflow 3)", 
     "Auto Translate & Sub (Workflow 4)",
-    "📖 AI Storytelling 2D"
+    "📖 AI Storytelling 2D",
+    "🎬 Video Upscale (Workflow 6)"
 ])
 
 def save_uploaded_file(uploaded_file, dest_dir):
@@ -2041,6 +2042,8 @@ with tab4:
         help="FFmpeg chèn phụ đề trực tiếp ở tầng phần cứng/mã hóa, rất nhanh. MoviePy tạo ảnh dựng độc lập cho từng câu chữ nên sẽ chậm hơn."
     )
     
+    enable_audio_cleanup_t = st.checkbox("Bật làm sạch âm thanh (Tách tạp âm bằng Demucs)", value=False, key="t_audio_clean", help="Sử dụng AI Demucs để tách giọng nói khỏi nhạc nền/hiệu ứng âm thanh, giúp Whisper nhận diện chính xác hơn.")
+    
     has_video_t = bool(uploaded_video_t) if input_method_t == "Upload qua trình duyệt" else bool(local_video_path_t)
     
     # ------------------ Voiceover Configuration ------------------
@@ -2169,7 +2172,7 @@ with tab4:
                     from app.services.composer import composer
                     
                     logger.info("=== Bắt đầu Workflow 4 (Auto Translate & Sub) ===")
-                    logger.info(f"Parameters: enable_voiceover={enable_voiceover_t}, tts_engine={tts_engine_t}, tts_voice={tts_voice_t}, ducking_ratio={ducking_ratio_t}, auto_clone={auto_clone_t}")
+                    logger.info(f"Parameters: enable_voiceover={enable_voiceover_t}, tts_engine={tts_engine_t}, tts_voice={tts_voice_t}, ducking_ratio={ducking_ratio_t}, auto_clone={auto_clone_t}, clean_audio={enable_audio_cleanup_t}")
                     if input_method_t == "Upload qua trình duyệt":
                         video_path = save_uploaded_file(uploaded_video_t, task_dir)
                     else:
@@ -2189,7 +2192,8 @@ with tab4:
                         tts_engine=tts_engine_t,
                         tts_voice=tts_voice_t,
                         ducking_ratio=float(ducking_ratio_t),
-                        auto_clone=auto_clone_t
+                        auto_clone=auto_clone_t,
+                        clean_audio=enable_audio_cleanup_t
                     )
                     
                     # Copy final video to the user-specified output folder for easy access
@@ -2257,4 +2261,120 @@ with tab4:
                         mime="video/mp4",
                         key="dl_translated_video_immediate"
                     )
+
+with tab6:
+    st.header("Workflow 6: Video Upscale (Trạm 3 & Demucs)")
+    st.markdown("Tính năng này giúp làm nét video hoạt hình bằng **Workflow 5 Trạm 3**, đồng thời có khả năng sử dụng **Demucs** để giữ lại giọng nói và loại bỏ tạp âm/nhạc nền. Cuối cùng, ghép nối tự động bằng H264 NVENC GPU.")
+    
+    upscale_input_video = st.text_input("Đường dẫn Video đầu vào (.mp4, .mkv)", placeholder="Ví dụ: D:/video/hoathinh.mp4", key="upscale_input_video")
+    upscale_output_dir = st.text_input("Thư mục lưu kết quả", value=st.session_state.get("output_folder", ""), key="upscale_output_dir")
+    upscale_output_name = st.text_input("Tên Video đầu ra (Tùy chọn, để trống sẽ tự lấy tên gốc + _upscaled)", key="upscale_output_name")
+    
+    upscale_resolution = st.selectbox(
+        "Độ phân giải đầu ra (Scale bằng GPU NVENC)",
+        ["Gốc", "720p (HD)", "1080p (Full HD)", "1440p (2K)", "2160p (4K)"],
+        index=0,
+        key="upscale_resolution"
+    )
+    
+    use_realesrgan = st.checkbox("✨ Bật AI Real-ESRGAN (Làm nét xuất sắc từng khung hình, Tốn thời gian xử lý & VRAM)", value=False, key="upscale_use_realesrgan")
+    use_demucs = st.checkbox("🎧 Sử dụng Demucs để làm sạch tạp âm/nhạc nền (Giữ lại Vocal)", value=False, key="upscale_use_demucs")
+    
+    if st.button("🚀 Bắt đầu làm nét Video", key="btn_start_upscale", type="primary"):
+        if not upscale_input_video or not os.path.exists(upscale_input_video):
+            st.error("Vui lòng nhập đường dẫn video hợp lệ!")
+        else:
+            task_id_upscale = str(uuid.uuid4())
+            task_dir_upscale = utils.task_dir(task_id_upscale)
+            os.makedirs(task_dir_upscale, exist_ok=True)
+            log_path_upscale = os.path.join(task_dir_upscale, "upscale_log.txt")
+            
+            st.info(f"Đang xử lý tại thư mục tạm: {task_dir_upscale}")
+            log_placeholder_upscale = st.empty()
+            
+            # Khởi tạo kết quả
+            result_upscale = {"done": False, "error": None, "video": None}
+            
+            def run_upscale_in_thread():
+                sink_id = None
+                try:
+                    sink_id = logger.add(log_path_upscale, format="{time:HH:mm:ss} | {level} | {message}", level="INFO")
+                    logger.info("=== Bắt đầu Workflow 6 (Video Upscale) ===")
+                    logger.info(f"Video đầu vào: {upscale_input_video}")
+                    logger.info(f"Sử dụng Demucs: {'Có' if use_demucs else 'Không'}")
+                    
+                    # Add video_processor to sys.path implicitly by executing it via import
+                    import sys
+                    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                    if root_dir not in sys.path:
+                        sys.path.insert(0, root_dir)
+                    from src.utils.video_processor import process_animation_video
+                    
+                    input_base_name = os.path.splitext(os.path.basename(upscale_input_video))[0]
+                    final_name = (upscale_output_name or f"{input_base_name}_upscaled").strip() + ".mp4"
+                    os.makedirs(upscale_output_dir, exist_ok=True)
+                    out_path = os.path.join(upscale_output_dir, final_name)
+                    
+                    success = process_animation_video(
+                        input_path=upscale_input_video,
+                        output_path=out_path,
+                        temp_dir=task_dir_upscale,
+                        use_demucs=use_demucs,
+                        use_realesrgan=use_realesrgan,
+                        resolution=upscale_resolution,
+                        log_callback=logger.info
+                    )
+                    
+                    if success:
+                        result_upscale["video"] = out_path
+                        logger.info("=== Hoàn thành Workflow 6 thành công! ===")
+                    else:
+                        raise Exception("Lỗi xử lý làm nét video.")
+                        
+                except Exception as ex:
+                    import traceback
+                    logger.error(f"Lỗi: {ex}")
+                    logger.error(traceback.format_exc())
+                    result_upscale["error"] = ex
+                finally:
+                    result_upscale["done"] = True
+                    if sink_id:
+                        try:
+                            logger.remove(sink_id)
+                        except Exception:
+                            pass
+            
+            # Start thread
+            thread_upscale = threading.Thread(target=run_upscale_in_thread, name=f"task_{task_id_upscale}")
+            thread_upscale.start()
+            
+            # Poll logs
+            while not result_upscale["done"]:
+                time.sleep(0.5)
+                if os.path.exists(log_path_upscale):
+                    with open(log_path_upscale, "r", encoding="utf-8", errors="ignore") as f:
+                        log_placeholder_upscale.text(f.read())
+            
+            # Final poll
+            if os.path.exists(log_path_upscale):
+                with open(log_path_upscale, "r", encoding="utf-8", errors="ignore") as f:
+                    log_placeholder_upscale.text(f.read())
+                    
+            if result_upscale["error"]:
+                st.error(f"Lỗi làm nét video: {result_upscale['error']}")
+            elif result_upscale["video"]:
+                final_video_path = result_upscale["video"]
+                st.success("🎉 Làm nét video thành công!")
+                st.info(f"📁 Video kết quả đã được lưu tại: `{final_video_path}`")
+                st.video(final_video_path)
+                
+                with open(final_video_path, "rb") as f:
+                    st.download_button(
+                        label="📥 Tải xuống Video",
+                        data=f,
+                        file_name=os.path.basename(final_video_path),
+                        mime="video/mp4",
+                        key="dl_upscaled_video_immediate"
+                    )
+
 

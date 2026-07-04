@@ -1459,6 +1459,7 @@ def burn_subtitles_ffmpeg(video_path: str, subtitle_path: str, output_path: str,
         rel_output = os.path.basename(abs_output_path)
         temp_files.extend([os.path.join(work_dir, temp_video_name), os.path.join(work_dir, temp_sub_name)])
         
+        rel_audio = None
         if abs_audio_path:
             temp_audio_name = "temp_input_audio" + os.path.splitext(abs_audio_path)[1]
             shutil.copy2(abs_audio_path, os.path.join(work_dir, temp_audio_name))
