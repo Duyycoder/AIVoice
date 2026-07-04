@@ -2278,6 +2278,24 @@ with tab6:
     )
     
     use_realesrgan = st.checkbox("✨ Bật AI Real-ESRGAN (Làm nét xuất sắc từng khung hình, Tốn thời gian xử lý & VRAM)", value=False, key="upscale_use_realesrgan")
+    
+    # Lựa chọn Tile Size cho VRAM
+    tile_size = 512
+    if use_realesrgan:
+        tile_options = {
+            "Siêu thấp (Tile 256) - Phù hợp VRAM 2-4GB": 256,
+            "Trung bình (Tile 512) - Phù hợp VRAM 4-6GB (An toàn nhất)": 512,
+            "Cao (Tile 768) - Phù hợp VRAM 8GB": 768,
+            "Tối đa (Tile 0 - Tắt Tiling) - Phù hợp VRAM >12GB": 0
+        }
+        selected_tile = st.selectbox(
+            "Tối ưu hóa bộ nhớ VRAM cho Card đồ họa của bạn", 
+            list(tile_options.keys()), 
+            index=1, 
+            key="upscale_tile_size"
+        )
+        tile_size = tile_options[selected_tile]
+        
     use_demucs = st.checkbox("🎧 Sử dụng Demucs để làm sạch tạp âm/nhạc nền (Giữ lại Vocal)", value=False, key="upscale_use_demucs")
     
     if st.button("🚀 Bắt đầu làm nét Video", key="btn_start_upscale", type="primary"):
@@ -2321,6 +2339,7 @@ with tab6:
                         temp_dir=task_dir_upscale,
                         use_demucs=use_demucs,
                         use_realesrgan=use_realesrgan,
+                        tile_size=tile_size,
                         resolution=upscale_resolution,
                         log_callback=logger.info
                     )

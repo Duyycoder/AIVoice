@@ -103,7 +103,7 @@ def extract_frames(input_video_path: str, output_frame_dir: str) -> bool:
         print("Lỗi: Không tìm thấy ffmpeg trong hệ thống.")
         return False
 
-def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str, use_realesrgan: bool = False, log_callback=None):
+def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str, use_realesrgan: bool = False, tile_size: int = 512, log_callback=None):
     """
     Applies Real-ESRGAN upscale on all frames if use_realesrgan is True, otherwise simply copies them.
     Includes VRAM cleanup to prevent Out Of Memory errors.
@@ -135,7 +135,7 @@ def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str,
         from app.services.storytelling.postprocess import PostProcessor
         
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        upscaler = PostProcessor(device=device, enable_upscaling=True)
+        upscaler = PostProcessor(device=device, enable_upscaling=True, tile_size=tile_size)
         
         if log_callback:
             log_callback(f"Bắt đầu upscale {total_frames} khung hình bằng Real-ESRGAN trên {device.upper()}...")
@@ -230,7 +230,7 @@ def merge_video_and_audio(input_frame_dir: str, audio_path: str, output_video_pa
              print(f"FFmpeg CPU muxing error: {e2.stderr.decode('utf-8') if e2.stderr else 'Unknown error'}")
              return False
 
-def process_animation_video(input_path: str, output_path: str, temp_dir: str, use_demucs: bool = False, use_realesrgan: bool = False, resolution: str = "Gốc", log_callback=None):
+def process_animation_video(input_path: str, output_path: str, temp_dir: str, use_demucs: bool = False, use_realesrgan: bool = False, tile_size: int = 512, resolution: str = "Gốc", log_callback=None):
     """Main pipeline for the video sharpening workflow."""
     os.makedirs(temp_dir, exist_ok=True)
     
@@ -266,7 +266,7 @@ def process_animation_video(input_path: str, output_path: str, temp_dir: str, us
             raise Exception("Tách khung hình thất bại.")
             
         log("Bắt đầu quy trình Upscale (Workflow 5 Trạm 3)...")
-        apply_upscale_with_vram_cleanup(frames_original_dir, frames_upscaled_dir, use_realesrgan=use_realesrgan, log_callback=log)
+        apply_upscale_with_vram_cleanup(frames_original_dir, frames_upscaled_dir, use_realesrgan=use_realesrgan, tile_size=tile_size, log_callback=log)
         
         log(f"Đang mã hóa và gộp video (H264 NVENC, FPS: {fps})...")
         audio_to_merge = audio_temp_path if audio_temp_path and os.path.exists(audio_temp_path) else None

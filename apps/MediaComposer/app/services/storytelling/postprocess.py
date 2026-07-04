@@ -33,8 +33,9 @@ def free_realesrgan_cache():
         pass
 
 class PostProcessor:
-    def __init__(self, device: str = "cuda", enable_upscaling: Optional[bool] = None):
+    def __init__(self, device: str = "cuda", enable_upscaling: Optional[bool] = None, tile_size: int = 512):
         self.device = device
+        self.tile_size = tile_size
         self._realesrgan_model = None
         # enable_upscaling: None means read from config at render time (default behaviour)
         self._enable_upscaling_override: Optional[bool] = enable_upscaling
@@ -101,14 +102,14 @@ class PostProcessor:
                 upscaled = image.resize((w * scale, h * scale), Image.Resampling.LANCZOS)
             else:
                 global _realesrgan_cache, _realesrgan_cache_key
-                cache_key = (weight_path, self.device, scale)
+                cache_key = (weight_path, self.device, scale, self.tile_size)
                 if _realesrgan_cache is None or _realesrgan_cache_key != cache_key:
                     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=4)
                     _realesrgan_cache = RealESRGANer(
                         scale=scale,
                         model_path=weight_path,
                         model=model,
-                        tile=512, # Hạ xuống 512 để dứt điểm tình trạng lẹm sang Shared RAM, đảm bảo max tốc độ
+                        tile=self.tile_size,
                         tile_pad=10,
                         pre_pad=0,
                         half=True if self.device == "cuda" else False,
