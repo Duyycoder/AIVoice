@@ -2087,12 +2087,15 @@ with tab5:
                 key="bv_output_dir"
             )
 
-            col_opt1, col_opt2 = st.columns(2)
+            col_opt1, col_opt2, col_opt3 = st.columns(3)
             with col_opt1:
                 bv_upscale = st.checkbox("🔍 Upscale ảnh (RealESRGAN)", value=True, key="bv_up",
                                          help="Tắt = chế độ siêu tốc: xuất thẳng ảnh draft, nhanh hơn đáng kể nhưng ảnh mềm hơn.")
             with col_opt2:
                 bv_burn_sub = st.checkbox("💬 Gắn phụ đề vào video", value=True, key="bv_sub")
+            with col_opt3:
+                bv_fresh = st.checkbox("🔄 Làm mới (bỏ resume)", value=False, key="bv_fresh",
+                                       help="Xoá trạng thái batch cũ, tách cảnh + sinh lại TỪ ĐẦU. Dùng khi đổi kịch bản/tham số hoặc lần chạy trước ra kết quả sai. Không tick = tiếp tục từ chỗ dở.")
 
             bv_items = []
             tab_single, tab_folder = st.tabs(["📄 1 Truyện", "📁 Cả Thư Mục"])
@@ -2146,6 +2149,14 @@ with tab5:
 
             if bv_items:
                 if st.button(f"▶ Chạy ({len(bv_items)} video)", type="primary", key="bv_run"):
+                    if bv_fresh:
+                        _bv_state_file = os.path.join(output_dir, "batch_state.json")
+                        if os.path.exists(_bv_state_file):
+                            try:
+                                os.remove(_bv_state_file)
+                                st.info("🔄 Đã xoá trạng thái batch cũ — chạy lại từ đầu.")
+                            except Exception as _e_st:
+                                st.warning(f"Không xoá được batch_state.json: {_e_st}")
                     bv_progress = st.empty()
                     bv_bar = st.progress(0)
 

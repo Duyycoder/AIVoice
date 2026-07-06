@@ -80,7 +80,32 @@ def _extract_paragraphs(md_text: str) -> List[str]:
             merged[-1] += " " + p
         else:
             merged.append(p)
-    return merged
+
+    # FIX 06/07 (khôi phục sau sự cố move): CHIA NHỎ đoạn quá dài thành cụm câu
+    # (~35 từ/cụm). File .md ít xuống dòng (truyện convert: cả chương = 1-2 khối)
+    # sẽ chỉ có 1-2 "đoạn" khổng lồ → LLM chỉ được ghép ĐOẠN LIỀN KỀ thành cảnh
+    # nên không thể chia mịn hơn đơn vị đoạn → cả video chỉ 2 cảnh.
+    import re as _re
+    units = []
+    for p in merged:
+        if len(p.split()) <= 60:
+            units.append(p)
+            continue
+        sentences = [s.strip() for s in _re.split(r'(?<=[\.\!\?\…;])\s+', p) if s.strip()]
+        buf = ""
+        for s in sentences:
+            candidate = (buf + " " + s).strip()
+            if buf and len(candidate.split()) > 35:
+                units.append(buf)
+                buf = s
+            else:
+                buf = candidate
+        if buf:
+            units.append(buf)
+
+    logger.info(f"[SemanticSplit] Kịch bản: {len(paragraphs)} đoạn gốc → "
+                f"{len(units)} đơn vị chia cảnh ({sum(len(u.split()) for u in units)} từ)")
+    return units
 
 
 def _call_llm_split(paragraphs: List[str],

@@ -23,29 +23,12 @@ transformers>=4.57,<5.0
 edge-tts>=7.2.8        # Microsoft Edge online TTS
 piper-tts>=1.2.0       # Piper offline ONNX TTS
 coqui-tts>=0.27.5      # Coqui XTTSv2 voice cloning TTS (requires C++ compiler)
-llama-cpp-python==0.3.31 # Local GGUF LLM text rewriting (requires C++ compiler)
 vieneu==3.0.9          # VieNeu-TTS offline/online Vietnamese TTS
 neucodec>=0.0.6        # Neural audio codec for VieNeu TTS voice cloning standard mode
 torchao==0.16.0        # Lock to 0.16.0 to remain compatible with PyTorch 2.6.0 and prevent ImportError
                        # LƯU Ý RTX 50-series (torch cu128 >= 2.7): nếu import torchao lỗi,
                        # thử: pip install --upgrade torchao (src/main.py đã có guard chống crash)
 sentence-transformers  # Required for Semantic Caching text embeddings
-# NOTE: rvc-python>=0.1.5 is installed separately with --no-deps in setup.bat
-#       because it declares numpy<=1.23.5 which conflicts with coqui-tts.
-
-# Runtime dependencies of rvc-python (installed explicitly instead of via --no-deps)
-fairseq==0.12.2        # Required by rvc-python (requires C++ compiler)
-faiss-cpu==1.7.3       # Required by rvc-python
-praat-parselmouth>=0.4.2 # Required by rvc-python
-pyworld                # Required by rvc-python
-torchcrepe             # Required by rvc-python
-av                     # Required by rvc-python
-ffmpeg-python          # Required by rvc-python
-loguru                 # Required by rvc-python
-fastapi                # Required by rvc-python
-pydantic               # Required by rvc-python
-python-multipart       # Required by rvc-python
-uvicorn                # Required by rvc-python
 
 # Pure-python / prebuilt dependencies for Coqui XTTSv2
 anyascii

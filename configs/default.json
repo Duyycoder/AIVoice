@@ -10,9 +10,7 @@
   "fade_in": 0.1,
   "fade_out": 0.1,
   "silence_duration": 0.3,
-  "rvc_model": "models/rvc/ElevenLabs_Adam_FR.pth",
-  "rvc_index": "models/rvc/added_IVF4988_Flat_nprobe_1_ElevenLabs_Adam_FR_v2.index",
-  "rvc_pitch": 0,
+
   "use_fp16": true,
   "use_tf32": true,
   "device": "cuda",

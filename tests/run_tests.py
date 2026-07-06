@@ -188,19 +188,7 @@ def main():
             "expected_output_name": "test_vi.wav",
             "expect_success": True
         },
-        {
-            "name": "test_rvc_standalone",
-            "desc": "RVC standalone voice conversion with local model weights",
-            "args": [
-                "src/main.py", 
-                "--input", "data/voices/ref_voice.wav", 
-                "--engine", "rvc", 
-                "--rvc_model", "models/rvc/ElevenLabs_Adam_FR.pth", 
-                "--rvc_index", "models/rvc/added_IVF4988_Flat_nprobe_1_ElevenLabs_Adam_FR_v2.index"
-            ],
-            "expected_output_name": "ref_voice.wav",
-            "expect_success": True
-        },
+
         {
             "name": "test_invalid_engine_error",
             "desc": "Negative test: passing an invalid engine name",

@@ -1,0 +1,127 @@
+import os
+import sys
+import json
+import argparse
+import gc
+
+# Configure PYTHONPATH dynamically to import app services correctly
+mc_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, mc_root)
+sys.path.insert(0, os.path.join(mc_root, "app"))
+
+from app.services.storytelling.context_manager import ContextManager
+from app.services.storytelling.batch_video_runner import run_batch, scan_batch_dir
+
+def log_json(event: str, data: dict):
+    """Outputs progress log as a JSON string to stdout."""
+    print(json.dumps({"event": event, **data}, ensure_ascii=False))
+    sys.stdout.flush()
+
+def main():
+    parser = argparse.ArgumentParser(description="Non-interactive CLI Adapter for MediaComposer Video Generation")
+    parser.add_argument("--story-name", required=True, help="Name of the story/novel")
+    parser.add_argument("--genre", default="tien_hiep", help="Story genre (e.g. tien_hiep, ngon_tinh)")
+    parser.add_argument("--input-dir", required=True, help="Input directory containing chapters (.md + .wav)")
+    parser.add_argument("--output-dir", required=True, help="Output directory for generated videos")
+    parser.add_argument("--bgm-path", default="", help="Path to background music file")
+    parser.add_argument("--bgm-volume", type=float, default=0.15, help="Background music volume multiplier")
+    parser.add_argument("--enable-upscale", action="store_true", default=True, help="Enable RealESRGAN image upscaling")
+    parser.add_argument("--no-upscale", action="store_false", dest="enable_upscale", help="Disable RealESRGAN image upscaling")
+    parser.add_argument("--burn-subtitles", action="store_true", default=True, help="Burn subtitles into final video")
+    parser.add_argument("--no-subtitles", action="store_false", dest="burn-subtitles", help="Disable subtitles burning")
+    parser.add_argument("--use-semantic-split", action="store_true", default=True, help="Use semantic split for scene parsing")
+    parser.add_argument("--no-semantic-split", action="store_false", dest="use_semantic_split", help="Disable semantic split")
+    parser.add_argument("--style", default="anime_2d_flat", help="Art style name")
+    parser.add_argument("--checkpoint", default="anything-v5", help="Stable Diffusion checkpoint path or hugginface name")
+
+    args = parser.parse_args()
+
+    try:
+        from app.services.storytelling.context_manager import _STORAGE_ENV
+        log_json("video_init", {
+            "story_name": args.story_name,
+            "genre": args.genre,
+            "input_dir": args.input_dir,
+            "output_dir": args.output_dir,
+            "storage_env": _STORAGE_ENV
+        })
+
+        # Slugify the story name to initialize ContextManager
+        from orchestrator.storage import slugify
+        story_slug = slugify(args.story_name)
+
+        ctx_mgr = ContextManager(story_slug)
+        
+        # Auto bootstrapping: Create context if it does not exist (Gap6)
+        try:
+            context = ctx_mgr.load_context()
+            log_json("context_loaded", {"story_slug": story_slug})
+        except FileNotFoundError:
+            log_json("context_created_start", {"story_slug": story_slug})
+            context = ctx_mgr.create_context(args.story_name, args.genre)
+            log_json("context_created_success", {"story_slug": story_slug})
+
+        # Update style & checkpoint if specified
+        context.art_style = args.style
+        context.checkpoint = args.checkpoint
+        ctx_mgr.save_context(context)
+
+        # Scan input directory for batch items (md + audio)
+        items = scan_batch_dir(args.input_dir)
+        if not items:
+            log_json("video_warn", {"message": f"No valid batch items (md + audio pairs) found in {args.input_dir}"})
+            sys.exit(0)
+
+        log_json("video_batch_start", {
+            "total_items": len(items),
+            "stems": [it.stem for it in items]
+        })
+
+        options = {
+            "bgm_path": args.bgm_path,
+            "bgm_volume": args.bgm_volume,
+            "enable_upscale": args.enable_upscale,
+            "burn_subtitles": args.burn_subtitles,
+            "use_semantic_split": args.use_semantic_split,
+            "use_whisper": False  # Enforced: Do not use Whisper globally (M1 policy)
+        }
+
+        # Run Batch Runner with a custom progress callback to print JSON logs
+        def progress_callback(msg: str, percent: int):
+            log_json("video_progress", {"message": msg, "percent": percent})
+
+        report = run_batch(
+            ctx_mgr=ctx_mgr,
+            items=items,
+            output_dir=args.output_dir,
+            options=options,
+            progress_cb=progress_callback
+        )
+
+        # Output final execution details
+        failed_count = sum(1 for it in report.items if it.get("status") == "failed")
+        log_json("video_batch_completed", {
+            "total": len(report.items),
+            "failed": failed_count,
+            "status": "success" if failed_count == 0 else "partial_failure"
+        })
+
+    except Exception as e:
+        log_json("video_error", {"error": str(e)})
+        sys.exit(1)
+    finally:
+        # Crucial VRAM and RAM cleanup to release hardware resources after execution (Gap5)
+        try:
+            from app.services.storytelling.image_generator import StorytellingPipeline
+            StorytellingPipeline().release()
+        except Exception:
+            pass
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+        gc.collect()
+        log_json("hardware_released", {"status": "success"})
+
+if __name__ == "__main__":
+    main()

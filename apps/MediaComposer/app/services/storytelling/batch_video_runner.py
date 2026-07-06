@@ -282,7 +282,11 @@ def _process_single_item(
         task_dir = existing_task_dir
     else:
         task_id = str(uuid.uuid4())
-        task_dir = os.path.join(_mc_root, "storage", "tasks", f"batch_{task_id}")
+        _storage_env = os.getenv("MC_STORAGE_TASKS")
+        if _storage_env:
+            task_dir = os.path.join(os.path.abspath(_storage_env), "video", "tasks", f"batch_{task_id}")
+        else:
+            task_dir = os.path.join(_mc_root, "storage", "tasks", f"batch_{task_id}")
         os.makedirs(task_dir, exist_ok=True)
 
     # State path riêng cho item (FIX Gap4)

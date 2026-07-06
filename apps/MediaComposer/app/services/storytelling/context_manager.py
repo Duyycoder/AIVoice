@@ -10,7 +10,11 @@ from app.services.storytelling.models import StoryContext, Character, LearnedCor
 
 # Đường dẫn tuyệt đối theo MediaComposer root — không phụ thuộc CWD
 _MC_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-CONTEXTS_ROOT = os.path.join(_MC_ROOT, "storage", "contexts")
+_STORAGE_ENV = os.getenv("MC_STORAGE_TASKS")
+if _STORAGE_ENV:
+    CONTEXTS_ROOT = os.path.join(os.path.abspath(_STORAGE_ENV), "contexts")
+else:
+    CONTEXTS_ROOT = os.path.join(_MC_ROOT, "storage", "contexts")
 
 class ContextManager:
     def __init__(self, story_slug: str):

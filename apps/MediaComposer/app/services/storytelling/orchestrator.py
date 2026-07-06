@@ -222,7 +222,11 @@ class StorytellingOrchestrator:
 
         task_id = str(uuid.uuid4())
         _mc_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        task_dir = os.path.join(_mc_root, "storage", "tasks", task_id)
+        _storage_env = os.getenv("MC_STORAGE_TASKS")
+        if _storage_env:
+            task_dir = os.path.join(os.path.abspath(_storage_env), "video", "tasks", task_id)
+        else:
+            task_dir = os.path.join(_mc_root, "storage", "tasks", task_id)
         os.makedirs(task_dir, exist_ok=True)
         
         draft_dir = os.path.join(task_dir, "draft_frames")

@@ -34,9 +34,9 @@ def main():
     parser = argparse.ArgumentParser(description="Download model weights for AIVoice TTS engines.")
     parser.add_argument(
         "--engine",
-        choices=["piper", "clone", "valtec", "kokoro", "vieneu", "all"],
+        choices=["piper", "clone", "kokoro", "vieneu", "all"],
         default="piper",
-        help="Specify which model files to download: 'piper', 'clone', 'valtec', 'kokoro', 'vieneu', or 'all' (default: piper)."
+        help="Specify which model files to download: 'piper', 'clone', 'kokoro', 'vieneu', or 'all' (default: piper)."
     )
     args = parser.parse_args()
     
@@ -96,11 +96,7 @@ def main():
             else:
                 print(f"{dest_name} already exists at {out_path}.")
                 
-    # 3. Valtec-TTS model info
-    if args.engine in ["valtec", "all"]:
-        print("\nChecking Valtec-TTS model weights...")
-        print("[INFO] Valtec-TTS weights are automatically downloaded from HuggingFace on its first execution.")
-        print("[INFO] No manual downloading is required.")
+
         
     # 4. Kokoro-Vietnamese model info
     if args.engine in ["kokoro", "all"]:

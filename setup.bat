@@ -143,16 +143,25 @@ if !errorlevel! equ 0 (
     set GLOBAL_TORCH_CUDA=1
 )
 
+if "%NON_INTERACTIVE%"=="1" (
+    set CHOOSE_RECREATE=Y
+    set CHOOSE_REUSE=Y
+)
+
 if exist .venv (
     rem .venv already exists, check if it has torch installed
-    .venv\Scripts\python.exe -c "import torch" >nul 2>&1
+    ".venv\Scripts\python.exe" -c "import torch" >nul 2>&1
     if !errorlevel! neq 0 (
         rem .venv exists but doesn't have torch, and global python has torch with CUDA
         if !GLOBAL_TORCH_CUDA! equ 1 (
             echo.
             echo [XAC NHAN] Thu muc .venv da ton tai nhung chua duoc cai dat PyTorch.
             echo Phat hien PyTorch ho tro CUDA da co san tren Python he thong.
-            set /p CHOOSE_RECREATE="Ban co muon khoi tao lai .venv de ke thua PyTorch he thong (tranh phai tai lai 2.4 GB) khong? (Y/N) [Mac dinh: Y]: "
+            if not "%NON_INTERACTIVE%"=="1" (
+                set /p CHOOSE_RECREATE="Ban co muon khoi tao lai .venv de ke thua PyTorch he thong (tranh phai tai lai 2.4 GB) khong? (Y/N) [Mac dinh: Y]: "
+            ) else (
+                set CHOOSE_RECREATE=Y
+            )
             if "!CHOOSE_RECREATE!"=="" set CHOOSE_RECREATE=Y
             if /i "!CHOOSE_RECREATE!"=="Y" (
                 set RECREATE_VENV=1
@@ -167,7 +176,11 @@ if exist .venv (
     if !GLOBAL_TORCH_CUDA! equ 1 (
         echo.
         echo [XAC NHAN] Phat hien PyTorch ho tro CUDA da co san tren Python he thong.
-        set /p CHOOSE_REUSE="Ban co muon tao .venv ke thua PyTorch he thong (tranh phai tai lai 2.4 GB) khong? (Y/N) [Mac dinh: Y]: "
+        if not "%NON_INTERACTIVE%"=="1" (
+            set /p CHOOSE_REUSE="Ban co muon tao .venv ke thua PyTorch he thong (tranh phai tai lai 2.4 GB) khong? (Y/N) [Mac dinh: Y]: "
+        ) else (
+            set CHOOSE_REUSE=Y
+        )
         if "!CHOOSE_REUSE!"=="" set CHOOSE_REUSE=Y
         if /i "!CHOOSE_REUSE!"=="Y" (
             set REUSE_SYSTEM=1
@@ -234,11 +247,11 @@ if !errorlevel! equ 0 (
 
 if not "!TORCH_INDEX!"=="" (
     rem Kiem tra torch hien tai da dung ban CUDA chua; sai ban thi go va cai lai dong bo ca 3 goi
-    .venv\Scripts\python.exe -c "import torch,sys; sys.exit(0 if '!TORCH_INDEX!' in torch.__version__ else 1)" >nul 2>&1
+    ".venv\Scripts\python.exe" -c "import torch,sys; sys.exit(0 if '!TORCH_INDEX!' in torch.__version__ else 1)" >nul 2>&1
     if !errorlevel! neq 0 (
         echo [INFO] Cai dat PyTorch !TORCH_INDEX! - torch/torchvision/torchaudio dong bo...
-        .venv\Scripts\python.exe -m pip uninstall -y torch torchvision torchaudio >nul 2>&1
-        .venv\Scripts\python.exe -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
+        ".venv\Scripts\python.exe" -m pip uninstall -y torch torchvision torchaudio >nul 2>&1
+        ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
         if !errorlevel! neq 0 (
             echo [WARNING] Cai dat PyTorch !TORCH_INDEX! that bai. He thong se thu cai ban mac dinh tu requirements.
         ) else (
@@ -253,9 +266,9 @@ rem RTX 50-Series: onnxruntime-gpu phai >= 1.22 moi co kernel Blackwell sm_120
 rem (ban 1.20.x se khien InsightFace fallback ve CPU voi warning)
 if "!TORCH_INDEX!"=="cu128" (
     echo [INFO] RTX 50-Series: nang cap onnxruntime-gpu ^>= 1.22 cho kernel Blackwell...
-    .venv\Scripts\python.exe -m pip install --default-timeout=1000 "onnxruntime-gpu>=1.22"
+    ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 "onnxruntime-gpu>=1.22"
     if !errorlevel! neq 0 (
-        echo [WARNING] Nang cap onnxruntime-gpu that bai - InsightFace se chay CPU (khong anh huong engine CLIP mac dinh).
+        echo [WARNING] Nang cap onnxruntime-gpu that bai - InsightFace se chay CPU - khong anh huong engine CLIP mac dinh.
     )
 )
 
@@ -278,32 +291,20 @@ echo.
 echo ----------------------------------------------------------------------
 echo [INFO] Dang patch basicsr tuong thich torchvision moi...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe -c "import os,io; p=os.path.join('.venv','Lib','site-packages','basicsr','data','degradations.py'); s=io.open(p,encoding='utf-8').read(); n=s.replace('from torchvision.transforms.functional_tensor import rgb_to_grayscale','from torchvision.transforms.functional import rgb_to_grayscale'); io.open(p,'w',encoding='utf-8').write(n); print('[INFO] basicsr da duoc patch.' if n!=s else '[INFO] basicsr da patch san - bo qua.')"
+".venv\Scripts\python.exe" -c "import os,io; p=os.path.join('.venv','Lib','site-packages','basicsr','data','degradations.py'); s=io.open(p,encoding='utf-8').read(); n=s.replace('from torchvision.transforms.functional_tensor import rgb_to_grayscale','from torchvision.transforms.functional import rgb_to_grayscale'); io.open(p,'w',encoding='utf-8').write(n); print('[INFO] basicsr da duoc patch.' if not n==s else '[INFO] basicsr da patch san - bo qua.')"
 if !errorlevel! neq 0 (
     echo [WARNING] Patch basicsr that bai - RealESRGAN co the khong hoat dong.
 )
 echo.
 
-:: 5b. Install rvc-python separately with --no-deps
-::     (rvc-python declares numpy<=1.23.5 which conflicts with coqui-tts's numpy>=1.26.0)
-::     Its runtime dependencies are already installed via requirements.txt above.
-echo ----------------------------------------------------------------------
-echo [INFO] Dang cai dat rvc-python (--no-deps, tranh xung dot numpy)...
-echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe -m pip install --default-timeout=1000 rvc-python>=0.1.5 --no-deps
-if !errorlevel! neq 0 (
-    echo [WARNING] Cai dat rvc-python that bai.
-) else (
-    echo [INFO] Cai dat rvc-python thanh cong.
-)
-echo.
+
 
 :: 6. Install optional Vietnamese phoneme packages (requires Git)
 if !GIT_OK! equ 1 (
     echo ----------------------------------------------------------------------
     echo [INFO] Dang cai dat thu vien phien am tieng Viet viphoneme...
     echo ----------------------------------------------------------------------
-    .venv\Scripts\python.exe -m pip install --default-timeout=1000 git+https://github.com/vunb/viphoneme.git git+https://github.com/vunb/vinorm.git
+    ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 viphoneme
     if !errorlevel! neq 0 (
         echo [WARNING] Cai dat thu vien phien am tu GitHub that bai.
     ) else (
@@ -322,7 +323,7 @@ if !GIT_OK! equ 1 (
     )
     if exist "third_party\Kokoro-Vietnamese" (
         cd third_party\Kokoro-Vietnamese
-        ..\..\.venv\Scripts\pip install --default-timeout=1000 -e .
+        "..\..\.venv\Scripts\pip" install --default-timeout=1000 -e .
         if !errorlevel! neq 0 (
             echo [WARNING] Cấu hình Kokoro-Vietnamese thất bại.
         ) else (
@@ -335,28 +336,6 @@ if !GIT_OK! equ 1 (
     echo.
 )
 
-:: 6d. Install Valtec-TTS (requires Git)
-if !GIT_OK! equ 1 (
-    echo ----------------------------------------------------------------------
-    echo [INFO] Dang thiet lap va cai dat Valtec-TTS...
-    echo ----------------------------------------------------------------------
-    if not exist "third_party\valtec-tts" (
-        git clone https://github.com/tronghieuit/valtec-tts.git third_party\valtec-tts
-    )
-    if exist "third_party\valtec-tts" (
-        cd third_party\valtec-tts
-        ..\..\.venv\Scripts\pip install --default-timeout=1000 -e .
-        if !errorlevel! neq 0 (
-            echo [WARNING] Cấu hình Valtec-TTS thất bại.
-        ) else (
-            echo [INFO] Cai dat Valtec-TTS thanh cong.
-        )
-        cd ..\..
-    ) else (
-        echo [WARNING] Khong the clone Valtec-TTS tu GitHub.
-    )
-    echo.
-)
 
 
 :: 6b. Copy config.toml from example if not exist
@@ -388,12 +367,12 @@ echo ----------------------------------------------------------------------
 echo [INFO] Kiem tra va tai mo hinh AI Storytelling (RealESRGAN, IP-Adapter)...
 echo ----------------------------------------------------------------------
 if !DOWNLOAD_MC_MODELS! equ 1 (
-    .venv\Scripts\python.exe apps\MediaComposer\app\services\model_downloader.py --download
+    ".venv\Scripts\python.exe" apps\MediaComposer\app\services\model_downloader.py --download
     if !errorlevel! neq 0 (
-        echo [WARNING] Mot so model tai that bai - ung dung se tu dong tai lai khi can (can mang).
+        echo [WARNING] Mot so model tai that bai - ung dung se tu dong tai lai khi can - can mang.
     )
 ) else (
-    .venv\Scripts\python.exe apps\MediaComposer\app\services\model_downloader.py --check-only
+    ".venv\Scripts\python.exe" apps\MediaComposer\app\services\model_downloader.py --check-only
     if !errorlevel! neq 0 (
         echo [WARNING] Mot so model Storytelling chua co - ung dung se tu dong tai khi can.
     )

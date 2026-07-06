@@ -1,9 +1,0 @@
-{
-  "engine": "edge",
-  "voice": "vi-VN-HoaiMyNeural",
-  "speed": 1.15,
-  "normalize": true,
-  "fade_in": 0.2,
-  "fade_out": 0.2,
-  "silence_duration": 0.4
-}

@@ -1,0 +1,50 @@
+[app]
+pexels_api_keys = "XKaUEUHt63du0iKRRoBxQStEbSN2Ry5R9vB2xW41ZoVSp0FDZVjXsbQI"
+pixabay_api_keys = []
+coverr_api_keys = []
+openai_api_key = "sk-gemini-YrVwXWGegzkFlevHPdQy7Fpry14HJVirqvnuxukz"
+openai_base_url = "http://localhost:7860/v1"
+openai_model = "gemini-3-flash"
+llm_provider = "Local Gemini"
+video_codec = "h264_nvenc"
+
+[whisper]
+model_size = "medium"
+device = "cuda"
+compute_type = "float16"
+font_name = "Montserrat-Bold.ttf"
+font_size = 42
+text_fore_color = "#FFFFFF"
+stroke_color = "#000000"
+stroke_width = 3.0
+background_style = "Black"
+subtitle_position = "bottom"
+subtitle_bg_alpha = 255
+rounded_subtitle_background = true
+custom_position = 69.0
+
+[storytelling]
+aspect_ratio = "16:9"
+image_width = 768
+image_height = 432
+enable_upscaling = true
+upscaler_model = "RealESRGAN_x4plus_anime_6B"
+output_width = 1920
+output_height = 1080
+video_fps = 24
+subtitle_font = "Arial"
+subtitle_font_size = 28
+subtitle_color = "white"
+subtitle_border = 2
+subtitle_position = "bottom"
+num_inference_steps = 8
+guidance_scale = 5.0
+hardware_profile = "cuda_low"
+image_gen_provider = "Stable Diffusion (Local GPU)"
+identity_engine = "clip"
+enable_face_detailer = true
+face_detailer_strength = 0.45
+face_detailer_max_faces = 1
+face_detailer_steps = 14
+face_detailer_skip_sim = 0.62
+ip_adapter_scale = 0.6

@@ -1,0 +1,75 @@
+{
+  "default": {
+    "engine": "edge",
+    "voice": "vi-VN-NamMinhNeural",
+    "speed": 1.0,
+    "normalize": true,
+    "target_lufs": -14.0,
+    "fade_in": 0.1,
+    "fade_out": 0.1,
+    "silence_duration": 0.3
+  },
+  "fast": {
+    "engine": "edge",
+    "voice": "vi-VN-NamMinhNeural",
+    "speed": 1.15,
+    "normalize": true,
+    "target_lufs": -14.0,
+    "fade_in": 0.1,
+    "fade_out": 0.1,
+    "silence_duration": 0.3
+  },
+  "female_reading": {
+    "engine": "edge",
+    "voice": "vi-VN-HoaiMyNeural",
+    "speed": 1.0,
+    "normalize": true,
+    "target_lufs": -14.0,
+    "fade_in": 0.1,
+    "fade_out": 0.1,
+    "silence_duration": 0.3
+  },
+  "offline_cloning": {
+    "engine": "clone",
+    "model": "models/xtts_v2",
+    "ref_audio": "data/voices/ref_voice.wav",
+    "voice": "vi",
+    "speed": 1.0,
+    "phonemize": true,
+    "normalize": true,
+    "target_lufs": -14.0,
+    "fade_in": 0.1,
+    "fade_out": 0.1,
+    "silence_duration": 0.4
+  },
+  "offline_fast": {
+    "engine": "piper",
+    "model": "models/piper/vi_VN-vais1000-medium.onnx",
+    "speed": 1.0,
+    "normalize": true,
+    "target_lufs": -14.0,
+    "fade_in": 0.1,
+    "fade_out": 0.1,
+    "silence_duration": 0.3
+  },
+  "kokoro_vi": {
+    "engine": "kokoro",
+    "voice": "vi",
+    "speed": 1.0,
+    "normalize": true,
+    "target_lufs": -14.0,
+    "fade_in": 0.1,
+    "fade_out": 0.1,
+    "silence_duration": 0.3
+  },
+  "vieneu": {
+    "engine": "vieneu",
+    "voice": "vi",
+    "speed": 1.0,
+    "normalize": true,
+    "target_lufs": -14.0,
+    "fade_in": 0.1,
+    "fade_out": 0.1,
+    "silence_duration": 0.3
+  }
+}

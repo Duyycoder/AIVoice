@@ -319,9 +319,7 @@ def list_models():
         if os.path.exists(os.path.join(models_dir, "xtts_v2", "model.pth")):
             xtts_models.append("xtts_v2 (Default)")
          
-    rvc_models = [os.path.basename(p) for p in glob.glob(os.path.join(models_dir, "rvc", "*.pth"))]
-    rvc_indexes = [os.path.basename(p) for p in glob.glob(os.path.join(models_dir, "rvc", "*.index"))]
-    llm_models = [os.path.basename(p) for p in glob.glob(os.path.join(models_dir, "llm", "*.gguf"))]
+
     
     ref_audios = [os.path.basename(p) for p in glob.glob(os.path.join(voices_dir, "*.wav"))]
     
@@ -340,9 +338,9 @@ def list_models():
     return jsonify({
         "piper": piper_models,
         "xtts": xtts_models,
-        "rvc": rvc_models,
-        "rvc_index": rvc_indexes,
-        "llm": llm_models,
+        "rvc": [],
+        "rvc_index": [],
+        "llm": [],
         "ref_audio": ref_audios,
         "gpu_name": gpu_name,
         "vram_gb": vram_gb
@@ -457,14 +455,14 @@ def generate_speech():
     else:
         vieneu_temp = 0.3
     
-    # Local GGUF LLM Spicing
-    spice_text = bool(data.get("spice_text", False))
-    llm_model = data.get("llm_model", "")
+    # Local GGUF LLM Spicing (disabled)
+    spice_text = False
+    llm_model = ""
     
-    # RVC
-    rvc_model = data.get("rvc_model", "")
-    rvc_index = data.get("rvc_index", "")
-    rvc_pitch = int(data.get("rvc_pitch", 0))
+    # RVC (disabled)
+    rvc_model = ""
+    rvc_index = ""
+    rvc_pitch = 0
     
     # Hardware profile options: 'rtx5060', 'rtx3060', or 'cpu'
     hardware_profile = data.get("hardware_profile", "rtx3060")
@@ -491,8 +489,7 @@ def generate_speech():
             model_name = os.path.abspath(os.path.join("models", "piper", model_name))
         elif engine_name == "clone":
             model_name = os.path.abspath(os.path.join("models", "xtts_v2"))
-        elif engine_name == "valtec":
-            model_name = None
+
         elif engine_name == "kokoro":
             model_name = None
         elif engine_name == "vieneu":
@@ -500,12 +497,7 @@ def generate_speech():
             
     if ref_audio:
         ref_audio = os.path.abspath(os.path.join("data", "voices", ref_audio))
-    if llm_model:
-        llm_model = os.path.abspath(os.path.join("models", "llm", llm_model))
-    if rvc_model:
-        rvc_model = os.path.abspath(os.path.join("models", "rvc", rvc_model))
-    if rvc_index:
-        rvc_index = os.path.abspath(os.path.join("models", "rvc", rvc_index))
+
 
     # 3. Create dummy Namespace arg object to feed into the pipeline
     import argparse
@@ -560,7 +552,7 @@ def generate_speech():
     def run_generation():
         engine = None
         try:
-            is_gpu_task = (device == "cuda" and engine_name in ["clone", "rvc", "valtec", "kokoro", "vieneu"]) or bool(rvc_model) or spice_text
+            is_gpu_task = (device == "cuda" and engine_name in ["clone", "kokoro", "vieneu"])
             
             if is_gpu_task and gpu_inference_lock.locked():
                 add_log("Yêu cầu đang được xếp hàng chờ xử lý (GPU đang bận)...")
@@ -589,9 +581,7 @@ def generate_speech():
                 elif engine_name == "clone":
                     from src.engines.clone import CloneEngine
                     engine = CloneEngine(args.model)
-                elif engine_name == "valtec":
-                    from src.engines.valtec import ValtecEngine
-                    engine = ValtecEngine(args.model)
+
                 elif engine_name == "kokoro":
                     from src.engines.kokoro import KokoroEngine
                     engine = KokoroEngine(args.model)
@@ -599,7 +589,7 @@ def generate_speech():
                     from src.engines.vieneu import VieNeuEngine
                     engine = VieNeuEngine(args.model)
                     
-                from main import process_single_file, process_single_audio_rvc
+                from main import process_single_file
                 
                 if args.input:
                     if getattr(args, "is_direct_text", False):
@@ -610,10 +600,7 @@ def generate_speech():
                         out_name = (args.output_name or input_base_name).strip()
                         out_path = os.path.join(args.output_dir, input_base_name, f"{out_name}.wav")
                     
-                    if args.engine == "rvc":
-                        result = process_single_audio_rvc(args.input, out_path, args)
-                    else:
-                        result = process_single_file(args.input, out_path, engine, args)
+                    result = process_single_file(args.input, out_path, engine, args)
                         
                     if result["status"] == "SUCCESS":
                         add_log(f"Hoàn thành thành công! File lưu tại: {result['output']}")
