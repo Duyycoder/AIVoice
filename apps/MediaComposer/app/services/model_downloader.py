@@ -13,32 +13,58 @@ except ImportError:
 MC_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MODELS_DIR = os.path.join(MC_ROOT, "models")
 
-# Uu tien dung HF_HOME de dong bo cache voi toan bo du an AIVoice
-hf_home = os.environ.get("HF_HOME")
-if hf_home:
-    CACHE_DIR = hf_home
-else:
-    CACHE_DIR = os.path.join(MODELS_DIR, "diffusers_cache")
+# QUAN TRỌNG: phải TRÙNG với cache_dir của image_generator lúc RUNTIME
+# (run.bat KHÔNG set HF_HOME → runtime dùng storage/models). Trước đây setup tải
+# vào models/diffusers_cache hoặc HF_HOME của setup.bat → runtime không thấy,
+# tải lại toàn bộ lần nữa. Hardcode storage/models để tải 1 lần dùng mọi nơi.
+CACHE_DIR = os.path.join(MC_ROOT, "storage", "models")
 
+# Danh sách model RUNTIME THẬT SỰ cần (đồng bộ với image_generator/face_detailer
+# sau đợt nâng cấp 07/2026: engine mặc định = IP-Adapter Plus Face CLIP)
 REQUIRED_MODELS = {
-    "realesrgan": {
+    "realesrgan_anime": {
         "type": "url",
         "path": os.path.join(MODELS_DIR, "realesrgan", "RealESRGAN_x4plus_anime_6B.pth"),
         "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
         "desc": "RealESRGAN 4x Anime Upscaler"
     },
-    "ip_adapter_faceid": {
-        "type": "hf",
-        "repo_id": "h94/IP-Adapter-FaceID",
-        "filename": "ip-adapter-faceid_sd15.bin",
-        "desc": "IP-Adapter FaceID for Consistent Character Faces"
+    "realesrgan_video": {
+        "type": "url",
+        "path": os.path.join(MODELS_DIR, "realesrgan", "realesr-animevideov3.pth"),
+        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
+        "desc": "RealESRGAN AnimeVideo v3 (nhẹ, nhanh)"
     },
-    "hyper_sd_lora": {
+    "anime_face_detector": {
+        "type": "url",
+        "path": os.path.join(MC_ROOT, "resource", "models", "lbpcascade_animeface.xml"),
+        "url": "https://raw.githubusercontent.com/nagadomi/lbpcascade_animeface/master/lbpcascade_animeface.xml",
+        "desc": "Anime Face Detector (Face Detailer + dataset gate)",
+        "min_size": 50000,
+    },
+    "ip_adapter_plus_face": {
+        "type": "hf",
+        "repo_id": "h94/IP-Adapter",
+        "filename": "models/ip-adapter-plus-face_sd15.safetensors",
+        "desc": "IP-Adapter Plus Face (engine mặc định, hỗ trợ anime)"
+    },
+    "ip_adapter_image_encoder": {
+        "type": "hf",
+        "repo_id": "h94/IP-Adapter",
+        "filename": "models/image_encoder/model.safetensors",
+        "desc": "CLIP ViT-H Image Encoder cho IP-Adapter (~2.5GB, tải 1 lần)"
+    },
+    "ip_adapter_image_encoder_cfg": {
+        "type": "hf",
+        "repo_id": "h94/IP-Adapter",
+        "filename": "models/image_encoder/config.json",
+        "desc": "Config CLIP Image Encoder"
+    },
+    "hyper_sd_8step_cfg": {
         "type": "hf",
         "repo_id": "ByteDance/Hyper-SD",
-        "filename": "Hyper-SD15-2steps-lora.safetensors",
-        "desc": "Hyper-SD 2-Step Acceleration LoRA"
-    }
+        "filename": "Hyper-SD15-8steps-CFG-lora.safetensors",
+        "desc": "Hyper-SD 8-Step CFG LoRA (chế độ nhanh mặc định)"
+    },
 }
 
 def _download_file(url: str, dest_path: str, desc: str = "", progress_callback = None) -> bool:
@@ -87,7 +113,8 @@ def ensure_models_ready(config=None, download_if_missing: bool = True, progress_
         desc = info.get("desc", key)
         if info["type"] == "url":
             path = info["path"]
-            if os.path.exists(path) and os.path.getsize(path) > 1000000:
+            min_size = info.get("min_size", 1000000)
+            if os.path.exists(path) and os.path.getsize(path) > min_size:
                 results[key] = "ready"
             else:
                 if download_if_missing:

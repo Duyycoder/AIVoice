@@ -16,10 +16,10 @@ compute_type = "float32"
 [storytelling]
 # Tỷ lệ ảnh: "16:9" | "9:16" | "1:1"
 aspect_ratio = "16:9"
-# Kích thước sinh ảnh (SD1.5 tối ưu, bội số của 64, tỷ lệ gần đúng 16:9)
-image_width  = 896
-image_height = 512
-# Upscaler
+# Kích thước sinh ảnh (SD1.5 train ở ~512px — cạnh dài <=768 tránh lặp nhân vật)
+image_width  = 768
+image_height = 432
+# Upscaler (BẮT BUỘC bật để ảnh xuất nét — tắt là chỉ resize thường, ảnh mờ)
 enable_upscaling = true
 upscaler_model   = "RealESRGAN_x4plus_anime_6B"
 # Output video
@@ -32,7 +32,17 @@ subtitle_font_size = 28
 subtitle_color     = "white"
 subtitle_border    = 2
 subtitle_position  = "bottom"
-# Số bước inference SD
-num_inference_steps = 2
-guidance_scale      = 0.0
+# Tham số sinh ảnh (bộ cân bằng tốc độ/chất lượng đã tinh chỉnh 07/2026:
+# 8 steps + guidance 5.0 tự kích hoạt Hyper-SD CFG-lora, ~3x nhanh hơn 25 steps)
+num_inference_steps = 8
+guidance_scale      = 5.0
+# Phần cứng: "auto" | "cuda_high" (GPU >=8GB hoặc 6GB muốn tối đa tốc độ) | "cuda_low" | "cpu"
+hardware_profile = "auto"
+# Identity nhân vật: "clip" (IP-Adapter Plus Face — anime/manhwa, khuyên dùng) | "faceid" (mặt người thật)
+identity_engine = "clip"
+# Mức độ giống nhân vật theo ảnh tham chiếu (0.5-0.7 khuyên dùng)
+ip_adapter_scale = 0.6
+# Face Detailer: tự vẽ lại mặt nhỏ/méo sau khi sinh (có cổng kiểm định tự vứt mặt hỏng)
+enable_face_detailer   = true
+face_detailer_strength = 0.45
 

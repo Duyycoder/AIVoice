@@ -1,0 +1,3 @@
+﻿(flat color, minimalist anime, clean lineart), sharp details, scenery background, clean composition
+---
+(worst quality:2), (low quality:2), (normal quality:2), lowres, realistic, 3D render, photograph, photorealistic, white background, empty background

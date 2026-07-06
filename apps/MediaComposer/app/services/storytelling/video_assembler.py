@@ -35,6 +35,62 @@ def _get_valid_font(font_name: str) -> str:
     logger.warning(f"Subtitle font '{font_name}' not found in Windows Fonts, falling back to 'Arial'")
     return "Arial"
 
+def _hex_to_ass_color(color: str) -> str:
+    """Chuyển '#RRGGBB' hoặc tên màu cơ bản sang định dạng ASS &HBBGGRR."""
+    named = {"white": "FFFFFF", "black": "000000", "yellow": "FFFF00",
+             "red": "FF0000", "green": "00FF00", "blue": "0000FF"}
+    c = color.strip().lstrip("#")
+    c = named.get(c.lower(), c)
+    if len(c) != 6:
+        c = "FFFFFF"
+    rr, gg, bb = c[0:2], c[2:4], c[4:6]
+    return f"&H{bb}{gg}{rr}".upper()
+
+def _build_subtitle_style(st_config: dict) -> str:
+    """Ghép force_style ASS từ config: font, size, màu, viền, vị trí (trước đây chỉ áp font+size)."""
+    font_name = _get_valid_font(st_config.get("subtitle_font", "Arial"))
+    font_size = st_config.get("subtitle_font_size", 28)
+    color = _hex_to_ass_color(str(st_config.get("subtitle_color", "white")))
+    border = st_config.get("subtitle_border", 2)
+    position = str(st_config.get("subtitle_position", "bottom")).lower()
+    alignment = {"bottom": 2, "middle": 5, "center": 5, "top": 8}.get(position, 2)
+    return (f"FontName={font_name},FontSize={font_size},PrimaryColour={color},"
+            f"Outline={border},Alignment={alignment}")
+
+def _get_video_codec_args() -> list:
+    """Codec video theo config app (h264_nvenc nếu chọn) — trước đây bị bỏ qua, luôn libx264."""
+    codec = ""
+    try:
+        from app.config import config as _app_config
+        codec = _app_config.app.get("video_codec", "")
+    except Exception:
+        pass
+    if codec == "h264_nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23"]
+    return ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "stillimage"]
+
+def _run_ffmpeg_with_nvenc_fallback(cmd: list, work_dir: str) -> None:
+    """Chạy ffmpeg; nếu NVENC lỗi (driver cũ/không hỗ trợ) tự chuyển sang libx264."""
+    try:
+        subprocess.run(cmd, check=True, cwd=work_dir, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError:
+        if "h264_nvenc" not in cmd:
+            raise
+        logger.warning("h264_nvenc lỗi — fallback sang libx264 (CPU).")
+        idx = cmd.index("h264_nvenc")
+        new_cmd = cmd[:idx] + ["libx264", "-preset", "ultrafast", "-tune", "stillimage"]
+        tail = cmd[idx + 1:]
+        skip_next = False
+        for i, arg in enumerate(tail):
+            if skip_next:
+                skip_next = False
+                continue
+            if arg in ("-preset", "-rc", "-cq") and i + 1 < len(tail):
+                skip_next = True
+                continue
+            new_cmd.append(arg)
+        subprocess.run(new_cmd, check=True, cwd=work_dir, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
 def _create_duration_txt(frames: List[FrameInfo], output_txt: str) -> None:
     with open(output_txt, "w", encoding="utf-8") as f:
         for frame in frames:
@@ -76,14 +132,19 @@ def assemble_video(
     except Exception:
         ffmpeg_exe = "ffmpeg"
         
+    # FIX: dùng video_fps từ config (trước đây hardcode 25) + codec theo config (NVENC nếu chọn)
+    video_fps = st_config.get("video_fps", 24)
+    codec_args = _get_video_codec_args()
+
     cmd1 = [
         ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", os.path.abspath(duration_txt),
         "-vf", f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2",
-        "-c:v", "libx264", "-r", "25", "-preset", "ultrafast", "-tune", "stillimage", "-pix_fmt", "yuv420p",
+    ] + codec_args + [
+        "-r", str(video_fps), "-pix_fmt", "yuv420p",
         os.path.abspath(raw_video)
     ]
-    
-    subprocess.run(cmd1, check=True, cwd=work_dir, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+    _run_ffmpeg_with_nvenc_fallback(cmd1, work_dir)
     
     logger.info("Bước 2: Mix audio + BGM + burn subtitle")
     
@@ -102,21 +163,21 @@ def assemble_video(
     temp_srt_path = os.path.join(work_dir, "temp_sub.srt")
     if burn_subtitles and srt_path and os.path.exists(srt_path):
         shutil.copyfile(srt_path, temp_srt_path)
-        font_name = _get_valid_font(st_config.get("subtitle_font", "Arial"))
-        font_size = st_config.get("subtitle_font_size", 28)
-        vf = f"subtitles='temp_sub.srt':force_style='FontName={font_name},FontSize={font_size}'"
+        # FIX: áp đầy đủ style phụ đề từ config (màu, viền, vị trí) thay vì chỉ font+size
+        sub_style = _build_subtitle_style(st_config)
+        vf = f"subtitles='temp_sub.srt':force_style='{sub_style}'"
         cmd2.extend(["-vf", vf])
-        
+
     total_dur = sum(f.duration_sec for f in frames)
-    
-    cmd2.extend([
-        "-c:v", "libx264", "-r", "25", "-preset", "ultrafast", "-tune", "stillimage", "-pix_fmt", "yuv420p",
+
+    cmd2.extend(codec_args + [
+        "-r", str(video_fps), "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-t", f"{total_dur:.3f}",
         abs_output
     ])
-    
-    subprocess.run(cmd2, check=True, cwd=work_dir, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+    _run_ffmpeg_with_nvenc_fallback(cmd2, work_dir)
     
     if os.path.exists(duration_txt):
         os.remove(duration_txt)

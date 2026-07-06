@@ -8,10 +8,14 @@
 #   and its actual runtime dependencies are listed explicitly below.
 # ==============================================================================
 
---extra-index-url https://download.pytorch.org/whl/cu121
+# LƯU Ý GPU: setup.bat sẽ tự phát hiện GPU và cài torch/torchvision/torchaudio
+# TRƯỚC file này với index phù hợp (cu124 cho RTX 20/30/40, cu128 cho RTX 50-series).
+# Index dưới đây chỉ là fallback khi cài tay bằng pip -r requirements.txt.
+--extra-index-url https://download.pytorch.org/whl/cu124
 
 # Core Machine Learning & Deep Learning Libraries
 torch>=2.1.1
+torchvision>=0.16.0    # Required by basicsr/realesrgan (MediaComposer upscaler)
 torchaudio>=2.1.1
 transformers>=4.57,<5.0
 
@@ -23,6 +27,8 @@ llama-cpp-python==0.3.31 # Local GGUF LLM text rewriting (requires C++ compiler)
 vieneu==3.0.9          # VieNeu-TTS offline/online Vietnamese TTS
 neucodec>=0.0.6        # Neural audio codec for VieNeu TTS voice cloning standard mode
 torchao==0.16.0        # Lock to 0.16.0 to remain compatible with PyTorch 2.6.0 and prevent ImportError
+                       # LƯU Ý RTX 50-series (torch cu128 >= 2.7): nếu import torchao lỗi,
+                       # thử: pip install --upgrade torchao (src/main.py đã có guard chống crash)
 sentence-transformers  # Required for Semantic Caching text embeddings
 # NOTE: rvc-python>=0.1.5 is installed separately with --no-deps in setup.bat
 #       because it declares numpy<=1.23.5 which conflicts with coqui-tts.
@@ -75,3 +81,22 @@ faster-whisper==1.2.1
 openai
 streamlit
 opencv-python
+pydub                  # Đọc thời lượng audio trong storytelling orchestrator
+toml                   # Đọc/ghi config.toml của MediaComposer
+imageio-ffmpeg         # ffmpeg binary cho video_assembler
+pandas                 # st.data_editor / st.table trong webui (streamlit cũng kéo theo, pin rõ cho chắc)
+datasets               # Import guard trong src/main.py chống crash khởi tạo torch trên Windows
+pytest                 # Chạy smoke test: python -m pytest apps/MediaComposer/tests
+
+# MediaComposer — AI Storytelling Image Generation (Workflow 5)
+# LƯU Ý: thiếu nhóm này là toàn bộ tính năng sinh ảnh sập khi pull sang máy mới.
+diffusers==0.38.0      # Stable Diffusion pipeline + IP-Adapter
+accelerate>=1.0.0      # CPU offload / device map cho diffusers
+peft>=0.19.0           # LoRA adapter (Hyper-SD, FaceID LoRA, LoRA nhân vật)
+safetensors            # Load trọng số an toàn
+compel>=2.0.0          # Prompt dài >77 token (chunk & concat embedding)
+insightface==1.0.1     # Trích face embedding (engine faceid — ảnh người thật)
+onnxruntime-gpu==1.20.2 # Runtime cho InsightFace trên GPU
+basicsr==1.4.2         # Kiến trúc RRDBNet cho RealESRGAN (setup.bat sẽ patch torchvision import)
+realesrgan==0.3.0      # AI Upscaler 4x
+gfpgan==1.3.8          # Phụ trợ khôi phục mặt của realesrgan

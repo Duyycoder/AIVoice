@@ -1,13 +1,16 @@
 import os
 import json
 import datetime
+import dataclasses
 from typing import List, Tuple
 from dataclasses import asdict
 from loguru import logger
 
 from app.services.storytelling.models import StoryContext, Character, LearnedCorrections
 
-CONTEXTS_ROOT = os.path.join("storage", "contexts")
+# Đường dẫn tuyệt đối theo MediaComposer root — không phụ thuộc CWD
+_MC_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+CONTEXTS_ROOT = os.path.join(_MC_ROOT, "storage", "contexts")
 
 class ContextManager:
     def __init__(self, story_slug: str):
@@ -24,8 +27,8 @@ class ContextManager:
         os.makedirs(self.chars_dir, exist_ok=True)
         
         default_style = (
-            "(flat color, minimalist anime, clean lineart, Anything V5:1.1), \n"
-            "simple background, minimalist background, \n"
+            "(flat color, minimalist anime, clean lineart), \n"
+            "scenery background, detailed environment, \n"
             "xianxia cultivation setting, sharp details\n"
             "---\n"
             "(worst quality:2), (low quality:2), (normal quality:2), lowres, \n"
@@ -62,8 +65,10 @@ class ContextManager:
             data = json.load(f)
             
         chars = []
+        valid_fields = {f.name for f in dataclasses.fields(Character)}
         for c in data.get("characters", []):
-            chars.append(Character(**c))
+            filtered = {k: v for k, v in c.items() if k in valid_fields}
+            chars.append(Character(**filtered))
             
         learned = LearnedCorrections()
         if os.path.exists(self.learned_file):
@@ -119,12 +124,15 @@ class ContextManager:
         char_dir = os.path.join(self.chars_dir, slug)
         os.makedirs(char_dir, exist_ok=True)
         
-        has_embedding = False
         if ref_image_path and os.path.exists(ref_image_path):
             import shutil
             ext = os.path.splitext(ref_image_path)[1]
             shutil.copy(ref_image_path, os.path.join(char_dir, f"ref{ext}"))
-            
+
+        # FIX: không reset has_embedding=False khi cập nhật nhân vật đã có embedding.
+        # Nguồn sự thật là file face.ipadpt.npy trên đĩa.
+        has_embedding = os.path.exists(self.get_face_embedding_path(slug))
+
         char = Character(
             name=name,
             slug=slug,
@@ -140,6 +148,70 @@ class ContextManager:
             self._context.characters.append(char)
             
         self.save_context()
+
+    def get_face_embedding_path(self, slug: str) -> str:
+        """Đường dẫn chuẩn của face embedding cho một nhân vật (nguồn sự thật duy nhất)."""
+        return os.path.join(self.chars_dir, slug, "face.ipadpt.npy")
+
+    def has_face_embedding(self, slug: str) -> bool:
+        """Check thống nhất cho mọi luồng (Studio ảnh & Workflow video): dựa trên file thực tế."""
+        return bool(slug) and os.path.exists(self.get_face_embedding_path(slug))
+
+    def get_ref_image_path(self, slug: str) -> str:
+        """Đường dẫn ảnh tham chiếu gốc (ref.*) của nhân vật — dùng cho IP-Adapter CLIP."""
+        if not slug:
+            return ""
+        char_dir = os.path.join(self.chars_dir, slug)
+        if os.path.isdir(char_dir):
+            for f in sorted(os.listdir(char_dir)):
+                name, ext = os.path.splitext(f)
+                if name == "ref" and ext.lower() in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+                    return os.path.join(char_dir, f)
+        return ""
+
+    def set_ref_from_image(self, slug: str, image, source: str = "auto_bootstrap") -> str:
+        """T7: đặt ảnh ref cho nhân vật từ PIL Image (bootstrap từ batch).
+
+        - KHÔNG ghi đè ref do user upload tay (chỉ set khi chưa có ref,
+          hoặc ref hiện tại cũng là auto_bootstrap).
+        - Xoá cache .ref_emb.npy để similarity tính lại theo ref mới.
+        Trả đường dẫn ref đã lưu, hoặc chuỗi rỗng nếu bị từ chối.
+        """
+        char = self.get_character(slug)
+        if not char:
+            return ""
+        existing = self.get_ref_image_path(slug)
+        if existing and getattr(char, "ref_source", "manual") == "manual":
+            return ""  # tôn trọng ref user đặt tay
+
+        char_dir = os.path.join(self.chars_dir, slug)
+        os.makedirs(char_dir, exist_ok=True)
+        # Xoá ref cũ khác định dạng để get_ref_image_path không trả file cũ
+        for f in os.listdir(char_dir):
+            name, ext = os.path.splitext(f)
+            if name == "ref" and ext.lower() in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+                try:
+                    os.remove(os.path.join(char_dir, f))
+                except Exception:
+                    pass
+        ref_path = os.path.join(char_dir, "ref.png")
+        image.save(ref_path, format="PNG")
+
+        # Invalidate cache embedding của ref
+        emb_cache = os.path.join(self.get_dataset_dir(slug), ".ref_emb.npy")
+        if os.path.exists(emb_cache):
+            try:
+                os.remove(emb_cache)
+            except Exception:
+                pass
+
+        char.ref_source = source
+        self.save_context()
+        return ref_path
+
+    def has_identity(self, slug: str) -> bool:
+        """Nhân vật có dữ liệu nhận dạng (ảnh tham chiếu HOẶC face embedding)."""
+        return bool(self.get_ref_image_path(slug)) or self.has_face_embedding(slug)
 
     def get_character(self, slug: str) -> Character:
         if not self._context:
@@ -177,6 +249,60 @@ class ContextManager:
         if not self._context:
             self.load_context()
         return self._context.get_positive_prompt(), self._context.get_negative_prompt()
+
+    def get_dataset_dir(self, slug: str) -> str:
+        """Thư mục dataset ảnh chuẩn hoá cho train LoRA."""
+        ds_dir = os.path.join(self.chars_dir, slug, "dataset")
+        os.makedirs(ds_dir, exist_ok=True)
+        return ds_dir
+
+    def count_dataset_images(self, slug: str) -> int:
+        """Đếm ảnh approved_* + auto_* trong dataset."""
+        ds_dir = self.get_dataset_dir(slug)
+        count = 0
+        for f in os.listdir(ds_dir):
+            if (f.startswith("approved_") or f.startswith("auto_")) and f.endswith(".png"):
+                count += 1
+        return count
+
+    def add_dataset_image(self, slug: str, image_path_or_pil, source: str) -> str:
+        """
+        Lưu ảnh vào dataset. source: "approved" | "auto".
+        Trả path ảnh đã lưu. Áp trần 40 ảnh — khi vượt, xoá auto_* cũ nhất (FIFO).
+        KHÔNG bao giờ tự xoá approved_*.
+        """
+        import uuid as _uuid
+        from PIL import Image as PILImage
+
+        ds_dir = self.get_dataset_dir(slug)
+        prefix = "approved" if source == "approved" else "auto"
+        filename = f"{prefix}_{_uuid.uuid4().hex[:8]}.png"
+        out_path = os.path.join(ds_dir, filename)
+
+        # Save image
+        if isinstance(image_path_or_pil, PILImage.Image):
+            image_path_or_pil.save(out_path, format="PNG")
+        else:
+            import shutil
+            shutil.copy2(str(image_path_or_pil), out_path)
+
+        # Enforce cap: max 40 images, evict oldest auto_* first
+        MAX_DATASET_IMAGES = 40
+        all_imgs = sorted(
+            [f for f in os.listdir(ds_dir)
+             if (f.startswith("approved_") or f.startswith("auto_")) and f.endswith(".png")],
+            key=lambda f: os.path.getmtime(os.path.join(ds_dir, f))
+        )
+        while len(all_imgs) > MAX_DATASET_IMAGES:
+            auto_imgs = [f for f in all_imgs if f.startswith("auto_")]
+            if auto_imgs:
+                victim = auto_imgs[0]
+                os.remove(os.path.join(ds_dir, victim))
+                all_imgs.remove(victim)
+            else:
+                break  # Only approved_* left — never auto-delete those
+
+        return out_path
 
     @staticmethod
     def list_all_contexts() -> List[str]:

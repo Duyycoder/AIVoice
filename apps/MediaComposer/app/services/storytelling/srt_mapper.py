@@ -192,3 +192,258 @@ def _fallback_uniform_duration(scenes: List[Scene], total_dur: float) -> List[Sc
         scene.duration_sec = dur_per_scene
         current = scene.end_time
     return scenes
+
+
+def map_semantic_scenes_to_srt(scenes, srt_blocks, total_duration):
+    """Map semantic scenes (list of Scene dataclass) sang timeline bằng text matching.
+
+    Thuật toán:
+    1. Chuẩn hoá text 2 phía: lowercase, bỏ dấu câu, NFKD bỏ dấu tiếng Việt
+    2. Ghép SRT blocks thành 1 chuỗi từ, ghi (block_index, word_position)
+    3. Từng cảnh: difflib.SequenceMatcher tìm đoạn khớp (tuyến tính, không quay lui)
+    4. Ratio < 0.5 → gán theo tỷ lệ số từ + log warning
+    5. Bảo đảm: start/end tăng dần, không chồng lấn, cảnh cuối = total_duration
+    """
+    import unicodedata
+    import difflib
+
+    if not scenes:
+        return scenes
+
+    # Nếu không có SRT blocks → fallback tỷ lệ từ
+    if not srt_blocks:
+        logger.info("[SemanticSRT] No SRT blocks, using word-count proportional timing.")
+        return _fallback_uniform_duration(scenes, total_duration)
+
+    def normalize_text(text):
+        """Lowercase, bỏ dấu tiếng Việt, bỏ dấu câu."""
+        text = unicodedata.normalize('NFKD', text)
+        text = ''.join(c for c in text if not unicodedata.combining(c))
+        text = re.sub(r'[^\w\s]', '', text.lower())
+        return text
+
+    # Ghép SRT thành chuỗi từ liên tục + map vị trí từ → block index
+    srt_words = []
+    word_to_block = []  # index trong srt_words → index trong srt_blocks
+    for blk_idx, block in enumerate(srt_blocks):
+        words = normalize_text(block.text).split()
+        for w in words:
+            srt_words.append(w)
+            word_to_block.append(blk_idx)
+
+    srt_full = " ".join(srt_words)
+    cursor = 0  # vị trí từ hiện tại (tuyến tính, không quay lui)
+
+    total_scene_words = sum(len(s.text_vi.split()) for s in scenes)
+    if total_scene_words == 0:
+        return _fallback_uniform_duration(scenes, total_duration)
+
+    for scene in scenes:
+        scene_text_norm = normalize_text(scene.text_vi)
+        scene_words = scene_text_norm.split()
+        scene_str = " ".join(scene_words)
+
+        if not scene_words or cursor >= len(srt_words):
+            # Gán theo tỷ lệ từ
+            _assign_proportional(scene, scenes, total_duration, total_scene_words)
+            logger.warning(f"[SemanticSRT] Scene {scene.scene_id}: no words or cursor exhausted, proportional.")
+            continue
+
+        # Giới hạn cửa sổ tìm kiếm ±2000 từ quanh cursor
+        SEARCH_WINDOW = 2000
+        search_start = cursor
+        search_end = min(len(srt_words), cursor + len(scene_words) + SEARCH_WINDOW)
+        search_str = " ".join(srt_words[search_start:search_end])
+
+        matcher = difflib.SequenceMatcher(None, scene_str, search_str)
+        ratio = matcher.ratio()
+
+        if ratio >= 0.5:
+            # Tìm block chứa từ khớp đầu và cuối
+            matching_blocks = matcher.get_matching_blocks()
+            if matching_blocks:
+                # Tìm vị trí từ đầu tiên khớp trong search window
+                first_match = matching_blocks[0]
+                # b = vị trí trong search_str
+                first_word_pos = len(search_str[:first_match.b].split()) - 1
+                first_word_pos = max(0, first_word_pos)
+                abs_first = search_start + first_word_pos
+
+                # Tìm vị trí cuối
+                last_match = matching_blocks[-2] if len(matching_blocks) > 1 else first_match
+                last_word_pos = len(search_str[:last_match.b + last_match.size].split())
+                abs_last = min(search_start + last_word_pos, len(srt_words) - 1)
+
+                # Map về timing
+                start_block_idx = word_to_block[min(abs_first, len(word_to_block) - 1)]
+                end_block_idx = word_to_block[min(abs_last, len(word_to_block) - 1)]
+
+                scene.start_time = srt_blocks[start_block_idx].start
+                scene.end_time = srt_blocks[end_block_idx].end
+                scene.duration_sec = max(0.1, scene.end_time - scene.start_time)
+
+                cursor = abs_last + 1
+            else:
+                _assign_proportional(scene, scenes, total_duration, total_scene_words)
+                logger.warning(f"[SemanticSRT] Scene {scene.scene_id}: no matching blocks, proportional.")
+        else:
+            _assign_proportional(scene, scenes, total_duration, total_scene_words)
+            logger.warning(
+                f"[SemanticSRT] Scene {scene.scene_id}: ratio {ratio:.2f} < 0.5, proportional timing."
+            )
+
+    # Post-process: đảm bảo tăng dần, không chồng lấn, cảnh cuối = total_duration
+    _fix_monotonic(scenes, total_duration)
+    return scenes
+
+
+def _assign_proportional(scene, all_scenes, total_duration, total_words):
+    """Gán timing theo tỷ lệ số từ (nội suy)."""
+    words = len(scene.text_vi.split())
+    proportion = words / total_words if total_words > 0 else 1.0 / max(len(all_scenes), 1)
+    duration = total_duration * proportion
+    # Tìm end_time của cảnh trước
+    idx = next((i for i, s in enumerate(all_scenes) if s.scene_id == scene.scene_id), 0)
+    prev_end = all_scenes[idx - 1].end_time if idx > 0 and all_scenes[idx - 1].end_time > 0 else 0.0
+    scene.start_time = prev_end
+    scene.end_time = prev_end + duration
+    scene.duration_sec = duration
+
+
+def _fix_monotonic(scenes, total_duration):
+    """Sửa timing: tăng dần, không chồng lấn, cảnh cuối kết thúc = total_duration."""
+    if not scenes:
+        return
+    for i in range(1, len(scenes)):
+        if scenes[i].start_time < scenes[i - 1].end_time:
+            scenes[i].start_time = scenes[i - 1].end_time
+        if scenes[i].end_time <= scenes[i].start_time:
+            scenes[i].end_time = scenes[i].start_time + 1.0
+        scenes[i].duration_sec = scenes[i].end_time - scenes[i].start_time
+
+    # Cảnh cuối = total_duration
+    if scenes:
+        scenes[-1].end_time = total_duration
+        scenes[-1].duration_sec = max(0.1, scenes[-1].end_time - scenes[-1].start_time)
+
+
+# ============================================================
+# MAP SEMANTIC SCENES (Phase C)
+# ============================================================
+
+def map_semantic_scenes_to_srt(scenes, srt_blocks, total_duration):
+    """Map semantic scenes (list of Scene dataclass) sang timeline bằng text matching.
+
+    Thuật toán:
+    1. Chuẩn hoá text 2 phía: lowercase, bỏ dấu câu, NFKD bỏ dấu tiếng Việt
+    2. Ghép SRT blocks thành 1 chuỗi từ, ghi (block_index, word_position)
+    3. Từng cảnh: difflib.SequenceMatcher tìm đoạn khớp (tuyến tính, không quay lui)
+    4. Ratio < 0.5 → gán theo tỷ lệ số từ + log warning
+    5. Bảo đảm: start/end tăng dần, không chồng lấn, cảnh cuối = total_duration
+    """
+    import unicodedata
+    import difflib
+
+    if not scenes:
+        return scenes
+
+    # Nếu không có SRT blocks → fallback tỷ lệ từ
+    if not srt_blocks:
+        logger.info("[SemanticSRT] No SRT blocks, using word-count proportional timing.")
+        return _fallback_uniform_duration(scenes, total_duration)
+
+    def normalize_text(text):
+        """Lowercase, bỏ dấu tiếng Việt, bỏ dấu câu."""
+        text = unicodedata.normalize('NFKD', text)
+        text = ''.join(c for c in text if not unicodedata.combining(c))
+        text = re.sub(r'[^\w\s]', '', text.lower())
+        return text
+
+    # Ghép SRT thành chuỗi từ liên tục + map vị trí từ → block index
+    srt_words = []
+    word_to_block = []
+    for blk_idx, block in enumerate(srt_blocks):
+        words = normalize_text(block.text).split()
+        for w in words:
+            srt_words.append(w)
+            word_to_block.append(blk_idx)
+
+    cursor = 0  # vị trí từ hiện tại (tuyến tính, không quay lui)
+
+    total_scene_words = sum(len(s.text_vi.split()) for s in scenes)
+    if total_scene_words == 0:
+        return _fallback_uniform_duration(scenes, total_duration)
+
+    for scene in scenes:
+        scene_text_norm = normalize_text(scene.text_vi)
+        scene_words = scene_text_norm.split()
+        scene_str = " ".join(scene_words)
+
+        if not scene_words or cursor >= len(srt_words):
+            _assign_proportional_timing(scene, scenes, total_duration, total_scene_words)
+            logger.warning(
+                f"[SemanticSRT] Scene {scene.scene_id}: "
+                f"no words or cursor exhausted, proportional."
+            )
+            continue
+
+        # Giới hạn cửa sổ tìm kiếm ±2000 từ quanh cursor
+        SEARCH_WINDOW = 2000
+        search_start = cursor
+        search_end = min(len(srt_words), cursor + len(scene_words) + SEARCH_WINDOW)
+        search_str = " ".join(srt_words[search_start:search_end])
+
+        matcher = difflib.SequenceMatcher(None, scene_str, search_str)
+        ratio = matcher.ratio()
+
+        if ratio >= 0.5:
+            matching_blocks = matcher.get_matching_blocks()
+            if matching_blocks:
+                first_match = matching_blocks[0]
+                first_word_pos = len(search_str[:first_match.b].split()) - 1
+                first_word_pos = max(0, first_word_pos)
+                abs_first = search_start + first_word_pos
+
+                last_match = matching_blocks[-2] if len(matching_blocks) > 1 else first_match
+                last_word_pos = len(search_str[:last_match.b + last_match.size].split())
+                abs_last = min(search_start + last_word_pos, len(srt_words) - 1)
+
+                start_block_idx = word_to_block[min(abs_first, len(word_to_block) - 1)]
+                end_block_idx = word_to_block[min(abs_last, len(word_to_block) - 1)]
+
+                scene.start_time = srt_blocks[start_block_idx].start
+                scene.end_time = srt_blocks[end_block_idx].end
+                scene.duration_sec = max(0.1, scene.end_time - scene.start_time)
+
+                cursor = abs_last + 1
+            else:
+                _assign_proportional_timing(scene, scenes, total_duration, total_scene_words)
+                logger.warning(
+                    f"[SemanticSRT] Scene {scene.scene_id}: "
+                    f"no matching blocks, proportional."
+                )
+        else:
+            _assign_proportional_timing(scene, scenes, total_duration, total_scene_words)
+            logger.warning(
+                f"[SemanticSRT] Scene {scene.scene_id}: "
+                f"ratio {ratio:.2f} < 0.5, proportional timing."
+            )
+
+    # Post-process: đảm bảo tăng dần, không chồng lấn, cảnh cuối = total_duration
+    _fix_monotonic(scenes, total_duration)
+    return scenes
+
+
+def _assign_proportional_timing(scene, all_scenes, total_duration, total_words):
+    """Gán timing theo tỷ lệ số từ (nội suy) khi text matching thất bại."""
+    words = len(scene.text_vi.split())
+    proportion = words / total_words if total_words > 0 else 1.0 / max(len(all_scenes), 1)
+    duration = total_duration * proportion
+    # Tìm end_time của cảnh trước
+    idx = next((i for i, s in enumerate(all_scenes) if s.scene_id == scene.scene_id), 0)
+    prev_end = 0.0
+    if idx > 0 and all_scenes[idx - 1].end_time > 0:
+        prev_end = all_scenes[idx - 1].end_time
+    scene.start_time = prev_end
+    scene.end_time = prev_end + duration
+    scene.duration_sec = duration

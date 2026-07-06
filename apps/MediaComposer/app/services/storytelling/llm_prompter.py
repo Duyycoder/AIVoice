@@ -5,7 +5,11 @@ from app.services.llm import get_llm_client
 from app.services.storytelling.models import Scene, StoryContext
 
 def _call_llm(messages: List[dict], max_tokens: int = 500) -> str:
-    client, model = get_llm_client()
+    try:
+        client, model = get_llm_client()
+    except Exception as e:
+        logger.error(f"LLM chưa sẵn sàng (kiểm tra API Key trong Global Settings): {e}")
+        return ""
     try:
         response = client.chat.completions.create(
             model=model,
@@ -20,7 +24,23 @@ def _call_llm(messages: List[dict], max_tokens: int = 500) -> str:
         return ""
 
 def _build_system_prompt(context: StoryContext) -> str:
-    char_list = [{"name": c.name, "description": c.description, "keywords": c.keywords_en} for c in context.characters]
+    # Clean portrait-inducing tags from character lists sent to LLM
+    char_list = []
+    for c in context.characters:
+        tags = [t.strip() for t in c.keywords_en.split(",") if t.strip()]
+        blacklist = {"upper body", "looking at viewer", "close up", "portrait", "headshot", "face focus", "bust shot", "solo focus"}
+        cleaned = [t for t in tags if t.lower() not in blacklist]
+        char_list.append({
+            "name": c.name,
+            "description": c.description,
+            "keywords": ", ".join(cleaned)
+        })
+    
+    model_tag = "Anything V5:1.1"
+    if context.checkpoint and "anything-v5" not in context.checkpoint.lower():
+        model_tag = context.checkpoint.split("/")[-1].replace("-", " ").title()
+        
+    style_prefix = f"(highly detailed background, cinematic lighting, {model_tag})"
     
     return f"""You are an expert prompt engineer for cinematic Stable Diffusion image generation.
 IMPORTANT: You are a TEXT-ONLY AI. DO NOT generate images. Your only job is to write a TEXT string (a prompt) that will be used by another system.
@@ -29,32 +49,62 @@ Given Vietnamese text from a novel scene, output a JSON object matching exactly 
 {{
   "image_prompt": "tag1, tag2, tag3",
   "characters": ["Name1", "Name2"],
-  "primary_character": "Name1"
+  "primary_character": "Name1",
+  "shot_type": "close|medium|wide"
 }}
+
+**SHOT TYPE RULES:**
+- "close": dialogue, strong emotion, facial reactions, 1 character focus → camera tags like "upper body, portrait"
+- "medium": 1-2 characters interacting, actions with hands/objects → "cowboy shot, medium shot"
+- "wide": landscapes, establishing shots, crowds, travel, battles → "wide shot, establishing shot"
+Pick the type that best serves THIS scene's storytelling. Roughly 30% close, 40% medium, 30% wide across a story.
 
 **CRITICAL SD PROMPT RULES:**
 1. **SIMPLE TAGS ONLY (ENGLISH):** The "image_prompt" MUST be strictly in ENGLISH. Use ONLY a simple, comma-separated list of keywords/tags (e.g., "mountain peak, cloudy sky, sunset"). NO full sentences, NO complex grammar.
 2. **ENVIRONMENT FIRST (CRITICAL):** Your PRIMARY focus is the background and environment. Start your tags by describing the scenery in high detail (e.g., "detailed background, majestic scenery, vast landscape, ancient temple, cinematic lighting, depth of field"). Characters are secondary elements placed within this environment. NEVER use "simple background" or "white background".
-3. **STYLE PREFIX:** Always start the prompt with: "(highly detailed background, cinematic lighting, Anything V5:1.1), "
-4. **CHARACTER HANDLING:** If a `primary_character` is in the scene, copy their `keywords` from the JSON below, but keep it brief. Add "solo" if there is only one character. DO NOT over-describe characters to the point it ruins the background. If the scene is purely a landscape or establishing shot, use "no humans, scenery". Must clearly describe male characters as not effeminate. But not muscular, unless it's in the character's original description. Minimize using the word 'young' to avoid sounding effeminate.
-5. **CAMERA & LIGHTING:** Use camera tags (e.g., "wide shot, extreme long shot, establishing shot, drone view") to show off the environment. Add lighting and atmosphere tags (e.g., "radiant light, misty atmosphere, dark ambiance, ray of tracing").
+3. **STYLE PREFIX:** Always start the prompt with: "{style_prefix}, "
+4. **CHARACTER HANDLING:** If characters appear in the scene:
+   a. In "characters"/"primary_character" fields use their EXACT NAME from the list below. But do NOT put names inside "image_prompt" (CLIP cannot read Vietnamese names — they waste tokens; identity is handled by IP-Adapter).
+   b. Copy their visual `keywords` from the list below into the image_prompt.
+   c. Add "solo" if only one character. Use "2girls" or "1boy 1girl" etc. for multiple.
+   d. If the scene is purely landscape/establishing shot, use "no humans, scenery".
+   e. Must clearly describe male characters as not effeminate. Minimize 'young'.
+   Example: "1boy, male focus, black robe, handsome, wide shot, ancient marketplace"
+5. **CAMERA & LIGHTING:** Add ONE camera tag and ONE lighting tag at the end (e.g., "wide shot, cinematic lighting").
 6. **ACTION & CONTINUITY:** Read the "Director's Note" to understand the visual context and ensure the environment matches the story's progression.
+7. **ACTION WEIGHTING (CRITICAL):** Wrap the main action/pose of the scene in attention weight syntax `(action tags:1.3)`, placed right after the style prefix. Every distinct physical detail (what a character HOLDS, WHERE they are, weather) gets its own weighted tag, e.g. "(kneeling before the altar:1.3), (holding a glowing sword:1.35)". Without weights the model ignores these details.
+8. **LENGTH:** Keep "image_prompt" UNDER 60 words. Prompts are encoded without truncation, but shorter prompts follow composition better. If trimming, cut camera/lighting first. NEVER cut character appearance keywords — they must appear within the FIRST 40 words.
 
 Known characters: {json.dumps(char_list, ensure_ascii=False)}
 Story genre: {context.genre}"""
 
-def _process_scene_with_retry(scene: Scene, system_prompt: str, retries: int = 1, director_note: str = "") -> bool:
+def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryContext, retries: int = 1, director_note: str = "") -> bool:
     if scene.image_prompt:
         return True # Already processed
         
     user_prompt = f"Scene text:\n{scene.text_vi}"
     if director_note:
         user_prompt += f"\n\nDirector's Note (Visual Context):\n{director_note}"
+    # Semantic scene metadata (Phase C) — attr động, mất sau resume nhưng chấp nhận được
+    if hasattr(scene, '_semantic_meta') and scene._semantic_meta:
+        meta = scene._semantic_meta
+        if meta.get('location'):
+            user_prompt += f"\nLocation: {meta['location']}"
+        if meta.get('action'):
+            user_prompt += f"\nAction: {meta['action']}"
+        if meta.get('time_of_day'):
+            user_prompt += f"\nTime of day: {meta['time_of_day']}"
         
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
     ]
+    
+    model_tag = "Anything V5:1.1"
+    if context.checkpoint and "anything-v5" not in context.checkpoint.lower():
+        model_tag = context.checkpoint.split("/")[-1].replace("-", " ").title()
+        
+    style_prefix = f"(highly detailed background, cinematic lighting, {model_tag})"
     
     for attempt in range(retries + 1):
         content = _call_llm(messages)
@@ -78,7 +128,6 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, retries: int = 1
                 continue
             raw_prompt = data.get("image_prompt", "").strip()
             if raw_prompt:
-                style_prefix = "(highly detailed background, cinematic lighting, Anything V5:1.1)"
                 old_style = "(flat color, minimalist anime, clean lineart, Anything V5:1.1)"
                 raw_prompt = raw_prompt.replace(old_style, "").strip(", ")
                 if not raw_prompt.startswith("(highly detailed background"):
@@ -90,13 +139,22 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, retries: int = 1
                 
             scene.characters_in_scene = data.get("characters", [])
             scene.primary_character = data.get("primary_character") or ""
+
+            # T5: cỡ cảnh — quyết định khung sinh ảnh (close=dọc mặt to)
+            raw_shot = str(data.get("shot_type", "")).strip().lower()
+            scene.shot_type = raw_shot if raw_shot in ("close", "medium", "wide") else "wide"
+
+            # SAFETY NET: prompt vượt 77 token đã có compel xử lý; chặn trần 75 từ
+            # để tránh LLM viết lan man làm loãng composition.
             if scene.image_prompt:
+                from app.services.storytelling.prompt_translator import PromptTranslator
+                scene.image_prompt = PromptTranslator._clamp_prompt_words(scene.image_prompt, max_words=75)
                 return True
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to decode JSON from LLM on attempt {attempt+1}. Content: {cleaned_content}")
             
     # Fallback if failed
-    scene.image_prompt = "(highly detailed background, cinematic lighting, Anything V5:1.1), scenery, majestic landscape, cinematic, depth of field"
+    scene.image_prompt = f"{style_prefix}, scenery, majestic landscape, cinematic, depth of field"
     return False
 
 def generate_storyboard_context(scenes: List[Scene]) -> dict:
@@ -164,7 +222,7 @@ def generate_prompts_batch(
             futures = []
             for scene in batch:
                 note = director_notes.get(str(scene.scene_id), "")
-                futures.append(executor.submit(_process_scene_with_retry, scene, system_prompt, 1, note))
+                futures.append(executor.submit(_process_scene_with_retry, scene, system_prompt, context, 1, note))
                 
             for future in as_completed(futures):
                 pass  # Wait for all to finish

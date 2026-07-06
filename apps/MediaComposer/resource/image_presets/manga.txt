@@ -1,0 +1,3 @@
+﻿(masterpiece, best quality:1.2), manga style, black and white, monochrome, screentone, ink drawing, comic book style, highly detailed lineart, dramatic manga shading
+---
+(worst quality, low quality:1.4), color, photorealistic, 3d render, painting, watercolor, realism

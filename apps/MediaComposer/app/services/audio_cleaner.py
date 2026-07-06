@@ -18,20 +18,24 @@ def isolate_vocals(input_audio_path: str, output_dir: str) -> str:
     logger.info(f"Starting audio cleaning (vocal isolation) for: {input_audio_path}")
     
     try:
+        import sys
         # Sử dụng mô hình htdemucs mặc định, chỉ cần tách 2 stems: vocals và phần còn lại
         cmd = [
-            "demucs",
+            sys.executable,
+            "-m", "demucs",
             "-n", "htdemucs",
             "--two-stems", "vocals",
+            "--jobs", "2",
             "-o", output_dir,
             input_audio_path
         ]
         
         logger.info(f"Running Demucs with command: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Không dùng capture_output để terminal (console) hiện thanh tiến trình (progress bar) của Demucs
+        result = subprocess.run(cmd)
         
         if result.returncode != 0:
-            logger.error(f"Demucs failed with error: {result.stderr}")
+            logger.error(f"Demucs failed with return code: {result.returncode}")
             return input_audio_path
             
         # File kết quả sẽ nằm trong thư mục <output_dir>/htdemucs/<tên_file_gốc_không_có_đuôi>/vocals.wav

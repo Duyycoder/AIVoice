@@ -178,7 +178,10 @@ def process_single_file(input_path: str, output_path: str, engine, args) -> dict
     
     # Pre-clean text for offline engines to normalize numbers and punctuation
     if args.engine in ["clone", "kokoro", "vieneu", "valtec"]:
-        cleaned_text = vietnamese_cleaners(cleaned_text)
+        if args.engine == "clone" and getattr(args, "voice", "en") != "vi":
+            pass
+        else:
+            cleaned_text = vietnamese_cleaners(cleaned_text)
         
     chunks = chunk_text(cleaned_text, max_words=getattr(args, "max_words", 50))
     

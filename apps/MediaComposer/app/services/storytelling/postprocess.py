@@ -33,7 +33,8 @@ def free_realesrgan_cache():
         pass
 
 class PostProcessor:
-    def __init__(self, device: str = "cuda", enable_upscaling: Optional[bool] = None, tile_size: int = 512):
+    def __init__(self, device: str = "cuda", enable_upscaling: Optional[bool] = None, tile_size: int = 256):
+        # tile_size=256: an toàn cho GPU 6GB VRAM khi upscale lên 4K (512 dễ OOM)
         self.device = device
         self.tile_size = tile_size
         self._realesrgan_model = None
@@ -104,7 +105,15 @@ class PostProcessor:
                 global _realesrgan_cache, _realesrgan_cache_key
                 cache_key = (weight_path, self.device, scale, self.tile_size)
                 if _realesrgan_cache is None or _realesrgan_cache_key != cache_key:
-                    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=4)
+                    if model_name == "realesr-animevideov3":
+                        from basicsr.archs.srvgg_arch import SRVGGNetCompact
+                        model = SRVGGNetCompact(num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=16, upscale=4, act_type='prelu')
+                    elif "anime_6B" in model_name:
+                        # Bản anime nhẹ: 6 block
+                        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=4)
+                    else:
+                        # RealESRGAN_x4plus (bản thường): 23 block — dùng num_block=6 sẽ load fail
+                        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
                     _realesrgan_cache = RealESRGANer(
                         scale=scale,
                         model_path=weight_path,

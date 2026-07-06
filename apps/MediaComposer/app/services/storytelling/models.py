@@ -15,6 +15,17 @@ class Scene:
     fallback_level: int     # 0=chưa refine, 1-4=đã thử cấp nào
     accepted_seed: int      # seed của ảnh được chọn
     frame_path: str         # đường dẫn ảnh đã chọn
+    # T5: LLM phân loại cỡ cảnh → chọn khung sinh ảnh (close=dọc mặt to, wide=16:9)
+    shot_type: str = "wide"  # close | medium | wide
+
+
+def scene_from_dict(d: dict) -> "Scene":
+    """Tái tạo Scene từ dict (state.json cũ/mới) — lọc key lạ, key thiếu dùng default.
+    Dùng thay cho Scene(**d) để tương thích state giữa các phiên bản."""
+    import dataclasses
+    valid = {f.name for f in dataclasses.fields(Scene)}
+    return Scene(**{k: v for k, v in d.items() if k in valid})
+
 
 @dataclass
 class Character:
@@ -23,6 +34,13 @@ class Character:
     description: str
     keywords_en: str
     has_embedding: bool
+    lora_status: str = "none"        # none | queued | training | trained | failed
+    lora_trained_at: str = ""        # ISO datetime khi train xong
+    instance_prompt: str = ""        # tag train LoRA; rỗng = tự sinh từ keywords_en
+    auto_collect: bool = True        # cho phép tự thu thập ảnh từ quá trình sinh
+    # T7: nguồn ảnh ref — "manual" (user upload) | "auto_bootstrap" (lấy từ ảnh
+    # đạt chuẩn đầu tiên trong batch; user có quyền thay lại sau)
+    ref_source: str = "manual"
 
 @dataclass
 class LearnedCorrections:
@@ -78,3 +96,32 @@ class StoryContext:
             return f"{base}, {removals}".strip(", ")
         except Exception:
             return ""
+
+@dataclass
+class ImageGenParams:
+    width: int = 896
+    height: int = 512
+    num_inference_steps: int = 25
+    guidance_scale: float = 7.0
+    seed: int = -1
+    ip_adapter_scale: float = 0.6
+    enable_face_detailer: bool = True  # tự động vẽ lại mặt sau khi sinh
+
+@dataclass
+class ImageGenTask:
+    task_id: int
+    original_description: str
+    processed_prompt: str
+    negative_prompt: str
+    character_slugs: List[str]
+    primary_character: str
+    style_preset: str
+
+@dataclass 
+class ImageGenResult:
+    task_id: int
+    image_path: str
+    seed: int
+    prompt_used: str
+    character_slugs: List[str]
+

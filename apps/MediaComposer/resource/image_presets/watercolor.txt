@@ -1,0 +1,3 @@
+﻿(masterpiece, best quality:1.2), watercolor painting, traditional media, soft watercolor style, brush strokes, washed out colors, delicate blending, artistic, paper texture
+---
+(worst quality, low quality:1.4), 3d, digital art, photorealistic, sharp edges, flat color, vector art, anime cel shading

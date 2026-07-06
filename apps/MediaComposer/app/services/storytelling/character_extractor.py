@@ -7,7 +7,11 @@ from app.services.llm import get_llm_client
 
 def call_llm(messages: List[dict], temperature: float = 0.4, max_tokens: int = 2500) -> str:
     """Helper to call the LLM and return text."""
-    client, model = get_llm_client()
+    try:
+        client, model = get_llm_client()
+    except Exception as e:
+        logger.error(f"LLM chưa sẵn sàng (kiểm tra API Key trong Global Settings): {e}")
+        return ""
     try:
         response = client.chat.completions.create(
             model=model,

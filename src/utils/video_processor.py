@@ -50,10 +50,10 @@ def extract_audio(input_video_path: str, output_audio_path: str) -> bool:
         output_audio_path
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"FFmpeg audio extraction error: {e.stderr.decode('utf-8') if e.stderr else 'Unknown error'}")
+        print(f"FFmpeg audio extraction error: {e}")
         return False
     except FileNotFoundError:
         print("Lỗi: Không tìm thấy ffmpeg trong hệ thống.")
@@ -70,7 +70,7 @@ def clean_audio_with_demucs(input_audio_path: str, output_audio_path: str, temp_
         input_audio_path
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True)
         # Demucs will output to temp_dir/htdemucs/temp_audio/vocals.wav
         base_name = os.path.splitext(os.path.basename(input_audio_path))[0]
         vocal_path = os.path.join(temp_dir, "htdemucs", base_name, "vocals.wav")
@@ -81,7 +81,7 @@ def clean_audio_with_demucs(input_audio_path: str, output_audio_path: str, temp_
             print(f"Demucs processing finished but {vocal_path} not found.")
             return False
     except subprocess.CalledProcessError as e:
-        print(f"Demucs error: {e.stderr.decode('utf-8') if e.stderr else 'Unknown error'}")
+        print(f"Demucs error: {e}")
         return False
 
 def extract_frames(input_video_path: str, output_frame_dir: str) -> bool:
@@ -89,21 +89,22 @@ def extract_frames(input_video_path: str, output_frame_dir: str) -> bool:
     os.makedirs(output_frame_dir, exist_ok=True)
     cmd = [
         get_ffmpeg_exe(), "-y",
+        "-hwaccel", "auto",
         "-i", input_video_path,
         "-qscale:v", "2",
         os.path.join(output_frame_dir, "frame_%06d.jpg")
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"FFmpeg frame extraction error: {e.stderr.decode('utf-8') if e.stderr else 'Unknown error'}")
+        print(f"FFmpeg frame extraction error: {e}")
         return False
     except FileNotFoundError:
         print("Lỗi: Không tìm thấy ffmpeg trong hệ thống.")
         return False
 
-def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str, use_realesrgan: bool = False, tile_size: int = 512, log_callback=None):
+def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str, model_name: str = "RealESRGAN_x4plus_anime_6B", tile_size: int = 512, log_callback=None):
     """
     Applies Real-ESRGAN upscale on all frames if use_realesrgan is True, otherwise simply copies them.
     Includes VRAM cleanup to prevent Out Of Memory errors.
@@ -113,13 +114,6 @@ def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str,
     frames = sorted(glob.glob(os.path.join(input_frame_dir, "*.jpg")))
     total_frames = len(frames)
     
-    if not use_realesrgan:
-        if log_callback:
-            log_callback("Upscale AI bị tắt. Đang sao chép trực tiếp khung hình...")
-        for frame in frames:
-            shutil.copy(frame, os.path.join(output_frame_dir, os.path.basename(frame)))
-        return
-
     try:
         if log_callback:
             log_callback(f"Bắt đầu tải mô hình Real-ESRGAN...")
@@ -144,7 +138,7 @@ def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str,
             img = Image.open(frame).convert("RGB")
             
             # Upscale 4x directly without constraining to default 1920x1080, preserving aspect ratio
-            upscaled_img = upscaler.run_realesrgan(img, scale=4, target_w=img.width * 4, target_h=img.height * 4)
+            upscaled_img = upscaler.run_realesrgan(img, scale=4, model_name=model_name, target_w=img.width * 4, target_h=img.height * 4)
             upscaled_img.save(os.path.join(output_frame_dir, os.path.basename(frame)), quality=95)
             
             if (i + 1) % 50 == 0 or (i + 1) == total_frames:
@@ -163,7 +157,7 @@ def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str,
         for frame in frames:
             shutil.copy(frame, os.path.join(output_frame_dir, os.path.basename(frame)))
 
-def merge_video_and_audio(input_frame_dir: str, audio_path: str, output_video_path: str, fps: str = "30", resolution: str = "Gốc") -> bool:
+def merge_video_and_audio(input_frame_dir: str, audio_path: str, output_video_path: str, fps: str = "30", resolution: str = "Gốc", direct_video_path: str = None, fast_sharpen: bool = False) -> bool:
     """Merges frames and audio into an MP4 using H.264 NVENC GPU acceleration."""
     # Build FFmpeg command to use NVIDIA GPU encoding
     if resolution == "720p (HD)":
@@ -176,16 +170,22 @@ def merge_video_and_audio(input_frame_dir: str, audio_path: str, output_video_pa
         box = "3840:2160"
     else:
         box = "4096:4096" # H.264 NVENC max limit
-        
-    vf_args = ["-vf", f"scale={box}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"]
+    if fast_sharpen:
+        vf_args = ["-vf", f"scale={box}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,cas=0.8"]
+    else:
+        vf_args = ["-vf", f"scale={box}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"]
 
-    cmd = [
-        get_ffmpeg_exe(), "-y",
-        "-framerate", str(fps),
-        "-i", os.path.join(input_frame_dir, "frame_%06d.jpg")
-    ]
+    if direct_video_path:
+        input_args = ["-i", direct_video_path]
+    else:
+        input_args = ["-framerate", str(fps), "-i", os.path.join(input_frame_dir, "frame_%06d.jpg")]
+        
+    cmd = [get_ffmpeg_exe(), "-y"] + input_args
     if audio_path:
         cmd.extend(["-i", audio_path])
+        cmd.extend(["-map", "0:v:0", "-map", "1:a:0"])
+    else:
+        cmd.extend(["-map", "0:v:0"])
         
     cmd.extend(vf_args)
         
@@ -199,19 +199,18 @@ def merge_video_and_audio(input_frame_dir: str, audio_path: str, output_video_pa
         output_video_path
     ])
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"FFmpeg NVENC muxing error: {e.stderr.decode('utf-8') if e.stderr else 'Unknown error'}")
+        print(f"FFmpeg NVENC muxing error: {e}")
         print("Falling back to CPU muxing (libx264)...")
         
-        cmd_fallback = [
-            get_ffmpeg_exe(), "-y",
-            "-framerate", str(fps),
-            "-i", os.path.join(input_frame_dir, "frame_%06d.jpg")
-        ]
+        cmd_fallback = [get_ffmpeg_exe(), "-y"] + input_args
         if audio_path:
             cmd_fallback.extend(["-i", audio_path])
+            cmd_fallback.extend(["-map", "0:v:0", "-map", "1:a:0"])
+        else:
+            cmd_fallback.extend(["-map", "0:v:0"])
             
         cmd_fallback.extend(vf_args)
             
@@ -224,13 +223,13 @@ def merge_video_and_audio(input_frame_dir: str, audio_path: str, output_video_pa
         ])
         
         try:
-            subprocess.run(cmd_fallback, check=True, capture_output=True)
+            subprocess.run(cmd_fallback, check=True)
             return True
         except subprocess.CalledProcessError as e2:
-             print(f"FFmpeg CPU muxing error: {e2.stderr.decode('utf-8') if e2.stderr else 'Unknown error'}")
+             print(f"FFmpeg CPU muxing error: {e2}")
              return False
 
-def process_animation_video(input_path: str, output_path: str, temp_dir: str, use_demucs: bool = False, use_realesrgan: bool = False, tile_size: int = 512, resolution: str = "Gốc", log_callback=None):
+def process_animation_video(input_path: str, output_path: str, temp_dir: str, use_demucs: bool = False, upscale_method: str = "Không", tile_size: int = 512, resolution: str = "Gốc", log_callback=None):
     """Main pipeline for the video sharpening workflow."""
     os.makedirs(temp_dir, exist_ok=True)
     
@@ -260,22 +259,46 @@ def process_animation_video(input_path: str, output_path: str, temp_dir: str, us
                 audio_temp_path = audio_clean_path
             else:
                 log("Lỗi khi chạy Demucs, sử dụng lại âm thanh gốc.")
+
+        if upscale_method in ["Chỉ phóng to (Nhanh nhất)", "Làm nét nhanh (FFmpeg CAS)"]:
+            fast_sharpen = (upscale_method == "Làm nét nhanh (FFmpeg CAS)")
+            if fast_sharpen:
+                log("Sử dụng thuật toán FFmpeg CAS để làm nét nhanh. Bỏ qua tách khung hình...")
+            else:
+                log("Chỉ Scale thông thường. Bỏ qua tách khung hình...")
+            log(f"Đang mã hóa và gộp video (H264 NVENC, FPS: {fps})...")
+            audio_to_merge = audio_temp_path if audio_temp_path and os.path.exists(audio_temp_path) else None
             
-        log("Đang tách khung hình...")
-        if not extract_frames(input_path, frames_original_dir):
-            raise Exception("Tách khung hình thất bại.")
+            success = merge_video_and_audio(
+                input_frame_dir=None, 
+                audio_path=audio_to_merge, 
+                output_video_path=output_path, 
+                fps=fps, 
+                resolution=resolution,
+                direct_video_path=input_path,
+                fast_sharpen=fast_sharpen
+            )
+        else:
+            log("Đang tách khung hình...")
+            if not extract_frames(input_path, frames_original_dir):
+                raise Exception("Tách khung hình thất bại.")
+                
+            model_name = "RealESRGAN_x4plus_anime_6B"
+            if "AnimeVideo-V3" in upscale_method:
+                model_name = "realesr-animevideov3"
+                
+            log(f"Bắt đầu quy trình AI Upscale với model {model_name}...")
+            apply_upscale_with_vram_cleanup(frames_original_dir, frames_upscaled_dir, model_name=model_name, tile_size=tile_size, log_callback=log)
             
-        log("Bắt đầu quy trình Upscale (Workflow 5 Trạm 3)...")
-        apply_upscale_with_vram_cleanup(frames_original_dir, frames_upscaled_dir, use_realesrgan=use_realesrgan, tile_size=tile_size, log_callback=log)
-        
-        log(f"Đang mã hóa và gộp video (H264 NVENC, FPS: {fps})...")
-        audio_to_merge = audio_temp_path if audio_temp_path and os.path.exists(audio_temp_path) else None
-        
-        if not merge_video_and_audio(frames_upscaled_dir, audio_to_merge, output_path, fps=fps, resolution=resolution):
+            log(f"Đang mã hóa và gộp video (H264 NVENC, FPS: {fps})...")
+            audio_to_merge = audio_temp_path if audio_temp_path and os.path.exists(audio_temp_path) else None
+            success = merge_video_and_audio(frames_upscaled_dir, audio_to_merge, output_path, fps, resolution)
+
+        if success:
+            log("Hoàn thành toàn bộ quy trình làm nét video.")
+            return True
+        else:
             raise Exception("Gộp video và âm thanh thất bại.")
-            
-        log("Hoàn thành toàn bộ quy trình làm nét video.")
-        return True
         
     except Exception as e:
         log(f"Lỗi trong quá trình xử lý video: {e}")

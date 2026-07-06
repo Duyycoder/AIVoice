@@ -280,24 +280,29 @@ def get_logs():
 
 @app.route('/api/voices')
 def list_voices():
-    """Dynamically fetches Vietnamese voices available in edge-tts."""
+    """Dynamically fetches Vietnamese and English voices available in edge-tts."""
     try:
         import edge_tts
         async def fetch():
             voices = await edge_tts.VoicesManager.create()
             vi_voices = voices.find(Language="vi")
-            return [{"ShortName": v["ShortName"], "Gender": v["Gender"]} for v in vi_voices]
+            en_voices = voices.find(Language="en")
+            combined = vi_voices + en_voices
+            return [{"ShortName": v["ShortName"], "Gender": v["Gender"]} for v in combined]
         
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        vi_voices = loop.run_until_complete(fetch())
+        all_voices = loop.run_until_complete(fetch())
         loop.close()
-        return jsonify({"voices": vi_voices})
+        return jsonify({"voices": all_voices})
     except Exception as e:
         # Fallback list if edge_tts query fails
         return jsonify({"voices": [
             {"ShortName": "vi-VN-NamMinhNeural", "Gender": "Male"},
-            {"ShortName": "vi-VN-HoaiMyNeural", "Gender": "Female"}
+            {"ShortName": "vi-VN-HoaiMyNeural", "Gender": "Female"},
+            {"ShortName": "en-US-AriaNeural", "Gender": "Female"},
+            {"ShortName": "en-US-GuyNeural", "Gender": "Male"},
+            {"ShortName": "en-GB-SoniaNeural", "Gender": "Female"}
         ]})
 
 @app.route('/api/models')

@@ -23,8 +23,8 @@ class Config:
         }
         self.storytelling = {
             "aspect_ratio": "16:9",
-            "image_width": 896,
-            "image_height": 512,
+            "image_width": 768,
+            "image_height": 432,
             "enable_upscaling": True,
             "upscaler_model": "RealESRGAN_x4plus_anime_6B",
             "output_width": 1920,
@@ -38,6 +38,21 @@ class Config:
             "num_inference_steps": 8,
             "guidance_scale": 1.5,
             "hardware_profile": "auto",
+            "image_gen_provider": "Stable Diffusion (Local GPU)",
+            # "clip": IP-Adapter Plus Face — truyền thẳng ảnh tham chiếu, hỗ trợ anime/manhwa (khuyên dùng)
+            # "faceid": IP-Adapter FaceID — chỉ hiệu quả với ảnh mặt người thật
+            "identity_engine": "clip",
+            # Face Detailer: tự động vẽ lại mặt sau khi sinh (chạy cả trong batch)
+            "enable_face_detailer": True,
+            "face_detailer_strength": 0.45,
+            # Số mặt tối đa vẽ lại mỗi ảnh (1 = chỉ mặt nhân vật chính — nhanh gấp đôi khi có poster/nhân vật phụ)
+            "face_detailer_max_faces": 1,
+            # Steps cho bước vẽ mặt (14 đủ đẹp với DPM++ ở strength 0.45; 22 chỉ nhỉnh hơn chút mà chậm +60%)
+            "face_detailer_steps": 14,
+            # Bỏ qua vẽ lại nếu mặt draft ĐÃ đủ giống nhân vật (CLIP sim >= ngưỡng) và đủ lớn
+            "face_detailer_skip_sim": 0.62,
+            # Mức độ giống nhân vật (IP-Adapter) — nguồn sự thật chung cho Studio + Batch
+            "ip_adapter_scale": 0.6,
         }
         self.proxy = None
         self.load_config()

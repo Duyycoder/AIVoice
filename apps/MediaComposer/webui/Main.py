@@ -121,7 +121,7 @@ if root_dir in sys.path:
     sys.path.remove(root_dir)
 sys.path.insert(0, root_dir)
 
-from app.config import config
+from app.config import config, load_storytelling_config
 from app.models.schema import VideoAspect, VideoConcatMode
 from app.services.composer import composer
 from app.utils import utils
@@ -1033,7 +1033,8 @@ with tab5:
             char_name = st.text_input("Tên nhân vật", value=def_name)
             char_desc = st.text_input("Mô tả ngoại hình (cho LLM)", value=def_desc)
             char_keywords = st.text_input("Keywords (cho SD)", value=def_kw)
-            ref_img = st.file_uploader("Upload ảnh chân dung (ghi đè ảnh cũ nếu có)", type=["png", "jpg", "jpeg"])
+            ref_imgs = st.file_uploader("Upload ảnh nhân vật (ảnh đầu = ref chính, tất cả vào dataset)",
+                                        type=["png", "jpg", "jpeg"], accept_multiple_files=True)
             
             col_save, col_del = st.columns([1, 1])
             with col_save:
@@ -1046,26 +1047,39 @@ with tab5:
                     st.error("Tên không được để trống!")
                 else:
                     ref_path = ""
-                    if ref_img:
+                    if ref_imgs:
                         ref_dir = os.path.join("storage", "contexts", selected_story, "temp")
                         os.makedirs(ref_dir, exist_ok=True)
-                        ref_path = os.path.join(ref_dir, ref_img.name)
+                        # Ảnh đầu = ref chính (giữ hành vi cũ)
+                        ref_path = os.path.join(ref_dir, ref_imgs[0].name)
                         with open(ref_path, "wb") as f:
-                            f.write(ref_img.getbuffer())
+                            f.write(ref_imgs[0].getbuffer())
                     
                     ctx_mgr.add_character(char_name, char_desc, char_keywords, ref_path)
                     
+                    import re as _re_slug
+                    _slug = _re_slug.sub(r'[^a-zA-Z0-9]+', '_', char_name.lower()).strip('_')
+
+                    # Lưu TẤT CẢ ảnh upload vào dataset dạng approved_*
+                    if ref_imgs:
+                        for uploaded_file in ref_imgs:
+                            try:
+                                from PIL import Image as PILImage
+                                import io
+                                _img = PILImage.open(io.BytesIO(uploaded_file.getbuffer())).convert("RGB")
+                                ctx_mgr.add_dataset_image(_slug, _img, "approved")
+                            except Exception as e_ds:
+                                logger.warning(f"Không thể thêm ảnh vào dataset: {e_ds}")
+
                     if ref_path:
                         try:
                             from app.services.storytelling.face_extractor import extract_and_save_face_embedding
                             from app.services.storytelling.hardware_adapter import get_hardware_config
-                            import re
-                            slug = re.sub(r'[^a-zA-Z0-9]+', '_', char_name.lower()).strip('_')
-                            emb_path = os.path.join(ctx_mgr.chars_dir, slug, "face.ipadpt")
+                            emb_path = os.path.join(ctx_mgr.chars_dir, _slug, "face.ipadpt.npy")
                             hw_config = get_hardware_config()
                             extract_and_save_face_embedding(ref_path, emb_path, device=hw_config["face_device"])
                             
-                            char = ctx_mgr.get_character(slug)
+                            char = ctx_mgr.get_character(_slug)
                             if char:
                                 char.has_embedding = True
                                 ctx_mgr.save_context()
@@ -1087,6 +1101,36 @@ with tab5:
                         st.rerun()
                     else:
                         st.error("Xóa thất bại!")
+
+        # --- Dataset info panel cho nhân vật đã chọn ---
+        if not is_new and selected_slug:
+            _ds_count = ctx_mgr.count_dataset_images(selected_slug)
+            _char_obj = ctx_mgr.get_character(selected_slug)
+            if _char_obj:
+                col_info1, col_info2, col_info3 = st.columns(3)
+                with col_info1:
+                    st.metric("📸 Ảnh Dataset", _ds_count)
+                with col_info2:
+                    _lora_badge = {"none": "⚪", "queued": "🟡", "training": "🔵",
+                                   "trained": "🟢", "failed": "🔴"}.get(_char_obj.lora_status, "⚪")
+                    st.metric("🧬 LoRA", f"{_lora_badge} {_char_obj.lora_status}")
+                    if getattr(_char_obj, "ref_source", "manual") == "auto_bootstrap":
+                        st.caption("🤖 Ảnh ref lấy TỰ ĐỘNG từ batch — upload ảnh mới ở form trên để thay nếu chưa ưng.")
+                with col_info3:
+                    _ac_val = st.checkbox("📥 Tự thu thập ảnh", value=_char_obj.auto_collect,
+                                          key=f"ac_{selected_slug}")
+                    if _ac_val != _char_obj.auto_collect:
+                        _char_obj.auto_collect = _ac_val
+                        ctx_mgr.save_context()
+                if st.button("🗑 Xoá ảnh auto", key=f"del_auto_{selected_slug}"):
+                    _ds_dir = ctx_mgr.get_dataset_dir(selected_slug)
+                    _del_count = 0
+                    for _f in os.listdir(_ds_dir):
+                        if _f.startswith("auto_") and _f.endswith(".png"):
+                            os.remove(os.path.join(_ds_dir, _f))
+                            _del_count += 1
+                    st.success(f"Đã xoá {_del_count} ảnh auto!")
+                    st.rerun()
 
         st.markdown("---")
         
@@ -1174,7 +1218,7 @@ with tab5:
                                             from app.services.storytelling.hardware_adapter import get_hardware_config
                                             import re
                                             slug = re.sub(r'[^a-zA-Z0-9]+', '_', name.lower()).strip('_')
-                                            emb_path = os.path.join(ctx_mgr.chars_dir, slug, "face.ipadpt")
+                                            emb_path = os.path.join(ctx_mgr.chars_dir, slug, "face.ipadpt.npy")
                                             hw_config = get_hardware_config()
                                             extract_and_save_face_embedding(ref_path, emb_path, device=hw_config["face_device"])
                                             
@@ -1260,10 +1304,83 @@ with tab5:
         st.info(f"💡 Hồ sơ phần cứng hoạt động: **{hw_config_active['profile_name']}** (SD Device: `{hw_config_active['sd_device']}`, CPU Offload: `{hw_config_active['enable_cpu_offload']}`, Face Device: `{hw_config_active['face_device']}`).")
         
         st.markdown("---")
+        st.subheader("🧠 BỘ SINH ẢNH & MÔ HÌNH")
+        
+        # Image Generator Provider selection
+        img_providers = ["Stable Diffusion (Local GPU)", "Local Gemini (API)"]
+        current_img_provider = config.storytelling.get("image_gen_provider", "Stable Diffusion (Local GPU)")
+        if current_img_provider not in img_providers:
+            current_img_provider = "Stable Diffusion (Local GPU)"
+            
+        selected_img_provider = st.selectbox(
+            "Bộ sinh ảnh (Image Generator Provider):",
+            img_providers,
+            index=img_providers.index(current_img_provider),
+            help="Stable Diffusion sẽ chạy mô hình local trên GPU của bạn. Local Gemini (API) sẽ sử dụng Gemini API local (Imagen 3) không tốn VRAM GPU."
+        )
+        
+        if selected_img_provider != current_img_provider:
+            config.storytelling["image_gen_provider"] = selected_img_provider
+            config.save_config()
+            st.success(f"Đã cập nhật bộ sinh ảnh thành: {selected_img_provider}!")
+            st.rerun()
+            
+        if selected_img_provider == "Stable Diffusion (Local GPU)":
+            sd_model_options = {
+                "Anything V5 (Anime chuyên dụng)": "stablediffusionapi/anything-v5",
+                "DreamShaper 8 (Đa năng nhất — Anime + Semi-realistic)": "lykon/dreamshaper-8",
+                "Realistic Vision 6 (Chân thực — Photorealistic)": "nyz3/Realistic_Vision_V6.0_B1_VAE",
+                "CyberRealistic (Chân thực + Ánh sáng mạnh)": "cyberdelia/CyberRealistic",
+            }
+            sd_model_labels = list(sd_model_options.keys())
+            sd_model_ids = list(sd_model_options.values())
+            
+            current_ckpt = ctx.checkpoint or "stablediffusionapi/anything-v5"
+            current_idx = sd_model_ids.index(current_ckpt) if current_ckpt in sd_model_ids else 0
+            
+            selected_sd_label = st.selectbox(
+                "Chọn mô hình Stable Diffusion:",
+                sd_model_labels,
+                index=current_idx,
+                help="DreamShaper 8 được khuyến nghị cho đa phong cách. Anything V5 chỉ mạnh Anime. Realistic Vision cho ảnh chân thực."
+            )
+            new_ckpt = sd_model_options[selected_sd_label]
+            
+            if new_ckpt != current_ckpt:
+                ctx.checkpoint = new_ckpt
+                ctx_mgr.save_context(ctx)
+                # Release old pipeline so the next warmup loads the new model
+                try:
+                    from app.services.storytelling.image_generator import StorytellingPipeline
+                    instance = StorytellingPipeline._instance
+                    if instance is not None:
+                        instance.release()
+                        StorytellingPipeline._instance = None
+                        instance._initialized = False
+                except Exception:
+                    pass
+                st.success(f"✅ Đã chuyển mô hình sang: **{selected_sd_label}**. Pipeline sẽ tự động tải mô hình mới khi sinh ảnh tiếp theo.")
+                st.rerun()
+            
+            # Hiển thị thông tin model đang dùng
+            model_short_name = selected_sd_label.split("(")[0].strip()
+            model_strengths = {
+                "Anything V5": "🎨 Anime 2D chuyên sâu — Nét vẽ sắc, màu rực. ⚠️ Thiên vị nữ, khó vẽ nam.",
+                "DreamShaper 8": "⭐ Đa năng nhất — Anime, Fantasy, Semi-realistic, Watercolor. Vẽ nam tốt.",
+                "Realistic Vision 6": "📷 Photorealistic — Ảnh như chụp thật. Vẽ người nam/nữ chân thực.",
+                "CyberRealistic": "🔥 Chân thực cực cao — Ánh sáng phức tạp, kết cấu da tuyệt vời.",
+            }
+            st.caption(f"🔧 Model hiện tại: **{model_short_name}** — {model_strengths.get(model_short_name, '')}")
+        else:
+            # Local Gemini (API) active
+            st.info("💡 Đang sử dụng **Local Gemini (API)**. Mô hình Imagen 3 (qua local API server) sẽ được gọi để sinh ảnh.")
+            st.caption("⚠️ Lưu ý: Chế độ này không hỗ trợ khuôn mặt IP-Adapter. API server local cần đang chạy ở cổng được cấu hình (Global Settings).")
+        
+        st.markdown("---")
         st.subheader("📁 DỮ LIỆU ĐẦU VÀO & THỰC THI PIPELINE")
         
         from app.services.storytelling.orchestrator import StorytellingOrchestrator
-        from app.services.storytelling.models import Scene
+        from app.services.storytelling.models import Scene, scene_from_dict
         orchestrator = StorytellingOrchestrator(ctx_mgr)
         current_state = orchestrator.load_state()
         
@@ -1272,7 +1389,10 @@ with tab5:
             [
                 "🛑 3 Trạm Tương Tác (Human-in-the-Loop Studio)", 
                 "⚡ Chạy Tự Động Toàn Bộ (Skip Checkpoints)",
-                "📦 Chạy Hàng Loạt (Batch Processing)"
+                "📦 Chạy Hàng Loạt (Batch Processing)",
+                "🖼️ Sinh 1 Ảnh (Single Image Generation)",
+                "🖼️📦 Sinh Ảnh Hàng Loạt (Batch Image Generation)",
+                "📦🎬 Sinh Video Hàng Loạt (Batch từ thư mục)"
             ],
             index=0,
             horizontal=True
@@ -1498,7 +1618,7 @@ with tab5:
                         for idx, row in edited_df.iterrows():
                             scenes_data[idx]["text_vi"] = row["Lời thoại (VI)"]
                             scenes_data[idx]["image_prompt"] = row["Prompt (EN)"]
-                        scenes_obj = [Scene(**s) for s in scenes_data]
+                        scenes_obj = [scene_from_dict(s) for s in scenes_data]
                         orchestrator.save_state("SCRIPT_READY", scenes_obj, current_state["task_dir"], current_state.get("audio_path", ""), current_state.get("srt_path", ""), current_state.get("md_path", ""))
                         st.success("Đã lưu chỉnh sửa kịch bản!")
                 with col_btn2:
@@ -1506,7 +1626,7 @@ with tab5:
                         for idx, row in edited_df.iterrows():
                             scenes_data[idx]["text_vi"] = row["Lời thoại (VI)"]
                             scenes_data[idx]["image_prompt"] = row["Prompt (EN)"]
-                        scenes_obj = [Scene(**s) for s in scenes_data]
+                        scenes_obj = [scene_from_dict(s) for s in scenes_data]
                         orchestrator.save_state("SCRIPT_READY", scenes_obj, current_state["task_dir"], current_state.get("audio_path", ""), current_state.get("srt_path", ""), current_state.get("md_path", ""))
                         
                         progress_text = st.empty()
@@ -1578,14 +1698,14 @@ with tab5:
                                     
                 st.markdown("---")
                 if st.button("▶ Xác Nhận Storyboard & Sang Trạm 3 (Render Final)", key="btn_to_st3", type="primary"):
-                    scenes_obj = [Scene(**s) for s in scenes_data]
+                    scenes_obj = [scene_from_dict(s) for s in scenes_data]
                     orchestrator.save_state("RENDER_READY", scenes_obj, current_state["task_dir"], current_state.get("audio_path", ""), current_state.get("srt_path", ""), current_state.get("md_path", ""))
                     st.rerun()
                     
             elif step_status in ["RENDER_READY", "DONE"]:
                 st.markdown("#### 🎬 Trạm 3 — Render Studio: Hậu Kỳ Upscale & Nhạc Nền")
                 scenes_data = current_state.get("scenes", [])
-                scenes_obj = [Scene(**s) for s in scenes_data]
+                scenes_obj = [scene_from_dict(s) for s in scenes_data]
                 
                 from app.services.model_downloader import ensure_models_ready
                 mod_status = ensure_models_ready(download_if_missing=False)
@@ -1638,6 +1758,396 @@ with tab5:
                         st.markdown("---")
                         st.subheader("📺 Video Hoàn Chỉnh Trước Đó:")
                         st.video(final_vid_check)
+
+        elif exec_mode.startswith("🖼️ Sinh 1 Ảnh"):
+            st.markdown("### 🖼️ Sinh 1 Ảnh (Single Image Generation)")
+            
+            from app.services.storytelling.image_gen_service import ImageGenOrchestrator
+            from app.services.storytelling.models import ImageGenParams
+            from app.services.storytelling.prompt_translator import PromptTranslator
+            
+            img_gen_orch = ImageGenOrchestrator(ctx_mgr)
+            
+            # --- TRẠM 1: Nhập Mô Tả ---
+            st.markdown("#### 🚩 Trạm 1: Nhập Mô Tả & Cấu Hình")
+            desc = st.text_area("📝 Mô tả hình ảnh", placeholder="VD: Dịch Phong đứng giữa phố đêm mưa, cầm ô...")
+            st.caption("💡 Ghi tên nhân vật đã có trong Context Window để hệ thống tự động áp dụng khuôn mặt.")
+            
+            is_vietnamese = st.checkbox("☑ Mô tả bằng tiếng Việt (LLM sẽ dịch sang prompt EN chuẩn)", value=True)
+            
+            presets = PromptTranslator.list_available_presets()
+            preset_options = ["Tự mô tả style (Không dùng preset)", "➕ Tạo Preset Mới bằng AI..."] + presets
+            selected_preset = st.selectbox("🎨 Style Preset", preset_options, index=2 if len(preset_options)>2 else 0)
+            
+            custom_style = ""
+            if selected_preset == "Tự mô tả style (Không dùng preset)":
+                custom_style = st.text_input("Tự mô tả style", placeholder="VD: Phong cách tranh sơn dầu cổ điển...")
+            elif selected_preset == "➕ Tạo Preset Mới bằng AI...":
+                st.info("AI sẽ tự động viết các tag chuẩn dựa trên mô tả của bạn và lưu thành 1 preset mới.")
+                new_style_desc = st.text_input("Mô tả style mong muốn")
+                new_preset_name = st.text_input("Tên preset (slug, viết liền không dấu, VD: cyberpunk_neon)")
+                if st.button("🤖 Tạo Preset bằng AI"):
+                    if new_style_desc and new_preset_name:
+                        with st.spinner("Đang gọi AI..."):
+                            success = img_gen_orch.translator.generate_custom_preset(new_style_desc, new_preset_name)
+                            if success:
+                                st.success(f"Đã tạo thành công preset: {new_preset_name}. Vui lòng reload lại trang!")
+                            else:
+                                st.error("Lỗi khi tạo preset.")
+            
+            with st.expander("⚙️ Tinh Chỉnh Nâng Cao"):
+                st.caption("💡 Di chuột vào dấu (?) cạnh mỗi thông số để xem giải thích chi tiết. "
+                           "Giá trị mặc định đọc từ config.toml — dùng chung với chế độ Batch.")
+                # T2: config.toml là NGUỒN SỰ THẬT duy nhất cho tham số sinh ảnh
+                _sg_cfg = load_storytelling_config()
+                aspect_ratio = st.selectbox(
+                    "Tỷ lệ ảnh (Aspect Ratio)",
+                    ["16:9 (Landscape)", "9:16 (Portrait)", "1:1 (Square)", "4:3 (Ngang Cổ Điển)", "3:4 (Dọc Cổ Điển)", "21:9 (Cinematic)"],
+                    index=0,
+                    help="Khung hình của ảnh sinh ra (trước khi upscale). Lưu ý: SD1.5 được train ở ~512px nên khung càng rộng/dài (VD 21:9) càng dễ bị lặp nhân vật hoặc méo bố cục. 16:9 và 1:1 là an toàn nhất."
+                )
+                # SD1.5 train ở ~512px: cạnh dài <=768 để tránh lặp nhân vật/méo bố cục.
+                # Độ phân giải cuối cùng do bước Upscale (Trạm 3) quyết định.
+                ratio_map = {
+                    "16:9 (Landscape)": (768, 432),
+                    "9:16 (Portrait)": (432, 768),
+                    "1:1 (Square)": (640, 640),
+                    "4:3 (Ngang Cổ Điển)": (704, 528),
+                    "3:4 (Dọc Cổ Điển)": (528, 704),
+                    "21:9 (Cinematic)": (768, 328)
+                }
+                img_w, img_h = ratio_map[aspect_ratio]
+
+                img_steps = st.slider(
+                    "Inference Steps", 1, 50, int(_sg_cfg.get("num_inference_steps", 8)),
+                    help="Số bước khử nhiễu — càng cao càng chi tiết nhưng càng chậm.\n\n• 1–14: tự động dùng chế độ NHANH (Hyper-SD LoRA) — hợp với 2/4/8 steps, nên để Guidance ≤ 1.5 (hoặc 5.0 với bản CFG-lora 8 steps).\n• 15–50: chế độ CHẤT LƯỢNG (DPM++ Karras) — 25 là điểm cân bằng tốt; trên 35 gần như không đẹp thêm."
+                )
+                img_guidance = st.slider(
+                    "Guidance Scale", 0.0, 20.0, float(_sg_cfg.get("guidance_scale", 5.0)), 0.5,
+                    help="Mức độ 'nghe lời' prompt (CFG).\n\n• ≤ 1.0: TẮT CFG — nhanh gấp đôi nhưng Negative Prompt bị BỎ QUA hoàn toàn (chỉ dùng với chế độ nhanh Hyper-SD).\n• 5–8: chuẩn cho chế độ chất lượng — bám prompt tốt, màu tự nhiên.\n• > 10: bám prompt quá gắt → màu cháy, tương phản gắt, ảnh 'nhựa'."
+                )
+                ip_scale = st.slider(
+                    "Mức độ giống nhân vật (IP-Adapter)", 0.0, 1.0, float(_sg_cfg.get("ip_adapter_scale", 0.6)), 0.05,
+                    help="Trọng số của ẢNH THAM CHIẾU nhân vật so với prompt.\n\n• 0: bỏ qua ảnh tham chiếu (chỉ dùng prompt).\n• 0.5–0.7: khuyên dùng — giữ nét mặt/kiểu tóc nhưng vẫn cho phép đổi pose, biểu cảm, bối cảnh.\n• > 0.8: rất giống ảnh gốc nhưng 'dính' luôn cả tư thế, góc mặt, trang phục của ảnh tham chiếu — bối cảnh và hành động trong prompt bị lấn át."
+                )
+                img_seed = st.number_input(
+                    "Seed (-1 = Random)", value=-1,
+                    help="Hạt giống ngẫu nhiên. Cùng seed + cùng prompt + cùng thông số = ra ĐÚNG ảnh đó lại (dùng để tái tạo ảnh ưng ý). Đặt -1 để mỗi lần sinh ra một biến thể mới."
+                )
+                sg_face_detail = st.checkbox(
+                    "🎭 Vẽ lại mặt tự động (Face Detailer)", value=bool(_sg_cfg.get("enable_face_detailer", True)), key="sg_fd",
+                    help="Tự phát hiện khuôn mặt trong ảnh → phóng lên 512px → vẽ lại bằng chính model + IP-Adapter identity → dán về vị trí cũ. Cứu mặt nhỏ/méo trong cảnh wide-shot. Tốn thêm ~2-4s mỗi mặt. Trong batch luôn chạy tự động theo cấu hình này."
+                )
+                if st.button("💾 Lưu làm mặc định (dùng chung cho Batch)", key="sg_save_cfg",
+                             help="Ghi Steps / Guidance / IP-Adapter / Face Detailer hiện tại vào config.toml — batch video và các phiên sau dùng đúng bộ tham số này."):
+                    config.storytelling["num_inference_steps"] = int(img_steps)
+                    config.storytelling["guidance_scale"] = float(img_guidance)
+                    config.storytelling["ip_adapter_scale"] = float(ip_scale)
+                    config.storytelling["enable_face_detailer"] = bool(sg_face_detail)
+                    config.save_config()
+                    st.success(f"✅ Đã lưu: steps={img_steps}, guidance={img_guidance}, ip={ip_scale}, detailer={'bật' if sg_face_detail else 'tắt'}")
+
+            gen_params = ImageGenParams(
+                width=img_w, height=img_h, num_inference_steps=img_steps,
+                guidance_scale=img_guidance, seed=img_seed, ip_adapter_scale=ip_scale,
+                enable_face_detailer=sg_face_detail
+            )
+            
+            if st.button("▶ Xử Lý Prompt & Sang Trạm 2"):
+                if desc:
+                    with st.spinner("Đang xử lý..."):
+                        final_preset = "" if selected_preset.startswith("Tự mô tả") or selected_preset.startswith("➕") else selected_preset
+                        tasks = img_gen_orch.step1_prepare_prompts([desc], final_preset, custom_style, is_vietnamese)
+                        st.session_state["single_img_tasks"] = tasks
+                else:
+                    st.warning("Vui lòng nhập mô tả!")
+                    
+            # --- TRẠM 2: Review & Sinh Ảnh ---
+            if "single_img_tasks" in st.session_state and st.session_state["single_img_tasks"]:
+                st.markdown("---")
+                st.markdown("#### 🚩 Trạm 2: Review Prompt & Sinh Ảnh")
+                task = st.session_state["single_img_tasks"][0]
+                
+                st.text_area("✅ Prompt EN", value=task.processed_prompt, height=100, disabled=True)
+                st.text_area("❌ Negative Prompt", value=task.negative_prompt, height=50, disabled=True)
+                
+                if task.character_slugs:
+                    st.success(f"👤 Nhân vật matched: {', '.join(task.character_slugs)} (Primary: {task.primary_character})")
+                else:
+                    st.info("👤 Không tìm thấy nhân vật nào. Sẽ tạo ảnh ngẫu nhiên.")
+                    
+                col_gen, col_reroll = st.columns(2)
+                with col_gen:
+                    if st.button("▶ Sinh Ảnh", type="primary"):
+                        with st.spinner("Đang sinh ảnh..."):
+                            results = img_gen_orch.step2_generate_images([task], gen_params)
+                            for _w in img_gen_orch.get_pipeline_warnings():
+                                st.warning(_w)
+                            if results:
+                                st.session_state["single_img_result"] = results[0]
+                            else:
+                                st.error("Sinh ảnh thất bại. Xem log terminal để biết chi tiết.")
+                with col_reroll:
+                    if st.button("🔄 Re-roll (Seed mới)"):
+                        if "single_img_result" in st.session_state:
+                            with st.spinner("Đang sinh lại..."):
+                                gen_params.seed = -1
+                                res = img_gen_orch.reroll_image(task, gen_params)
+                                if res:
+                                    st.session_state["single_img_result"] = res
+                                    
+                if "single_img_result" in st.session_state:
+                    res = st.session_state["single_img_result"]
+                    st.image(res.image_path, caption=f"Seed: {res.seed}")
+                    
+                    if st.button("✅ Chấp nhận & Sang Trạm 3"):
+                        # T6: thu thập dataset chuyển sang SAU upscale
+                        # (bên trong step3_upscale_export) — không lấy ảnh draft nữa.
+                        st.session_state["single_img_ready"] = True
+                        
+            # --- TRẠM 3: Upscale ---
+            if st.session_state.get("single_img_ready"):
+                st.markdown("---")
+                st.markdown("#### 🚩 Trạm 3: Upscale & Export")
+                
+                en_upscale = st.checkbox("☑ Bật AI Upscaler (RealESRGAN 4x)", value=True, key="sg_up")
+                target_q = st.radio("📐 Chất lượng đầu ra", ["1k", "2k", "4k"], index=1, horizontal=True)
+                
+                output_dir = st.session_state.get("output_folder", "storage/generated_images")
+                st.info(f"📁 Output: {output_dir}")
+                
+                if st.button("🎬 Export Ảnh Final", type="primary"):
+                    with st.spinner("Đang Upscale và Export..."):
+                        final_paths = img_gen_orch.step3_upscale_export(
+                            [st.session_state["single_img_result"]], 
+                            enable_upscale=en_upscale, target_quality=target_q, output_dir=output_dir
+                        )
+                        if final_paths:
+                            st.success(f"✅ Đã lưu: {final_paths[0]}")
+                            st.image(final_paths[0])
+                            
+        elif exec_mode.startswith("🖼️📦 Sinh Ảnh Hàng Loạt"):
+            st.markdown("### 🖼️📦 Sinh Ảnh Hàng Loạt (Batch Image Generation)")
+            from app.services.storytelling.image_gen_service import ImageGenOrchestrator
+            from app.services.storytelling.models import ImageGenParams
+            from app.services.storytelling.prompt_translator import PromptTranslator
+            img_gen_orch = ImageGenOrchestrator(ctx_mgr)
+            
+            # --- TRẠM 1: Nhập Mô Tả ---
+            st.markdown("#### 🚩 Trạm 1: Nhập Danh Sách Mô Tả")
+            batch_desc = st.text_area("📝 Mỗi mô tả cách nhau bằng 1 HÀNG TRỐNG", height=300, 
+                                    placeholder="Dịch Phong uống trà...\n\nLạc Lan Tuyết cầm kiếm...")
+            is_vietnamese = st.checkbox("☑ Mô tả bằng tiếng Việt", value=True, key="bat_vi")
+            
+            presets = PromptTranslator.list_available_presets()
+            selected_preset = st.selectbox("🎨 Style Preset (áp dụng cho tất cả)", ["Tự mô tả style"] + presets, index=1 if len(presets)>0 else 0)
+            custom_style = ""
+            if selected_preset == "Tự mô tả style":
+                custom_style = st.text_input("Tự mô tả style", key="bat_cs")
+                
+            with st.expander("⚙️ Tinh Chỉnh Chung"):
+                aspect_ratio = st.selectbox(
+                    "Tỷ lệ ảnh (Aspect Ratio)",
+                    ["16:9 (Landscape)", "9:16 (Portrait)", "1:1 (Square)", "4:3 (Ngang Cổ Điển)", "3:4 (Dọc Cổ Điển)", "21:9 (Cinematic)"],
+                    index=0, key="b_aspect"
+                )
+                # SD1.5 train ở ~512px: cạnh dài <=768 để tránh lặp nhân vật/méo bố cục.
+                # Độ phân giải cuối cùng do bước Upscale (Trạm 3) quyết định.
+                ratio_map = {
+                    "16:9 (Landscape)": (768, 432),
+                    "9:16 (Portrait)": (432, 768),
+                    "1:1 (Square)": (640, 640),
+                    "4:3 (Ngang Cổ Điển)": (704, 528),
+                    "3:4 (Dọc Cổ Điển)": (528, 704),
+                    "21:9 (Cinematic)": (768, 328)
+                }
+                img_w, img_h = ratio_map[aspect_ratio]
+                
+                # T2: default đọc từ config.toml — cùng nguồn sự thật với chế độ sinh đơn & batch video
+                _bat_cfg = load_storytelling_config()
+                img_steps = st.slider(
+                    "Inference Steps", 1, 50, int(_bat_cfg.get("num_inference_steps", 8)), key="bs",
+                    help="Số bước khử nhiễu — càng cao càng chi tiết nhưng càng chậm.\n\n• 1–14: chế độ NHANH (Hyper-SD LoRA) — nên để Guidance ≤ 1.5 (hoặc 5.0 với bản CFG-lora 8 steps).\n• 15–50: chế độ CHẤT LƯỢNG (DPM++ Karras) — 25 là điểm cân bằng; với batch lớn, giảm steps là cách tiết kiệm thời gian rõ nhất."
+                )
+                img_guidance = st.slider(
+                    "Guidance Scale", 0.0, 20.0, float(_bat_cfg.get("guidance_scale", 5.0)), 0.5, key="bg",
+                    help="Mức độ 'nghe lời' prompt (CFG).\n\n• ≤ 1.0: TẮT CFG — nhanh gấp đôi nhưng Negative Prompt bị BỎ QUA (chỉ dùng với chế độ nhanh).\n• 5–8: chuẩn cho chế độ chất lượng.\n• > 10: màu cháy, tương phản gắt."
+                )
+                ip_scale = st.slider(
+                    "Mức độ giống nhân vật (IP-Adapter)", 0.0, 1.0, float(_bat_cfg.get("ip_adapter_scale", 0.6)), 0.05, key="bip",
+                    help="Trọng số của ẢNH THAM CHIẾU nhân vật so với prompt (áp dụng cho mọi ảnh trong batch).\n\n• 0.5–0.7: khuyên dùng — giữ nét mặt nhưng vẫn đổi được pose/bối cảnh theo từng mô tả.\n• > 0.8: các ảnh trong batch sẽ na ná ảnh tham chiếu, mất đa dạng cảnh."
+                )
+
+                bat_face_detail = st.checkbox(
+                    "🎭 Vẽ lại mặt tự động (Face Detailer)", value=bool(_bat_cfg.get("enable_face_detailer", True)), key="bat_fd",
+                    help="Tự phát hiện mặt → vẽ lại 512px với identity → dán về. Cứu mặt nhỏ/méo trong wide-shot. Thêm ~2-4s mỗi mặt, chạy hoàn toàn tự động cho cả batch."
+                )
+                if st.button("💾 Lưu làm mặc định (dùng chung mọi chế độ)", key="bat_save_cfg"):
+                    config.storytelling["num_inference_steps"] = int(img_steps)
+                    config.storytelling["guidance_scale"] = float(img_guidance)
+                    config.storytelling["ip_adapter_scale"] = float(ip_scale)
+                    config.storytelling["enable_face_detailer"] = bool(bat_face_detail)
+                    config.save_config()
+                    st.success(f"✅ Đã lưu: steps={img_steps}, guidance={img_guidance}, ip={ip_scale}, detailer={'bật' if bat_face_detail else 'tắt'}")
+
+            gen_params = ImageGenParams(width=img_w, height=img_h, num_inference_steps=img_steps, guidance_scale=img_guidance, seed=-1, ip_adapter_scale=ip_scale, enable_face_detailer=bat_face_detail)
+
+            batch_folder = st.text_input("📁 Tên thư mục output (bên trong Global Output)", value="batch_images_01")
+            
+            if st.button("▶ Xử Lý Tất Cả → Sang Trạm 2"):
+                raw_list = [d.strip() for d in batch_desc.split("\n\n") if d.strip()]
+                if raw_list:
+                    if len(raw_list) > 50:
+                        st.warning(f"Lượng mô tả lớn ({len(raw_list)}). Có thể mất nhiều thời gian!")
+                    with st.spinner(f"Đang xử lý {len(raw_list)} mô tả..."):
+                        final_preset = "" if selected_preset == "Tự mô tả style" else selected_preset
+                        tasks = img_gen_orch.step1_prepare_prompts(raw_list, final_preset, custom_style, is_vietnamese)
+                        st.session_state["batch_img_tasks"] = tasks
+                else:
+                    st.warning("Vui lòng nhập mô tả!")
+                    
+            # --- TRẠM 2: Sinh Ảnh Hàng Loạt ---
+            if "batch_img_tasks" in st.session_state and st.session_state["batch_img_tasks"]:
+                tasks = st.session_state["batch_img_tasks"]
+                st.markdown("---")
+                st.markdown(f"#### 🚩 Trạm 2: Sinh {len(tasks)} Ảnh")
+                
+                # Preview bảng
+                st.write("📋 **Preview danh sách task:**")
+                preview_data = [{"ID": t.task_id, "Gốc": t.original_description[:50]+"...", "Prompt": t.processed_prompt[:50]+"...", "Nhân vật": ",".join(t.character_slugs)} for t in tasks]
+                st.table(preview_data)
+                
+                if st.button("▶ Sinh Tất Cả Ảnh", type="primary"):
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                    def update_ui(curr, tot):
+                        progress_text.text(f"Đang sinh ảnh {curr}/{tot}...")
+                        progress_bar.progress(curr / max(tot, 1))
+                        
+                    results = img_gen_orch.step2_generate_images(tasks, gen_params, progress_callback=update_ui)
+                    for _w in img_gen_orch.get_pipeline_warnings():
+                        st.warning(_w)
+                    if len(results) < len(tasks):
+                        st.error(f"⚠️ Chỉ sinh thành công {len(results)}/{len(tasks)} ảnh. Xem log terminal để biết chi tiết.")
+                    st.session_state["batch_img_results"] = results
+                    
+                if "batch_img_results" in st.session_state:
+                    st.success("✅ Đã sinh xong toàn bộ ảnh!")
+                    # Show grid
+                    results = st.session_state["batch_img_results"]
+                    cols = st.columns(3)
+                    for idx, res in enumerate(results):
+                        with cols[idx % 3]:
+                            st.image(res.image_path, caption=f"ID: {res.task_id} | Seed: {res.seed}")
+                            
+                    if st.button("✅ Chấp nhận tất cả & Sang Trạm 3"):
+                        # T6: thu thập dataset chuyển sang SAU upscale
+                        # (bên trong step3_upscale_export) — không lấy ảnh draft nữa.
+                        st.session_state["batch_img_ready"] = True
+                        
+            # --- TRẠM 3: Upscale ---
+            if st.session_state.get("batch_img_ready") and "batch_img_results" in st.session_state:
+                st.markdown("---")
+                st.markdown("#### 🚩 Trạm 3: Upscale & Export Hàng Loạt")
+                
+                en_upscale = st.checkbox("☑ Bật AI Upscaler", value=True, key="b_up")
+                target_q = st.radio("📐 Chất lượng đầu ra", ["1k", "2k", "4k"], index=1, horizontal=True, key="bq")
+                
+                output_dir = st.session_state.get("output_folder", "storage/generated_images")
+                
+                if st.button("🎬 Export Tất Cả", type="primary"):
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                    def update_ui2(curr, tot):
+                        progress_text.text(f"Đang upscale và export {curr}/{tot}...")
+                        progress_bar.progress(curr / max(tot, 1))
+                        
+                    final_paths = img_gen_orch.step3_upscale_export(
+                        st.session_state["batch_img_results"], 
+                        enable_upscale=en_upscale, target_quality=target_q, 
+                        output_dir=output_dir, batch_folder_name=batch_folder,
+                        progress_callback=update_ui2
+                    )
+                    st.success(f"✅ Đã export {len(final_paths)} ảnh vào {os.path.join(output_dir, batch_folder)}")
+
+        elif exec_mode.startswith("📦🎬"):
+            st.markdown("### 📦🎬 Sinh Video Hàng Loạt (Batch từ thư mục)")
+            st.caption("Bỏ N cặp (md + audio [+ srt]) vào 1 thư mục → nhận N video.")
+
+            batch_dir = st.text_input(
+                "📁 Thư mục batch",
+                value="F:\\Du_An_Truyen_Chu\\Nguoi_Tren_Van_Nguoi\\Audio",
+                key="bv_batch_dir"
+            )
+            output_dir = st.text_input(
+                "💾 Thư mục output",
+                value="F:\\Output\\batch_videos",
+                key="bv_output_dir"
+            )
+
+            col_opt1, col_opt2, col_opt3 = st.columns(3)
+            with col_opt1:
+                bv_semantic = st.checkbox("🧠 Tách cảnh thông minh (LLM)", value=True, key="bv_sem")
+            with col_opt2:
+                bv_whisper = st.checkbox("🎵 Tự sinh SRT (Whisper)", value=True, key="bv_wh")
+            with col_opt3:
+                bv_upscale = st.checkbox("🔍 Upscale ảnh", value=True, key="bv_up")
+
+            if batch_dir and os.path.isdir(batch_dir):
+                from app.services.storytelling.batch_video_runner import scan_batch_dir
+                bv_items = scan_batch_dir(batch_dir)
+
+                if bv_items:
+                    st.markdown(f"**Tìm thấy {len(bv_items)} item:**")
+                    st.table([{
+                        "Stem": it.stem,
+                        "MD": os.path.basename(it.md_path),
+                        "Audio": os.path.basename(it.audio_path),
+                        "SRT": os.path.basename(it.srt_path) if it.srt_path else "—"
+                    } for it in bv_items])
+
+                    if st.button("▶ Chạy Batch Video", type="primary", key="bv_run"):
+                        from app.services.storytelling.batch_video_runner import run_batch
+
+                        bv_progress = st.empty()
+                        bv_bar = st.progress(0)
+                        _bv_stop = False
+
+                        def bv_progress_cb(msg, pct):
+                            bv_progress.text(msg)
+                            bv_bar.progress(min(pct / 100.0, 1.0))
+
+                        st.warning("⚠️ Batch đang chạy. KHÔNG đóng tab hoặc thao tác UI.")
+
+                        bv_report = run_batch(
+                            ctx_mgr=ctx_mgr,
+                            items=bv_items,
+                            output_dir=output_dir,
+                            options={
+                                "use_semantic_split": bv_semantic,
+                                "use_whisper": bv_whisper,
+                                "enable_upscale": bv_upscale,
+                            },
+                            progress_cb=bv_progress_cb,
+                            stop_flag=lambda: _bv_stop,
+                        )
+
+                        # Hiển báo cáo
+                        st.markdown("### 📊 Báo cáo Batch")
+                        for rpt in bv_report.items:
+                            status_icon = "✅" if rpt["status"] == "video_done" else "❌"
+                            st.write(
+                                f"{status_icon} **{rpt['stem']}** — "
+                                f"{rpt['status']} ({rpt.get('time_seconds', 0):.0f}s)"
+                            )
+                            if rpt.get("error"):
+                                st.error(f"  Lỗi: {rpt['error']}")
+                        st.success(f"Đã xong! Output: {output_dir}")
+                else:
+                    st.warning("⚠️ Không tìm thấy cặp md+audio nào trong thư mục.")
+            elif batch_dir:
+                st.error("Thư mục không tồn tại!")
+
 
 with tab2:
     st.header("Workflow 2: Auto Fetch")
@@ -2277,7 +2787,18 @@ with tab6:
         key="upscale_resolution"
     )
     
-    use_realesrgan = st.checkbox("✨ Bật AI Real-ESRGAN (Làm nét xuất sắc từng khung hình, Tốn thời gian xử lý & VRAM)", value=False, key="upscale_use_realesrgan")
+    upscale_method = st.selectbox(
+        "Phương pháp Làm nét", 
+        [
+            "Chỉ phóng to (Nhanh nhất)", 
+            "Làm nét nhanh (FFmpeg CAS)", 
+            "AI Siêu nhẹ (AnimeVideo-V3 - Mượt & Nhanh)", 
+            "AI Cao cấp (Real-ESRGAN - Nét căng & Rất chậm)"
+        ],
+        index=2,
+        key="upscale_method"
+    )
+    use_realesrgan = ("AI" in upscale_method)
     
     # Lựa chọn Tile Size cho VRAM
     tile_size = 512
@@ -2338,7 +2859,7 @@ with tab6:
                         output_path=out_path,
                         temp_dir=task_dir_upscale,
                         use_demucs=use_demucs,
-                        use_realesrgan=use_realesrgan,
+                        upscale_method=upscale_method,
                         tile_size=tile_size,
                         resolution=upscale_resolution,
                         log_callback=logger.info
@@ -2395,5 +2916,6 @@ with tab6:
                         mime="video/mp4",
                         key="dl_upscaled_video_immediate"
                     )
+
 
 

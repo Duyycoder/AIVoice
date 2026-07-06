@@ -22,9 +22,11 @@ if not exist "%TEMP_DIR%" (
 set "TEMP=%TEMP_DIR%"
 set "TMP=%TEMP_DIR%"
 
-set DOWNLOAD_MC_MODELS=0
-if /i "%~1"=="--download-models" set DOWNLOAD_MC_MODELS=1
-if /i "%~2"=="--download-models" set DOWNLOAD_MC_MODELS=1
+rem Mac dinh TAI model MediaComposer luon (idempotent - file da co thi bo qua)
+rem de "pull ve + chay setup = dung duoc ngay". Dung --skip-models de bo qua.
+set DOWNLOAD_MC_MODELS=1
+if /i "%~1"=="--skip-models" set DOWNLOAD_MC_MODELS=0
+if /i "%~2"=="--skip-models" set DOWNLOAD_MC_MODELS=0
 
 echo ======================================================================
 echo          AIVoice Auto-Setup Tool for Windows (Python 3.11)
@@ -211,17 +213,49 @@ echo.
 echo ----------------------------------------------------------------------
 echo [INFO] Dang kiem tra phan cung GPU de toi uu hoa cai dat...
 echo ----------------------------------------------------------------------
-set IS_RTX_50=0
+rem Tu dong chon index PyTorch theo GPU:
+rem   - RTX 50-Series (Blackwell sm_120): BAT BUOC cu128
+rem   - GPU NVIDIA khac (RTX 20/30/40):   cu124
+rem   - Khong co GPU NVIDIA:              bo qua, requirements.txt cai ban mac dinh
+set TORCH_INDEX=
 powershell -Command "if ((Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name) -match 'RTX 50') { exit 0 } else { exit 1 }" >nul 2>&1
 if !errorlevel! equ 0 (
-    set IS_RTX_50=1
-    echo [INFO] Phat hien GPU dong RTX 50-Series Blackwell tren may tinh nay.
-    echo [INFO] Bat dau tai va cai dat truoc PyTorch phien ban CUDA 12.8 cu128...
-    .venv\Scripts\python.exe -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-    if !errorlevel! neq 0 (
-        echo [WARNING] Cai dat PyTorch CUDA 12.8 that bai. He thong se thu cai dat phien ban mac dinh.
+    set TORCH_INDEX=cu128
+    echo [INFO] Phat hien GPU RTX 50-Series Blackwell - can PyTorch CUDA 12.8.
+) else (
+    powershell -Command "if ((Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name) -match 'NVIDIA') { exit 0 } else { exit 1 }" >nul 2>&1
+    if !errorlevel! equ 0 (
+        set TORCH_INDEX=cu124
+        echo [INFO] Phat hien GPU NVIDIA - can PyTorch CUDA 12.4.
     ) else (
-        echo [INFO] Cai dat PyTorch CUDA 12.8 thanh cong!
+        echo [INFO] Khong phat hien GPU NVIDIA - dung PyTorch CPU mac dinh.
+    )
+)
+
+if not "!TORCH_INDEX!"=="" (
+    rem Kiem tra torch hien tai da dung ban CUDA chua; sai ban thi go va cai lai dong bo ca 3 goi
+    .venv\Scripts\python.exe -c "import torch,sys; sys.exit(0 if '!TORCH_INDEX!' in torch.__version__ else 1)" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [INFO] Cai dat PyTorch !TORCH_INDEX! - torch/torchvision/torchaudio dong bo...
+        .venv\Scripts\python.exe -m pip uninstall -y torch torchvision torchaudio >nul 2>&1
+        .venv\Scripts\python.exe -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
+        if !errorlevel! neq 0 (
+            echo [WARNING] Cai dat PyTorch !TORCH_INDEX! that bai. He thong se thu cai ban mac dinh tu requirements.
+        ) else (
+            echo [INFO] Cai dat PyTorch !TORCH_INDEX! thanh cong!
+        )
+    ) else (
+        echo [INFO] PyTorch !TORCH_INDEX! da dung phien ban - bo qua buoc cai lai.
+    )
+)
+
+rem RTX 50-Series: onnxruntime-gpu phai >= 1.22 moi co kernel Blackwell sm_120
+rem (ban 1.20.x se khien InsightFace fallback ve CPU voi warning)
+if "!TORCH_INDEX!"=="cu128" (
+    echo [INFO] RTX 50-Series: nang cap onnxruntime-gpu ^>= 1.22 cho kernel Blackwell...
+    .venv\Scripts\python.exe -m pip install --default-timeout=1000 "onnxruntime-gpu>=1.22"
+    if !errorlevel! neq 0 (
+        echo [WARNING] Nang cap onnxruntime-gpu that bai - InsightFace se chay CPU (khong anh huong engine CLIP mac dinh).
     )
 )
 
@@ -236,6 +270,18 @@ if !errorlevel! neq 0 (
     exit /b 1
 )
 echo [INFO] Cai dat thu vien thanh cong.
+echo.
+
+:: 5a2. Patch basicsr 1.4.2 tuong thich torchvision moi
+::      (torchvision >=0.17 da xoa module functional_tensor -> basicsr import loi,
+::       khien RealESRGAN am tham fallback ve PIL resize, giam chat luong upscale)
+echo ----------------------------------------------------------------------
+echo [INFO] Dang patch basicsr tuong thich torchvision moi...
+echo ----------------------------------------------------------------------
+.venv\Scripts\python.exe -c "import os,io; p=os.path.join('.venv','Lib','site-packages','basicsr','data','degradations.py'); s=io.open(p,encoding='utf-8').read(); n=s.replace('from torchvision.transforms.functional_tensor import rgb_to_grayscale','from torchvision.transforms.functional import rgb_to_grayscale'); io.open(p,'w',encoding='utf-8').write(n); print('[INFO] basicsr da duoc patch.' if n!=s else '[INFO] basicsr da patch san - bo qua.')"
+if !errorlevel! neq 0 (
+    echo [WARNING] Patch basicsr that bai - RealESRGAN co the khong hoat dong.
+)
 echo.
 
 :: 5b. Install rvc-python separately with --no-deps
@@ -343,10 +389,13 @@ echo [INFO] Kiem tra va tai mo hinh AI Storytelling (RealESRGAN, IP-Adapter)...
 echo ----------------------------------------------------------------------
 if !DOWNLOAD_MC_MODELS! equ 1 (
     .venv\Scripts\python.exe apps\MediaComposer\app\services\model_downloader.py --download
+    if !errorlevel! neq 0 (
+        echo [WARNING] Mot so model tai that bai - ung dung se tu dong tai lai khi can (can mang).
+    )
 ) else (
     .venv\Scripts\python.exe apps\MediaComposer\app\services\model_downloader.py --check-only
     if !errorlevel! neq 0 (
-        echo [WARNING] Mot so model Storytelling chua co. Chay setup.bat --download-models de tai ve ngay, hoac ung dung se tu dong tai khi can.
+        echo [WARNING] Mot so model Storytelling chua co - ung dung se tu dong tai khi can.
     )
 )
 echo.
