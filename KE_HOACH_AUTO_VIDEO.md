@@ -36,6 +36,47 @@
 
 ---
 
+## PHASE M — HỢP NHẤT 3 CHẾ ĐỘ TỰ ĐỘNG THÀNH MỘT (lập 06/07/2026, CHƯA code)
+
+### Hiện trạng: 3 chế độ chồng chéo trong Tab 5
+
+| Chế độ | Luồng | Ưu điểm | Nhược điểm |
+|---|---|---|---|
+| ⚡ Chạy Tự Động Toàn Bộ | Upload 1 md + 1 audio (+srt) → `orchestrator.run_pipeline()` (luồng CŨ) | Tách cảnh dày (~5s/cảnh, md_parser), timing Whisper chuẩn → video nhiều phân cảnh, ổn định | 1 truyện/lần, không resume, không report, không semantic |
+| 📦 Chạy Hàng Loạt (cũ) | Quét thư mục input, ghép cặp theo tên → luồng cũ | Nhiều truyện | Không state/resume/report, trùng chức năng |
+| 📦🎬 Sinh Video Hàng Loạt (mới) | `batch_video_runner` + semantic split + pre-flight LoRA | Resume, BatchReport, bootstrap ref, shot-type | Tách cảnh ĐANG LỖI (xem M1) → video 2 cảnh |
+
+### M1 — Vá nền tảng timing/duration (nguyên nhân semantic chỉ ra 2 cảnh) 🔴
+Chuỗi lỗi từ log 06/07 12:48: pydub không tìm thấy ffmpeg → đọc duration audio fail → fallback **60s âm thầm** → semantic chia 8-15s/cảnh trên 60s → sau merge còn 2 cảnh; đồng thời nhánh semantic **không gọi Whisper** khi thiếu SRT (lỗ hổng #5 đã cảnh báo khi review plan cũ) → timing chia đều theo từ.
+1. Trỏ pydub dùng ffmpeg của `imageio-ffmpeg` (đã có sẵn trong dự án): `AudioSegment.converter = imageio_ffmpeg.get_ffmpeg_exe()` tại điểm khởi động; với .wav đọc bằng module `wave` trước (không cần ffmpeg).
+2. CẤM fallback 60s âm thầm: đọc duration fail → raise lỗi rõ ràng, item đó `failed` trong BatchReport với thông báo dễ hiểu.
+3. (CHỐT 06/07 với chủ dự án) KHÔNG dùng Whisper: có SRT → dùng timing SRT; không có → TỰ TẠO SRT TỪ KỊCH BẢN (audio đọc nguyên văn kịch bản): text = kịch bản đã cắt, timing tỷ lệ số từ trên thời lượng thật (vá ở mục 1-2). Cải tiến nhỏ so với nhánh No-Whisper hiện có: chia block SRT theo CÂU (không phải theo cảnh — cảnh 15s làm 1 block phụ đề là quá dài để đọc), mỗi câu nhận timing tỷ lệ từ bên trong cảnh của nó.
+Nghiệm thu M1: 1 file 10 phút KHÔNG có SRT → số cảnh ≈ duration/11s ±30%; video dài đúng bằng audio.
+
+### M2 — Một lõi thực thi duy nhất
+- `batch_video_runner.run_batch(items=[...])` là LÕI DUY NHẤT; trường hợp 1 truyện = list 1 item. 
+- ⚡ mode: bỏ gọi `orchestrator.run_pipeline` trực tiếp — UI đóng gói file upload thành 1 BatchItem rồi gọi run_batch (được luôn resume + report + pre-flight LoRA + bootstrap cho cả chế độ đơn).
+- TRƯỚC KHI XOÁ `run_pipeline`: đọc kỹ nó để không mất option riêng (bgm_path, bgm_volume, burn_subtitles, enable_upscaling, learned_corrections...) — mọi option phải có mặt trong `options` của run_batch và UI.
+- 📦 cũ: xoá radio, chức năng gộp vào 📦🎬 (giữ quy ước ghép cặp theo tên đã quen dùng).
+
+### M3 — UI gộp còn MỘT chế độ tự động
+Radio Tab 5 còn 4 lựa chọn: `🛑 3 Trạm Tương Tác` | `🚀 Sinh Video Tự Động` | `🖼️ Sinh 1 Ảnh` | `🖼️📦 Sinh Ảnh Hàng Loạt`.
+- Trong `🚀 Sinh Video Tự Động` có 2 tab con: **"1 Truyện"** (upload md+audio+srt tuỳ chọn, như ⚡ cũ) và **"Cả Thư Mục"** (nhập path như 📦🎬). Cùng khối Options: upscale, BGM, burn subtitle, chất lượng. KHÔNG có toggle tách cảnh — LLM semantic là mặc định duy nhất (fallback parser cũ tự động khi LLM lỗi, có ghi rõ trong report).
+- Pre-flight LoRA hiển thị chung sau khi có danh sách item. Progress 2 tầng + BatchReport cuối (cả chế độ 1 truyện).
+
+### M4 — Chính sách tách cảnh & SRT (ĐÃ CHỐT với chủ dự án 06/07)
+- **Tách cảnh: LUÔN dùng LLM ngữ nghĩa** (semantic split) — đây là hành vi mặc định và duy nhất của chế độ tự động. Parser cũ CHỈ là fallback tự động khi LLM fail (không phải lựa chọn ngang hàng, không cần đối chứng chọn mặc định).
+- **SRT hoàn toàn tuỳ chọn, KHÔNG dùng Whisper**: có SRT → dùng timing SRT; không có → **tự tạo SRT từ chính kịch bản** (audio là giọng đọc nguyên văn kịch bản nên text phụ đề = text cảnh đã cắt, timing chia theo tỷ lệ số từ trên thời lượng audio thật). SRT sinh ra dùng luôn cho burn subtitle — video không SRT đầu vào vẫn có phụ đề đầy đủ. (Nhánh này đã tồn tại trong `srt_mapper` — "No-Whisper mode" tự ghi SRT từ scenes; chỉ hỏng vì duration 60s, vá ở mục 1-2 là chạy đúng.)
+- Kiểm chứng sau M1: chạy 1 file thật 2 lần (có SRT / không SRT) — số cảnh và ranh giới cảnh phải GIỐNG NHAU, chỉ start/end time khác nhẹ.
+
+### M5 — Nghiệm thu tổng
+- 1 truyện qua UI mới = kết quả ≥ chế độ ⚡ cũ (số cảnh, timing, video dài đúng audio).
+- Batch 2 item + giết app giữa chừng → resume đúng.
+- 3 Trạm Tương Tác và 2 chế độ Studio ảnh KHÔNG thay đổi hành vi.
+- Dọn dẹp: gỡ stub `run_adetailer` cũ trong `postprocess.process_all` (đang load InsightFace vô ích ~5s/video, "Inpainting is simulated").
+
+---
+
 ## ⚡ TRẠNG THÁI TRIỂN KHAI (rà soát code thật 06/07/2026)
 
 | Phase | Trạng thái trong code | Ghi chú |

@@ -447,3 +447,72 @@ def _assign_proportional_timing(scene, all_scenes, total_duration, total_words):
     scene.start_time = prev_end
     scene.end_time = prev_end + duration
     scene.duration_sec = duration
+
+
+def _format_srt_time(t: float) -> str:
+    """Giây → định dạng SRT HH:MM:SS,mmm."""
+    t = max(0.0, t)
+    hh = int(t // 3600)
+    mm = int((t % 3600) // 60)
+    ss = int(t % 60)
+    ms = int(round((t - int(t)) * 1000))
+    if ms >= 1000:
+        ms -= 1000
+        ss += 1
+    return f"{hh:02d}:{mm:02d}:{ss:02d},{ms:03d}"
+
+
+def generate_srt_from_scenes(scenes: List[Scene], out_path: str) -> str:
+    """M1: Tự tạo file SRT từ kịch bản đã cắt cảnh (audio đọc NGUYÊN VĂN kịch bản).
+
+    Block phụ đề chia theo CÂU (không phải theo cảnh — cảnh 15s làm 1 block là
+    quá dài để đọc); mỗi câu nhận timing tỷ lệ số từ BÊN TRONG cảnh của nó.
+    Yêu cầu: scenes đã có start_time/end_time (gọi SAU bước map timeline).
+    """
+    import re as _re
+
+    entries = []
+    idx = 1
+    for scene in scenes:
+        text = " ".join((scene.text_vi or "").split())
+        if not text:
+            continue
+        # Tách câu (giữ dấu kết câu); câu quá dài (>22 từ) cắt tiếp theo dấu phẩy
+        sentences = [s.strip() for s in _re.split(r'(?<=[\.\!\?\…;])\s+', text) if s.strip()]
+        chunks = []
+        for s in sentences:
+            words = s.split()
+            if len(words) <= 22:
+                chunks.append(s)
+            else:
+                parts = [p.strip() for p in _re.split(r'(?<=,)\s+', s) if p.strip()]
+                buf = ""
+                for p in parts:
+                    if buf and len((buf + " " + p).split()) > 22:
+                        chunks.append(buf)
+                        buf = p
+                    else:
+                        buf = (buf + " " + p).strip()
+                if buf:
+                    chunks.append(buf)
+        if not chunks:
+            continue
+
+        scene_dur = max(scene.duration_sec, 0.2)
+        wcounts = [max(len(c.split()), 1) for c in chunks]
+        total_w = sum(wcounts)
+        cursor = scene.start_time
+        for chunk, w in zip(chunks, wcounts):
+            seg = scene_dur * w / total_w
+            end = min(cursor + seg, scene.end_time)
+            if end <= cursor:
+                end = cursor + 0.2
+            entries.append(f"{idx}\n{_format_srt_time(cursor)} --> {_format_srt_time(end)}\n{chunk}\n")
+            idx += 1
+            cursor = end
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(entries) + "\n")
+    logger.info(f"[SRT-Gen] Đã tạo {idx - 1} block phụ đề từ kịch bản → {out_path}")
+    return out_path

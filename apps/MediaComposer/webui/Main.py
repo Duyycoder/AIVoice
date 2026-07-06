@@ -1387,18 +1387,23 @@ with tab5:
         exec_mode = st.radio(
             "⚡ Chế độ thực thi Pipeline:",
             [
-                "🛑 3 Trạm Tương Tác (Human-in-the-Loop Studio)", 
-                "⚡ Chạy Tự Động Toàn Bộ (Skip Checkpoints)",
-                "📦 Chạy Hàng Loạt (Batch Processing)",
+                "🛑 3 Trạm Tương Tác (Human-in-the-Loop Studio)",
+                "🚀 Sinh Video Tự Động (1 truyện hoặc cả thư mục)",
                 "🖼️ Sinh 1 Ảnh (Single Image Generation)",
-                "🖼️📦 Sinh Ảnh Hàng Loạt (Batch Image Generation)",
-                "📦🎬 Sinh Video Hàng Loạt (Batch từ thư mục)"
+                "🖼️📦 Sinh Ảnh Hàng Loạt (Batch Image Generation)"
             ],
             index=0,
-            horizontal=True
+            horizontal=True,
+            help="🚀 Sinh Video Tự Động = hợp nhất 'Chạy Tự Động Toàn Bộ' + 'Chạy Hàng Loạt' cũ: "
+                 "tách cảnh bằng LLM, SRT tuỳ chọn (không có thì tự tạo từ kịch bản), "
+                 "có resume + báo cáo + pre-flight LoRA."
         )
         
-        if exec_mode.startswith("⚡"):
+        # M3 (06/07/2026): Hai khối dưới ("⚡ Chạy Tự Động Toàn Bộ" và "📦 Chạy Hàng
+        # Loạt" cũ) đã GỘP vào "🚀 Sinh Video Tự Động" — radio không còn 2 label này
+        # nên code không bao giờ chạy; guard False để chắc chắn. Sẽ xoá hẳn sau khi
+        # chế độ 🚀 được nghiệm thu ổn định.
+        if False and exec_mode.startswith("⚡"):
             col_md, col_audio, col_srt = st.columns(3)
             with col_md:
                 md_file = st.file_uploader("File kịch bản (.md)", type=["md"], key="auto_md")
@@ -1437,7 +1442,7 @@ with tab5:
                         st.error(f"❌ Có lỗi xảy ra trong quá trình chạy Pipeline: {e}")
                         import traceback
                         st.code(traceback.format_exc())
-        elif exec_mode.startswith("📦"):
+        elif False and exec_mode.startswith("📦 Chạy"):  # M3: đã gộp vào 🚀
             st.markdown("### 📦 Chạy Hàng Loạt (Batch Processing)")
             st.info("Hệ thống sẽ tự động tìm các file .md và file audio (.mp3, .wav) trong thư mục Input, sắp xếp và ghép cặp chúng theo thứ tự tên file, sau đó render hàng loạt.")
             
@@ -2070,83 +2075,110 @@ with tab5:
                     )
                     st.success(f"✅ Đã export {len(final_paths)} ảnh vào {os.path.join(output_dir, batch_folder)}")
 
-        elif exec_mode.startswith("📦🎬"):
-            st.markdown("### 📦🎬 Sinh Video Hàng Loạt (Batch từ thư mục)")
-            st.caption("Bỏ N cặp (md + audio [+ srt]) vào 1 thư mục → nhận N video.")
+        elif exec_mode.startswith("🚀"):
+            st.markdown("### 🚀 Sinh Video Tự Động")
+            st.caption("Tách cảnh bằng LLM theo ngữ cảnh (8-15s/cảnh) • SRT tuỳ chọn — không có sẽ TỰ TẠO phụ đề từ kịch bản • Resume khi chạy lại • Báo cáo cuối batch.")
 
-            batch_dir = st.text_input(
-                "📁 Thư mục batch",
-                value="F:\\Du_An_Truyen_Chu\\Nguoi_Tren_Van_Nguoi\\Audio",
-                key="bv_batch_dir"
-            )
+            from app.services.storytelling.batch_video_runner import BatchItem, scan_batch_dir, run_batch
+
             output_dir = st.text_input(
-                "💾 Thư mục output",
+                "💾 Thư mục output (video .mp4 + báo cáo)",
                 value="F:\\Output\\batch_videos",
                 key="bv_output_dir"
             )
 
-            col_opt1, col_opt2, col_opt3 = st.columns(3)
+            col_opt1, col_opt2 = st.columns(2)
             with col_opt1:
-                bv_semantic = st.checkbox("🧠 Tách cảnh thông minh (LLM)", value=True, key="bv_sem")
+                bv_upscale = st.checkbox("🔍 Upscale ảnh (RealESRGAN)", value=True, key="bv_up",
+                                         help="Tắt = chế độ siêu tốc: xuất thẳng ảnh draft, nhanh hơn đáng kể nhưng ảnh mềm hơn.")
             with col_opt2:
-                bv_whisper = st.checkbox("🎵 Tự sinh SRT (Whisper)", value=True, key="bv_wh")
-            with col_opt3:
-                bv_upscale = st.checkbox("🔍 Upscale ảnh", value=True, key="bv_up")
+                bv_burn_sub = st.checkbox("💬 Gắn phụ đề vào video", value=True, key="bv_sub")
 
-            if batch_dir and os.path.isdir(batch_dir):
-                from app.services.storytelling.batch_video_runner import scan_batch_dir
-                bv_items = scan_batch_dir(batch_dir)
+            bv_items = []
+            tab_single, tab_folder = st.tabs(["📄 1 Truyện", "📁 Cả Thư Mục"])
 
-                if bv_items:
-                    st.markdown(f"**Tìm thấy {len(bv_items)} item:**")
-                    st.table([{
-                        "Stem": it.stem,
-                        "MD": os.path.basename(it.md_path),
-                        "Audio": os.path.basename(it.audio_path),
-                        "SRT": os.path.basename(it.srt_path) if it.srt_path else "—"
-                    } for it in bv_items])
+            with tab_single:
+                col_md, col_audio, col_srt = st.columns(3)
+                with col_md:
+                    sv_md = st.file_uploader("Kịch bản (.md)", type=["md"], key="sv_md")
+                with col_audio:
+                    sv_audio = st.file_uploader("Audio (.mp3/.wav)", type=["mp3", "wav"], key="sv_audio")
+                with col_srt:
+                    sv_srt = st.file_uploader("Phụ đề (.srt) — tuỳ chọn", type=["srt"], key="sv_srt")
+                if sv_md and sv_audio:
+                    _sv_temp = os.path.join(ctx_mgr.context_dir, "temp", "single_auto")
+                    os.makedirs(_sv_temp, exist_ok=True)
+                    _sv_md_path = os.path.join(_sv_temp, sv_md.name)
+                    _sv_audio_path = os.path.join(_sv_temp, sv_audio.name)
+                    with open(_sv_md_path, "wb") as f: f.write(sv_md.getbuffer())
+                    with open(_sv_audio_path, "wb") as f: f.write(sv_audio.getbuffer())
+                    _sv_srt_path = ""
+                    if sv_srt:
+                        _sv_srt_path = os.path.join(_sv_temp, sv_srt.name)
+                        with open(_sv_srt_path, "wb") as f: f.write(sv_srt.getbuffer())
+                    bv_items = [BatchItem(
+                        stem=os.path.splitext(sv_md.name)[0],
+                        md_path=_sv_md_path, audio_path=_sv_audio_path, srt_path=_sv_srt_path,
+                    )]
+                    st.success(f"Sẵn sàng: {bv_items[0].stem} (SRT: {'có' if _sv_srt_path else 'tự tạo từ kịch bản'})")
 
-                    if st.button("▶ Chạy Batch Video", type="primary", key="bv_run"):
-                        from app.services.storytelling.batch_video_runner import run_batch
+            with tab_folder:
+                batch_dir = st.text_input(
+                    "📁 Thư mục chứa các cặp file trùng tên (ep01.md + ep01.wav [+ ep01.srt])",
+                    value="F:\\Du_An_Truyen_Chu\\Nguoi_Tren_Van_Nguoi\\Audio",
+                    key="bv_batch_dir"
+                )
+                if batch_dir and os.path.isdir(batch_dir):
+                    _folder_items = scan_batch_dir(batch_dir)
+                    if _folder_items:
+                        st.markdown(f"**Tìm thấy {len(_folder_items)} item:**")
+                        st.table([{
+                            "Stem": it.stem,
+                            "MD": os.path.basename(it.md_path),
+                            "Audio": os.path.basename(it.audio_path),
+                            "SRT": os.path.basename(it.srt_path) if it.srt_path else "tự tạo"
+                        } for it in _folder_items])
+                        bv_items = _folder_items
+                    else:
+                        st.warning("⚠️ Không tìm thấy cặp md+audio nào trong thư mục.")
+                elif batch_dir:
+                    st.error("Thư mục không tồn tại!")
 
-                        bv_progress = st.empty()
-                        bv_bar = st.progress(0)
-                        _bv_stop = False
+            if bv_items:
+                if st.button(f"▶ Chạy ({len(bv_items)} video)", type="primary", key="bv_run"):
+                    bv_progress = st.empty()
+                    bv_bar = st.progress(0)
 
-                        def bv_progress_cb(msg, pct):
-                            bv_progress.text(msg)
-                            bv_bar.progress(min(pct / 100.0, 1.0))
+                    def bv_progress_cb(msg, pct):
+                        bv_progress.text(msg)
+                        bv_bar.progress(min(max(pct, 0) / 100.0, 1.0))
 
-                        st.warning("⚠️ Batch đang chạy. KHÔNG đóng tab hoặc thao tác UI.")
+                    st.warning("⚠️ Đang chạy. KHÔNG đóng tab hoặc thao tác UI. "
+                               "Nếu bị ngắt giữa chừng, chạy lại sẽ tiếp tục từ chỗ dở (resume).")
 
-                        bv_report = run_batch(
-                            ctx_mgr=ctx_mgr,
-                            items=bv_items,
-                            output_dir=output_dir,
-                            options={
-                                "use_semantic_split": bv_semantic,
-                                "use_whisper": bv_whisper,
-                                "enable_upscale": bv_upscale,
-                            },
-                            progress_cb=bv_progress_cb,
-                            stop_flag=lambda: _bv_stop,
+                    bv_report = run_batch(
+                        ctx_mgr=ctx_mgr,
+                        items=bv_items,
+                        output_dir=output_dir,
+                        options={
+                            "use_semantic_split": True,   # chính sách 06/07: LLM luôn bật
+                            "use_whisper": False,          # không Whisper — SRT tự tạo từ kịch bản
+                            "enable_upscale": bv_upscale,
+                            "burn_subtitles": bv_burn_sub,
+                        },
+                        progress_cb=bv_progress_cb,
+                    )
+
+                    st.markdown("### 📊 Báo cáo")
+                    for rpt in bv_report.items:
+                        status_icon = "✅" if rpt["status"] == "video_done" else "❌"
+                        st.write(
+                            f"{status_icon} **{rpt['stem']}** — "
+                            f"{rpt['status']} ({rpt.get('time_seconds', 0):.0f}s)"
                         )
-
-                        # Hiển báo cáo
-                        st.markdown("### 📊 Báo cáo Batch")
-                        for rpt in bv_report.items:
-                            status_icon = "✅" if rpt["status"] == "video_done" else "❌"
-                            st.write(
-                                f"{status_icon} **{rpt['stem']}** — "
-                                f"{rpt['status']} ({rpt.get('time_seconds', 0):.0f}s)"
-                            )
-                            if rpt.get("error"):
-                                st.error(f"  Lỗi: {rpt['error']}")
-                        st.success(f"Đã xong! Output: {output_dir}")
-                else:
-                    st.warning("⚠️ Không tìm thấy cặp md+audio nào trong thư mục.")
-            elif batch_dir:
-                st.error("Thư mục không tồn tại!")
+                        if rpt.get("error"):
+                            st.error(f"  Lỗi: {rpt['error']}")
+                    st.success(f"Đã xong! Output: {output_dir}")
 
 
 with tab2:

@@ -157,9 +157,10 @@ class PostProcessor:
                 continue
                 
             img = Image.open(path).convert("RGB")
-            
-            img = self.run_adetailer(img, pipeline)
-            
+
+            # M5: bỏ run_adetailer stub — nó chỉ load InsightFace (~5s) rồi log
+            # "Inpainting is simulated" mà không làm gì. Vẽ mặt thật đã chạy ở
+            # Trạm 2 (face_detailer, khi SD còn trên VRAM).
             img = self.run_realesrgan(img)
             
             filename = os.path.basename(path)

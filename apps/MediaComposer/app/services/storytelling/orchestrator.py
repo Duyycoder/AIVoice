@@ -231,13 +231,11 @@ class StorytellingOrchestrator:
         os.makedirs(final_dir, exist_ok=True)
         
         update_prog("1. Đọc Audio và Phân tách kịch bản...", 5)
-        total_audio_duration = 60.0 
-        try:
-            from pydub import AudioSegment
-            audio = AudioSegment.from_file(audio_path)
-            total_audio_duration = len(audio) / 1000.0
-        except Exception as e:
-            logger.warning(f"Could not read audio duration (pydub error): {e}")
+        # M1: đọc duration CHÍNH XÁC — thất bại thì raise rõ ràng.
+        # (Trước đây fallback 60s âm thầm → audio 10 phút bị tách thành 2 cảnh,
+        #  video bị cắt còn 60 giây.)
+        from app.services.storytelling.audio_utils import get_audio_duration
+        total_audio_duration = get_audio_duration(audio_path)
         
         # ---- Nhánh semantic split (Phase C) ----
         semantic_scenes = None
@@ -261,27 +259,23 @@ class StorytellingOrchestrator:
             # Chuyển SemanticScene → Scene dataclass
             scenes = self._convert_semantic_to_scenes(semantic_scenes)
 
-            # FIX Gap5: sinh SRT bằng Whisper nếu chưa có
+            # M1 (chính sách 06/07): KHÔNG dùng Whisper.
+            # - Có SRT → dùng timing SRT.
+            # - Không SRT → map theo tỷ lệ từ trên duration THẬT, rồi TỰ TẠO SRT
+            #   từ chính kịch bản (audio đọc nguyên văn) để burn phụ đề.
             update_prog("2. Ghép map timeline SRT...", 15)
-            resolved_srt = srt_path
-            if not resolved_srt or not os.path.exists(resolved_srt):
-                if audio_path and os.path.exists(audio_path) and use_whisper:
-                    from app.services.subtitle import create_subtitle
-                    update_prog("2b. Sinh SRT bằng Whisper...", 18)
-                    resolved_srt = create_subtitle(audio_file=audio_path, language="vi")
-                    try:
-                        from app.services.subtitle import release_whisper_model
-                        release_whisper_model()
-                    except Exception:
-                        pass
-
-            from app.services.storytelling.srt_mapper import parse_srt, map_semantic_scenes_to_srt
+            from app.services.storytelling.srt_mapper import (
+                parse_srt, map_semantic_scenes_to_srt, generate_srt_from_scenes)
+            resolved_srt = srt_path if (srt_path and os.path.exists(srt_path)) else ""
             blocks = parse_srt(resolved_srt) if resolved_srt else []
             scenes = map_semantic_scenes_to_srt(scenes, blocks, total_audio_duration)
 
-            # Cập nhật srt_path nếu đã sinh mới
-            if resolved_srt and resolved_srt != srt_path:
-                srt_path = resolved_srt
+            if not resolved_srt:
+                update_prog("2b. Tạo phụ đề từ kịch bản...", 18)
+                resolved_srt = generate_srt_from_scenes(
+                    scenes, os.path.join(task_dir, "generated_from_script.srt"))
+                logger.info(f"[Step1] Đã tạo SRT từ kịch bản: {resolved_srt}")
+            srt_path = resolved_srt
         else:
             # ---- Nhánh cũ (md_parser) ----
             scenes = parse_md_to_scenes(md_path, total_audio_duration)

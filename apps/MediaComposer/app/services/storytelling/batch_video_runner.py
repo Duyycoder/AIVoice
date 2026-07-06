@@ -170,7 +170,9 @@ def run_batch(
     report = BatchReport()
 
     use_semantic_split = options.get("use_semantic_split", True)
-    use_whisper = options.get("use_whisper", True)
+    # Chính sách 06/07: KHÔNG dùng Whisper trong chế độ tự động — có SRT thì dùng,
+    # không có thì tự tạo SRT từ kịch bản (M1).
+    use_whisper = options.get("use_whisper", False)
     enable_upscale = options.get("enable_upscale", True)
 
     total_items = len(items)
@@ -330,55 +332,38 @@ def _process_single_item(
         state.update_item(item.stem, STATUS_IMAGES_DONE, task_dir=task_dir)
         current_status = STATUS_IMAGES_DONE
 
-    # --- Step 3: Upscale ---
-    if current_status in (STATUS_IMAGES_DONE,):
-        if enable_upscale:
-            def step3_prog(msg, pct):
-                if progress_cb:
-                    progress_cb(f"  [{item.stem}] {msg}", pct)
+    # --- Step 3 + Assemble: dùng step3_render_final của orchestrator ---
+    # M2 FIX: bản cũ gọi orchestrator.step3_upscale (KHÔNG TỒN TẠI → AttributeError)
+    # rồi tự ghép video với FrameInfo(path=, duration=) (SAI tên field → TypeError)
+    # và bỏ qua SRT sinh từ kịch bản. step3_render_final làm đúng cả 3 việc:
+    # upscale (postprocess) + burn phụ đề + ghép audio/BGM.
+    if current_status in (STATUS_IMAGES_DONE, STATUS_UPSCALE_DONE):
+        def step3_prog(msg, pct):
+            if progress_cb:
+                progress_cb(f"  [{item.stem}] {msg}", pct)
 
-            orchestrator.step3_upscale(
-                scenes=scenes,
-                task_dir=task_dir,
-                progress_callback=step3_prog,
-            )
-        state.update_item(item.stem, STATUS_UPSCALE_DONE, task_dir=task_dir)
-        current_status = STATUS_UPSCALE_DONE
+        # SRT ưu tiên từ state của item (bao gồm generated_from_script.srt của M1)
+        item_state = orchestrator.load_state() or {}
+        srt_for_video = item_state.get("srt_path", "") or item.srt_path
+        if srt_for_video and not os.path.exists(srt_for_video):
+            srt_for_video = ""
 
-    # --- Assemble Video ---
-    if current_status in (STATUS_UPSCALE_DONE,):
-        if progress_cb:
-            progress_cb(f"  [{item.stem}] Ghép video...", 90)
-
-        # Build FrameInfo list
-        frames = []
-        for scene in scenes:
-            frame_path = scene.frame_path
-            # Dùng upscaled nếu có
-            final_dir = os.path.join(task_dir, "final_frames")
-            upscaled = os.path.join(final_dir, os.path.basename(frame_path))
-            if os.path.exists(upscaled):
-                frame_path = upscaled
-            frames.append(FrameInfo(
-                path=frame_path,
-                duration=scene.duration_sec,
-            ))
-
-        # Tìm SRT
-        srt_for_video = item.srt_path
-        if not srt_for_video or not os.path.exists(srt_for_video):
-            base = os.path.splitext(item.audio_path)[0]
-            possible = base + ".srt"
-            if os.path.exists(possible):
-                srt_for_video = possible
-
-        output_path = os.path.join(output_dir, f"{item.stem}.mp4")
-        assemble_video(
-            frames=frames,
+        final_video = orchestrator.step3_render_final(
+            scenes=scenes,
+            task_dir=task_dir,
             audio_path=item.audio_path,
-            srt_path=srt_for_video or "",
-            output_path=output_path,
+            srt_path=srt_for_video,
+            bgm_path=options.get("bgm_path", ""),
+            bgm_volume=options.get("bgm_volume", 0.15),
+            enable_upscaling=enable_upscale,
+            burn_subtitles=options.get("burn_subtitles", True),
+            progress_callback=step3_prog,
         )
+
+        # Copy video ra output_dir với tên theo stem
+        output_path = os.path.join(output_dir, f"{item.stem}.mp4")
+        import shutil
+        shutil.copy2(final_video, output_path)
 
         state.update_item(item.stem, STATUS_VIDEO_DONE, task_dir=task_dir)
         logger.info(f"[BatchRunner] Video done: {output_path}")
