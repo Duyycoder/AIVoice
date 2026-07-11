@@ -41,6 +41,14 @@ def main():
     parser.add_argument("--fade-out", type=float, help="Fade-out duration in seconds")
     parser.add_argument("--silence-duration", type=float, help="Silence gap between segments in seconds")
     parser.add_argument("--device", default="cuda", help="Computation device (cuda/cpu)")
+    
+    # Advanced tweaks
+    parser.add_argument("--use-cache", action="store_true", default=None)
+    parser.add_argument("--no-cache", action="store_false", dest="use_cache")
+    parser.add_argument("--cache-threshold", type=float, default=None)
+    parser.add_argument("--vieneu-mode", default=None)
+    parser.add_argument("--vieneu-emotion", default=None)
+    parser.add_argument("--temperature", type=float, default=None)
 
     args = parser.parse_args()
 
@@ -75,7 +83,8 @@ def main():
     # Merge command line arguments overrides
     override_fields = [
         "engine", "voice", "speed", "model", "ref_audio", "phonemize", 
-        "normalize", "target_lufs", "fade_in", "fade_out", "silence_duration", "device"
+        "normalize", "target_lufs", "fade_in", "fade_out", "silence_duration", "device",
+        "use_cache", "cache_threshold", "vieneu_mode", "vieneu_emotion", "temperature"
     ]
     for field in override_fields:
         arg_val = getattr(args, field, None)
@@ -95,6 +104,11 @@ def main():
     config_data.setdefault("fade_out", 0.1)
     config_data.setdefault("silence_duration", 0.3)
     config_data.setdefault("device", "cuda")
+    config_data.setdefault("use_cache", False)
+    config_data.setdefault("cache_threshold", 0.95)
+    config_data.setdefault("vieneu_mode", "v3turbo")
+    config_data.setdefault("vieneu_emotion", "natural")
+    config_data.setdefault("temperature", 0.3)
     config_data.setdefault("use_fp16", True)
     config_data.setdefault("use_tf32", True)
     config_data.setdefault("max_words", 30)
@@ -139,22 +153,50 @@ def main():
             })
             
             os.makedirs(output_dir, exist_ok=True)
-            input_files = sorted([
-                f for f in os.listdir(input_dir) 
-                if f.lower().endswith((".md", ".txt"))
-            ])
+            
+            # Logic "Tiếp tục": Lọc file [VI] và bỏ qua nếu đã có audio
+            all_files = os.listdir(input_dir)
+            if output_dir != input_dir and os.path.isdir(output_dir):
+                all_audio_files = all_files + os.listdir(output_dir)
+            else:
+                all_audio_files = all_files
+            audio_prefixes = {
+                os.path.splitext(f)[0] for f in all_audio_files
+                if f.lower().endswith((".mp3", ".wav"))
+            }
+            # Chương đã có audio (phần tên trước " - [VI] ") — để không đọc lại chương
+            # khi tồn tại nhiều bản dịch trùng lặp với tiêu đề khác nhau
+            audio_chapter_prefixes = {
+                p.split(" - [VI] ")[0] for p in audio_prefixes if " - [VI] " in p
+            }
 
+            input_files = []
+            seen_chapters = set()
+            for f in sorted(all_files):
+                if f.lower().endswith((".md", ".txt")) and " - [VI] " in f:
+                    base_name = os.path.splitext(f)[0]
+                    chapter = base_name.split(" - [VI] ")[0]
+                    if base_name in audio_prefixes or chapter in audio_chapter_prefixes:
+                        continue
+                    if chapter in seen_chapters:
+                        log_json("tts_file_skip", {
+                            "file": f,
+                            "reason": f"Chương '{chapter}' có nhiều bản dịch [VI]; chỉ đọc bản đầu tiên."
+                        })
+                        continue
+                    seen_chapters.add(chapter)
+                    input_files.append(f)
+                        
             if not input_files:
-                log_json("tts_batch_warn", {"message": f"No text/markdown files found in {input_dir}"})
+                log_json("tts_batch_warn", {"message": f"No valid [VI] text files needing TTS found in {input_dir}"})
                 sys.exit(0)
 
             for idx, filename in enumerate(input_files, 1):
                 file_path = os.path.join(input_dir, filename)
                 name_without_ext = os.path.splitext(filename)[0].strip()
-                file_output_dir = os.path.join(output_dir, name_without_ext)
-                file_output_path = os.path.join(file_output_dir, f"{name_without_ext}.wav")
+                file_output_path = os.path.join(output_dir, f"{name_without_ext}.wav")
                 
-                log_json("file_start", {
+                log_json("tts_file_start", {
                     "index": idx,
                     "total": len(input_files),
                     "file": filename
@@ -162,14 +204,14 @@ def main():
 
                 result = process_single_file(file_path, file_output_path, engine, runner_args)
                 if result.get("status") == "SUCCESS":
-                    log_json("file_success", {
+                    log_json("tts_file_success", {
                         "index": idx,
                         "file": filename,
                         "output": file_output_path,
                         "duration_s": result.get("duration_s")
                     })
                 else:
-                    log_json("file_failed", {"index": idx, "file": filename, "status": result.get("status")})
+                    log_json("tts_file_failed", {"index": idx, "file": filename, "status": result.get("status")})
 
             log_json("tts_batch_completed", {"status": "success"})
 

@@ -154,8 +154,8 @@ def process_chapters_and_extract_characters(
     logger.info(f"Bắt đầu xử lý tuần tự {len(chapter_texts)} file...")
     
     for idx, text in enumerate(chapter_texts):
-        if len(text) > 80000:
-            text = text[:80000] + "\n...[Nội dung đã được cắt bớt để đảm bảo giới hạn xử lý]..."
+        if len(text) > 10000:
+            text = text[:10000] + "\n...[Nội dung đã được cắt bớt để đảm bảo giới hạn xử lý RAM của LLM]..."
             
         logger.info(f"Bóc tách nhân vật từ file thứ {idx+1}/{len(chapter_texts)}...")
         chars = extract_characters_from_text(text, genre)

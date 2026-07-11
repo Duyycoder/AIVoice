@@ -65,4 +65,7 @@ def get_llm_client() -> tuple[OpenAI, str]:
     model = config.app.get("openai_model", "gpt-4o-mini")
     if not api_key:
         raise LLMNotConfiguredError("Chưa cấu hình API Key. Vào Global Settings để thiết lập.")
-    return OpenAI(api_key=api_key, base_url=base_url), model
+    
+    import httpx
+    # Đặt timeout 60s để tránh treo tiến trình khi dùng Local LLM bị nghẽn
+    return OpenAI(api_key=api_key, base_url=base_url, timeout=httpx.Timeout(60.0)), model

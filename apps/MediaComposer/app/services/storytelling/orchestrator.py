@@ -271,6 +271,18 @@ class StorytellingOrchestrator:
             from app.services.storytelling.srt_mapper import (
                 parse_srt, map_semantic_scenes_to_srt, generate_srt_from_scenes)
             resolved_srt = srt_path if (srt_path and os.path.exists(srt_path)) else ""
+            
+            if not resolved_srt:
+                update_prog("2a. Dùng Whisper nhận diện thời gian...", 16)
+                try:
+                    from app.services.subtitle import create_subtitle
+                    gen_srt = create_subtitle(audio_path, os.path.join(task_dir, "whisper_sync.srt"), language="vi")
+                    if gen_srt and os.path.exists(gen_srt):
+                        resolved_srt = gen_srt
+                        logger.info(f"[Step1] Đã tạo SRT bằng Whisper: {resolved_srt}")
+                except Exception as e:
+                    logger.warning(f"Lỗi khi chạy Whisper: {e}")
+
             blocks = parse_srt(resolved_srt) if resolved_srt else []
             scenes = map_semantic_scenes_to_srt(scenes, blocks, total_audio_duration)
 

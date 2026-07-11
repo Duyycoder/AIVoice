@@ -216,9 +216,10 @@ def generate_prompts_batch(
     total_scenes = len(scenes)
     for i in range(0, total_scenes, batch_size):
         batch = scenes[i:i + batch_size]
-        logger.info(f"Processing LLM prompt for batch {i//batch_size + 1}, scenes {i} to {min(i+batch_size, total_scenes)-1} (Parallel)")
+        logger.info(f"Processing LLM prompt for batch {i//batch_size + 1}, scenes {i} to {min(i+batch_size, total_scenes)-1} (Sequential/Local)")
         
-        with ThreadPoolExecutor(max_workers=batch_size) as executor:
+        # Đặt max_workers=4 theo yêu cầu của user để test
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = []
             for scene in batch:
                 note = director_notes.get(str(scene.scene_id), "")

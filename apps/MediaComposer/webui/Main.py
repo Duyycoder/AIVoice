@@ -974,6 +974,15 @@ with tab5:
     import os
     
     all_contexts = ContextManager.list_all_contexts()
+
+    # FIX StreamlitAPIException: không được ghi trực tiếp vào key của widget
+    # SAU khi widget đã render trong cùng lượt chạy. Bộ truyện vừa tạo được
+    # gửi qua key trung gian và áp vào ĐẦU lượt rerun kế tiếp (trước selectbox).
+    if "_pending_story_slug" in st.session_state:
+        _pending = st.session_state.pop("_pending_story_slug")
+        if _pending in all_contexts:
+            st.session_state["selected_story_slug"] = _pending
+
     col1, col2 = st.columns([3, 1])
     with col1:
         selected_story = st.selectbox("Bộ truyện", ["Tạo mới..."] + all_contexts, key="selected_story_slug")
@@ -995,7 +1004,9 @@ with tab5:
                     ctx_mgr.create_context(new_story_name, new_genre)
                     st.success("Tạo thành công!")
                     st.session_state.create_context_modal = False
-                    st.session_state.selected_story_slug = new_story_slug
+                    # Không ghi thẳng vào key widget — gửi qua key trung gian,
+                    # rerun kế tiếp sẽ áp vào selectbox trước khi nó render
+                    st.session_state["_pending_story_slug"] = new_story_slug
                     st.rerun()
                     
     elif selected_story and selected_story != "Tạo mới...":
@@ -1163,7 +1174,15 @@ with tab5:
                             cols = st.columns(min(len(image_urls), 4))
                             for img_idx, url in enumerate(image_urls[:4]):
                                 with cols[img_idx]:
-                                    st.image(url, width="stretch")
+                                    clean_url = url.strip()
+                                    if "](" in clean_url and clean_url.endswith(")"):
+                                        clean_url = clean_url.split("](")[-1].rstrip(")")
+                                    elif clean_url.startswith("<") and clean_url.endswith(">"):
+                                        clean_url = clean_url[1:-1]
+                                    try:
+                                        st.image(clean_url, use_container_width=True)
+                                    except Exception as e:
+                                        st.warning("Không tải được ảnh")
                             selected_img_url = st.radio("Chọn ảnh dùng làm Face Embedding:", img_opts, key=f"img_select_{idx}")
                         else:
                             st.info("Không tìm thấy ảnh trên mạng.")

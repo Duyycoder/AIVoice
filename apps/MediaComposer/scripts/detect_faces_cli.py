@@ -58,4 +58,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        import traceback
+        print("[]")
+        print(f"CRITICAL_CRASH: {traceback.format_exc()}", file=sys.stderr)
+        sys.exit(1)

@@ -4,6 +4,9 @@ import json
 import argparse
 import gc
 
+# Prevent Windows C++ OpenMP abort (OMP: Error #15) when importing torch and cv2 together
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 # Configure PYTHONPATH dynamically to import app services correctly
 mc_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, mc_root)
@@ -31,12 +34,22 @@ def main():
     parser.add_argument("--no-subtitles", action="store_false", dest="burn-subtitles", help="Disable subtitles burning")
     parser.add_argument("--use-semantic-split", action="store_true", default=True, help="Use semantic split for scene parsing")
     parser.add_argument("--no-semantic-split", action="store_false", dest="use_semantic_split", help="Disable semantic split")
+    parser.add_argument("--extract-characters", action="store_true", default=True, help="Auto extract characters using LLM")
+    parser.add_argument("--no-extract-characters", action="store_false", dest="extract_characters", help="Disable auto character extraction")
+    parser.add_argument("--enable-face-detailer", action="store_true", default=True, help="Enable Face Detailer")
+    parser.add_argument("--no-face-detailer", action="store_false", dest="enable_face_detailer", help="Disable Face Detailer")
+    parser.add_argument("--hardware-profile", default="auto", help="Hardware profile: auto, cuda_high, cuda_low, cpu")
     parser.add_argument("--style", default="anime_2d_flat", help="Art style name")
     parser.add_argument("--checkpoint", default="anything-v5", help="Stable Diffusion checkpoint path or hugginface name")
 
     args = parser.parse_args()
 
     try:
+        from app.config import config
+        config.storytelling["hardware_profile"] = args.hardware_profile
+        config.storytelling["enable_face_detailer"] = args.enable_face_detailer
+        config.save_config()
+
         from app.services.storytelling.context_manager import _STORAGE_ENV
         log_json("video_init", {
             "story_name": args.story_name,
@@ -71,6 +84,47 @@ def main():
         if not items:
             log_json("video_warn", {"message": f"No valid batch items (md + audio pairs) found in {args.input_dir}"})
             sys.exit(0)
+
+        # Extract characters if none exist and enabled
+        if args.extract_characters and not context.characters:
+            log_json("video_progress", {"message": "Đang phân tích kịch bản để tự động nhận diện nhân vật (LLM)...", "percent": 0})
+            from app.services.storytelling.character_extractor import process_chapters_and_extract_characters
+            
+            # Read first 5 chapters to avoid context limits
+            chapter_texts = []
+            for item in items[:5]:
+                md_path = os.path.join(args.input_dir, item.md_path)
+                with open(md_path, "r", encoding="utf-8") as f:
+                    chapter_texts.append(f.read())
+                    
+            try:
+                extracted_chars = process_chapters_and_extract_characters(
+                    chapter_texts=chapter_texts,
+                    story_name=args.story_name,
+                    genre=args.genre,
+                    enable_web_search=True
+                )
+                if extracted_chars:
+                    from app.services.storytelling.models import Character
+                    from orchestrator.storage import slugify
+                    for c_dict in extracted_chars:
+                        name = c_dict.get("name", "")
+                        if not name:
+                            continue
+                        char_obj = Character(
+                            name=name,
+                            slug=slugify(name),
+                            keywords_en=c_dict.get("keywords_en", ""),
+                            description=c_dict.get("description", ""),
+                            has_embedding=False
+                        )
+                        context.characters.append(char_obj)
+                    ctx_mgr.save_context(context)
+                    log_json("video_progress", {"message": f"Đã nhận diện thành công {len(context.characters)} nhân vật.", "percent": 0})
+                else:
+                    log_json("video_warn", {"message": "Không nhận diện được nhân vật nào từ kịch bản."})
+            except Exception as e:
+                log_json("video_warn", {"message": f"Lỗi khi nhận diện nhân vật: {e}"})
 
         log_json("video_batch_start", {
             "total_items": len(items),

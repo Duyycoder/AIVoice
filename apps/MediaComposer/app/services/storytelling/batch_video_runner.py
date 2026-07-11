@@ -67,7 +67,8 @@ def scan_batch_dir(batch_dir: str) -> List[BatchItem]:
         stem, ext = os.path.splitext(f)
         ext_lower = ext.lower()
         if ext_lower == ".md":
-            md_files[stem] = fpath
+            if " - [VI] " in f:
+                md_files[stem] = fpath
         elif ext_lower in AUDIO_EXTENSIONS:
             audio_files[stem] = fpath
         elif ext_lower == ".srt":

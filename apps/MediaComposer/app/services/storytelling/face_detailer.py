@@ -113,8 +113,7 @@ def detect_faces(image: Image.Image) -> List[Tuple[int, int, int, int]]:
             capture_output=True, text=True, timeout=60,
         )
         if proc.returncode != 0:
-            _warn_once("detect_rc", f"[FaceDetailer] Detect subprocess lỗi (rc={proc.returncode}): "
-                                    f"{(proc.stderr or '')[:300]}")
+            _warn_once("detect_rc", f"[FaceDetailer] Detect subprocess lỗi (rc={proc.returncode}):\n{proc.stderr}")
             return []
         boxes = json.loads(proc.stdout.strip() or "[]")
         logger.info(f"[FaceDetailer] Bước 2/5 xong: tìm thấy {len(boxes)} mặt.")
