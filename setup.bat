@@ -251,14 +251,33 @@ if not "!TORCH_INDEX!"=="" (
     if !errorlevel! neq 0 (
         echo [INFO] Cai dat PyTorch !TORCH_INDEX! - torch/torchvision/torchaudio dong bo...
         ".venv\Scripts\python.exe" -m pip uninstall -y torch torchvision torchaudio >nul 2>&1
-        ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
+        set "LOCAL_WHEEL="
+        for %%f in (torch-*.whl) do (
+            set "LOCAL_WHEEL=%%f"
+        )
+        if not "!LOCAL_WHEEL!"="" (
+            echo [INFO] Tim thay file PyTorch offline: !LOCAL_WHEEL!
+            ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 "!LOCAL_WHEEL!"
+            ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
+        ) else (
+            ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
+        )
         if !errorlevel! neq 0 (
             echo [WARNING] Cai dat PyTorch !TORCH_INDEX! that bai. He thong se thu cai ban mac dinh tu requirements.
         ) else (
             echo [INFO] Cai dat PyTorch !TORCH_INDEX! thanh cong!
         )
     ) else (
-        echo [INFO] PyTorch !TORCH_INDEX! da dung phien ban - bo qua buoc cai lai.
+        echo [INFO] PyTorch !TORCH_INDEX! da dung phien ban.
+        rem Kiem tra xem torchvision va torchaudio da dong bo theo !TORCH_INDEX! chua
+        ".venv\Scripts\python.exe" -c "import torchvision,torchaudio,sys; sys.exit(0 if '!TORCH_INDEX!' in torchvision.__version__ and '!TORCH_INDEX!' in torchaudio.__version__ else 1)" >nul 2>&1
+        if !errorlevel! neq 0 (
+            echo [INFO] Dong bo hoa torchvision va torchaudio theo !TORCH_INDEX!...
+            ".venv\Scripts\python.exe" -m pip uninstall -y torchvision torchaudio >nul 2>&1
+            ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
+        ) else (
+            echo [INFO] PyTorch, torchvision va torchaudio da dong bo - bo qua buoc cai lai.
+        )
     )
 )
 
@@ -354,7 +373,7 @@ if not exist "apps\MediaComposer\config.toml" (
 
 :: 7. Download model weights
 echo ----------------------------------------------------------------------
-echo [INFO] Dang tai trong so mo hinh AI (Piper & XTTSv2)...
+echo [INFO] Dang tai trong so mo hinh AI (Piper ^& XTTSv2)...
 echo ----------------------------------------------------------------------
 .venv\Scripts\python.exe src\download_models.py --engine all
 if %errorlevel% neq 0 (
