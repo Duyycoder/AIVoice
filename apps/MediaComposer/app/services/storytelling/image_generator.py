@@ -228,6 +228,10 @@ class StorytellingPipeline:
                 self._pipe.enable_model_cpu_offload()
                 if hasattr(self._pipe, "vae") and self._pipe.vae is not None:
                     self._pipe.vae.enable_slicing()
+                    # Bật VAE Tiling cho thiết bị VRAM thấp (6GB) giúp chia nhỏ vùng decode latent thành các ô (tiling),
+                    # giảm thiểu memory spike ở khâu giải mã ảnh đầy đủ mà không làm mờ/mất chi tiết đáng kể.
+                    if hasattr(self._pipe.vae, "enable_tiling"):
+                        self._pipe.vae.enable_tiling()
                 logger.info("Pipeline warmup completed with CPU Offload (VRAM Save).")
             except Exception as e:
                 logger.warning(f"Không thể bật CPU Offload: {e}. Fallback load trực tiếp model lên thiết bị: {self.device}")

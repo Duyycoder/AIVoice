@@ -159,9 +159,10 @@ def run_batch(
     progress_cb: Optional[Callable] = None,
     stop_flag: Optional[Callable[[], bool]] = None,
 ) -> BatchReport:
-    """Chạy tuần tự từng item: step1 → step2 → step3 → assemble.
-
-    FIX Gap4: Mỗi item có task_dir riêng + state_path riêng trong task_dir/state.json.
+    """Chạy hàng loạt theo cơ chế 2-pass tối ưu VRAM:
+    - Pass A: Dịch/Tạo kịch bản + Sinh toàn bộ ảnh bằng SD (giữ SD nóng).
+    - Giải phóng SD Pipeline (giải phóng VRAM).
+    - Pass B: Upscale toàn bộ ảnh + Render video cuối (giữ ESRGAN nóng).
     """
     if options is None:
         options = {}
@@ -171,13 +172,13 @@ def run_batch(
     report = BatchReport()
 
     use_semantic_split = options.get("use_semantic_split", True)
-    # Chính sách 06/07: KHÔNG dùng Whisper trong chế độ tự động — có SRT thì dùng,
-    # không có thì tự tạo SRT từ kịch bản (M1).
     use_whisper = options.get("use_whisper", False)
     enable_upscale = options.get("enable_upscale", True)
 
     total_items = len(items)
 
+    # ==================== PASS A: Script + SD Image Generation ====================
+    logger.info("[BatchRunner] === BẮT ĐẦU PASS A: TẠO KỊCH BẢN & SINH ẢNH SD ===")
     for item_idx, item in enumerate(items):
         if stop_flag and stop_flag():
             logger.info("[BatchRunner] Stop flag set — dừng sau item trước.")
@@ -185,26 +186,84 @@ def run_batch(
 
         item_status = state.get_item_status(item.stem)
 
-        # Skip item đã hoàn thành
-        if item_status == STATUS_VIDEO_DONE:
-            logger.info(f"[BatchRunner] Skip {item.stem}: đã done.")
-            report.items.append({
-                "stem": item.stem, "status": STATUS_VIDEO_DONE,
-                "video_path": "", "error": None, "time_seconds": 0,
-            })
+        # Bỏ qua nếu đã hoàn thành sinh ảnh hoặc đã xong toàn bộ video
+        if item_status in (STATUS_IMAGES_DONE, STATUS_UPSCALE_DONE, STATUS_VIDEO_DONE):
+            logger.info(f"[BatchRunner] Bỏ qua Pass A cho {item.stem}: trạng thái hiện tại là {item_status}")
             continue
 
         if progress_cb:
             progress_cb(
-                f"[{item_idx + 1}/{total_items}] {item.stem}",
+                f"[Pass A] [{item_idx + 1}/{total_items}] {item.stem}",
+                int(100 * item_idx / max(total_items, 1))
+            )
+
+        try:
+            _process_single_item_pass_a(
+                ctx_mgr, item, output_dir, state, options,
+                use_semantic_split, use_whisper, progress_cb,
+            )
+        except Exception as e:
+            error_msg = str(e)
+            is_oom = "OutOfMemoryError" in error_msg or "CUDA out of memory" in error_msg
+            if is_oom:
+                logger.warning(f"[BatchRunner] OOM cho {item.stem} trong Pass A, release & retry...")
+                try:
+                    from app.services.storytelling.image_generator import StorytellingPipeline
+                    StorytellingPipeline().release()
+                except Exception:
+                    pass
+                try:
+                    _process_single_item_pass_a(
+                        ctx_mgr, item, output_dir, state, options,
+                        use_semantic_split, use_whisper, progress_cb,
+                    )
+                    continue
+                except Exception as e2:
+                    error_msg = str(e2)
+
+            state.update_item(item.stem, STATUS_FAILED, error=error_msg)
+            logger.error(f"[BatchRunner] Pass A THẤT BẠI cho {item.stem}: {error_msg}")
+
+    # ==================== RELEASE SD PIPELINE ====================
+    logger.info("[BatchRunner] === GIẢI PHÓNG SD PIPELINE VRAM ===")
+    try:
+        from app.services.storytelling.image_generator import StorytellingPipeline
+        StorytellingPipeline().release()
+    except Exception as e:
+        logger.warning(f"[BatchRunner] Lỗi giải phóng SD Pipeline: {e}")
+
+    # ==================== PASS B: Postprocessing + Render Video ====================
+    logger.info("[BatchRunner] === BẮT ĐẦU PASS B: HẬU KỲ & DỰNG VIDEO ===")
+    for item_idx, item in enumerate(items):
+        if stop_flag and stop_flag():
+            logger.info("[BatchRunner] Stop flag set — dừng sau item trước.")
+            break
+
+        item_status = state.get_item_status(item.stem)
+
+        if item_status == STATUS_VIDEO_DONE:
+            logger.info(f"[BatchRunner] Bỏ qua Pass B cho {item.stem}: đã done.")
+            report.items.append({
+                "stem": item.stem, "status": STATUS_VIDEO_DONE,
+                "video_path": os.path.join(output_dir, f"{item.stem}.mp4"), "error": None, "time_seconds": 0,
+            })
+            continue
+
+        if item_status in (STATUS_PENDING, STATUS_SCRIPT_DONE, STATUS_FAILED):
+            logger.warning(f"[BatchRunner] Bỏ qua Pass B cho {item.stem}: Chưa hoàn thành ảnh ở Pass A ({item_status})")
+            continue
+
+        if progress_cb:
+            progress_cb(
+                f"[Pass B] [{item_idx + 1}/{total_items}] {item.stem}",
                 int(100 * item_idx / max(total_items, 1))
             )
 
         start_time = time.time()
         try:
-            _process_single_item(
+            _process_single_item_pass_b(
                 ctx_mgr, item, output_dir, state, options,
-                use_semantic_split, use_whisper, enable_upscale, progress_cb,
+                enable_upscale, progress_cb,
             )
             elapsed = time.time() - start_time
             report.items.append({
@@ -217,35 +276,6 @@ def run_batch(
         except Exception as e:
             elapsed = time.time() - start_time
             error_msg = str(e)
-
-            # Retry OOM 1 lần
-            is_oom = "OutOfMemoryError" in error_msg or "CUDA out of memory" in error_msg
-            if is_oom:
-                logger.warning(f"[BatchRunner] OOM cho {item.stem}, retry 1 lần...")
-                try:
-                    from app.services.storytelling.image_generator import StorytellingPipeline
-                    StorytellingPipeline().release()
-                except Exception:
-                    pass
-
-                try:
-                    _process_single_item(
-                        ctx_mgr, item, output_dir, state, options,
-                        use_semantic_split, use_whisper, enable_upscale, progress_cb,
-                    )
-                    elapsed = time.time() - start_time
-                    report.items.append({
-                        "stem": item.stem,
-                        "status": STATUS_VIDEO_DONE,
-                        "video_path": os.path.join(output_dir, f"{item.stem}.mp4"),
-                        "error": None,
-                        "time_seconds": round(elapsed, 1),
-                    })
-                    continue
-                except Exception as e2:
-                    error_msg = str(e2)
-
-            # Ghi failed, tiếp item sau
             state.update_item(item.stem, STATUS_FAILED, error=error_msg)
             report.items.append({
                 "stem": item.stem,
@@ -254,7 +284,7 @@ def run_batch(
                 "error": error_msg,
                 "time_seconds": round(elapsed, 1),
             })
-            logger.error(f"[BatchRunner] FAILED {item.stem}: {error_msg}")
+            logger.error(f"[BatchRunner] Pass B THẤT BẠI cho {item.stem}: {error_msg}")
 
     # Ghi report
     report_path = os.path.join(output_dir, "batch_report.json")
@@ -263,13 +293,12 @@ def run_batch(
     return report
 
 
-def _process_single_item(
+def _process_single_item_pass_a(
     ctx_mgr, item, output_dir, state, options,
-    use_semantic_split, use_whisper, enable_upscale, progress_cb,
+    use_semantic_split, use_whisper, progress_cb,
 ):
-    """Xử lý 1 item từ bước đang dở (resume) hoặc từ đầu."""
+    """Pass A: Chỉ tạo kịch bản + sinh ảnh nháp."""
     from app.services.storytelling.orchestrator import StorytellingOrchestrator
-    from app.services.storytelling.video_assembler import assemble_video, FrameInfo
 
     _mc_root = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -277,7 +306,6 @@ def _process_single_item(
 
     current_status = state.get_item_status(item.stem)
 
-    # Tạo task_dir riêng cho item (FIX Gap4)
     existing_task_dir = state.get_item_task_dir(item.stem)
     if existing_task_dir and os.path.isdir(existing_task_dir):
         task_dir = existing_task_dir
@@ -290,7 +318,6 @@ def _process_single_item(
             task_dir = os.path.join(_mc_root, "storage", "tasks", f"batch_{task_id}")
         os.makedirs(task_dir, exist_ok=True)
 
-    # State path riêng cho item (FIX Gap4)
     item_state_path = os.path.join(task_dir, "state.json")
 
     orchestrator = StorytellingOrchestrator(ctx_mgr)
@@ -314,7 +341,6 @@ def _process_single_item(
         state.update_item(item.stem, STATUS_SCRIPT_DONE, task_dir=task_dir)
         current_status = STATUS_SCRIPT_DONE
     else:
-        # Load state từ bước dở
         loaded = orchestrator.load_state()
         if loaded:
             from app.services.storytelling.models import scene_from_dict
@@ -335,40 +361,58 @@ def _process_single_item(
             progress_callback=step2_prog,
         )
         state.update_item(item.stem, STATUS_IMAGES_DONE, task_dir=task_dir)
-        current_status = STATUS_IMAGES_DONE
 
-    # --- Step 3 + Assemble: dùng step3_render_final của orchestrator ---
-    # M2 FIX: bản cũ gọi orchestrator.step3_upscale (KHÔNG TỒN TẠI → AttributeError)
-    # rồi tự ghép video với FrameInfo(path=, duration=) (SAI tên field → TypeError)
-    # và bỏ qua SRT sinh từ kịch bản. step3_render_final làm đúng cả 3 việc:
-    # upscale (postprocess) + burn phụ đề + ghép audio/BGM.
-    if current_status in (STATUS_IMAGES_DONE, STATUS_UPSCALE_DONE):
-        def step3_prog(msg, pct):
-            if progress_cb:
-                progress_cb(f"  [{item.stem}] {msg}", pct)
 
-        # SRT ưu tiên từ state của item (bao gồm generated_from_script.srt của M1)
-        item_state = orchestrator.load_state() or {}
-        srt_for_video = item_state.get("srt_path", "") or item.srt_path
-        if srt_for_video and not os.path.exists(srt_for_video):
-            srt_for_video = ""
+def _process_single_item_pass_b(
+    ctx_mgr, item, output_dir, state, options,
+    enable_upscale, progress_cb,
+):
+    """Pass B: Chỉ upscale và dựng video cuối."""
+    from app.services.storytelling.orchestrator import StorytellingOrchestrator
 
-        final_video = orchestrator.step3_render_final(
-            scenes=scenes,
-            task_dir=task_dir,
-            audio_path=item.audio_path,
-            srt_path=srt_for_video,
-            bgm_path=options.get("bgm_path", ""),
-            bgm_volume=options.get("bgm_volume", 0.15),
-            enable_upscaling=enable_upscale,
-            burn_subtitles=options.get("burn_subtitles", True),
-            progress_callback=step3_prog,
-        )
+    task_dir = state.get_item_task_dir(item.stem)
+    if not task_dir or not os.path.isdir(task_dir):
+        raise RuntimeError(f"Không tìm thấy thư mục task_dir cho {item.stem}")
 
-        # Copy video ra output_dir với tên theo stem
-        output_path = os.path.join(output_dir, f"{item.stem}.mp4")
-        import shutil
-        shutil.copy2(final_video, output_path)
+    item_state_path = os.path.join(task_dir, "state.json")
 
-        state.update_item(item.stem, STATUS_VIDEO_DONE, task_dir=task_dir)
-        logger.info(f"[BatchRunner] Video done: {output_path}")
+    orchestrator = StorytellingOrchestrator(ctx_mgr)
+    orchestrator._state_path_override = item_state_path
+
+    # Load state
+    loaded = orchestrator.load_state()
+    if loaded:
+        from app.services.storytelling.models import scene_from_dict
+        scenes = [scene_from_dict(s) for s in loaded.get("scenes", [])]
+    else:
+        raise RuntimeError(f"Không thể load state cho {item.stem}")
+
+    # --- Step 3 + Assemble ---
+    def step3_prog(msg, pct):
+        if progress_cb:
+            progress_cb(f"  [{item.stem}] {msg}", pct)
+
+    item_state = orchestrator.load_state() or {}
+    srt_for_video = item_state.get("srt_path", "") or item.srt_path
+    if srt_for_video and not os.path.exists(srt_for_video):
+        srt_for_video = ""
+
+    final_video = orchestrator.step3_render_final(
+        scenes=scenes,
+        task_dir=task_dir,
+        audio_path=item.audio_path,
+        srt_path=srt_for_video,
+        bgm_path=options.get("bgm_path", ""),
+        bgm_volume=options.get("bgm_volume", 0.15),
+        enable_upscaling=enable_upscale,
+        burn_subtitles=options.get("burn_subtitles", True),
+        progress_callback=step3_prog,
+    )
+
+    # Copy video ra output_dir với tên theo stem
+    output_path = os.path.join(output_dir, f"{item.stem}.mp4")
+    import shutil
+    shutil.copy2(final_video, output_path)
+
+    state.update_item(item.stem, STATUS_VIDEO_DONE, task_dir=task_dir)
+    logger.info(f"[BatchRunner] Video done: {output_path}")
