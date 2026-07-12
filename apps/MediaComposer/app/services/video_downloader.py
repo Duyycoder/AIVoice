@@ -17,6 +17,11 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
     ffmpeg_bin = utils.get_ffmpeg_binary()
     ffmpeg_dir = os.path.dirname(ffmpeg_bin)
     
+    # Append ffmpeg_dir to PATH so yt-dlp can find phantomjs.exe
+    original_path = os.environ.get("PATH", "")
+    if ffmpeg_dir not in original_path:
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + original_path
+        
     # Progress hook for yt-dlp
     def ytdl_hook(d):
         if d.get('status') == 'downloading':
