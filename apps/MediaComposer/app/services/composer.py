@@ -280,7 +280,8 @@ class ComposerWorkflow:
         tts_voice: str = "",
         ducking_ratio: float = 90.0,
         auto_clone: bool = False,
-        clean_audio: bool = False
+        clean_audio: bool = False,
+        source_srt_override: str = ""
     ) -> str:
         """
         Orchestrates the automatic translation and subtitling workflow:
@@ -321,30 +322,36 @@ class ComposerWorkflow:
             logger.error(f"Failed to extract audio: {res.stderr}")
             raise RuntimeError(f"Failed to extract audio track: {res.stderr}")
             
-        whisper_audio_path = audio_path
-        if clean_audio:
-            logger.info("clean_audio is enabled. Running vocal isolation with Demucs...")
-            whisper_audio_path = isolate_vocals(audio_path, task_dir)
+        if source_srt_override:
+            logger.info(f"Dùng SRT nguồn có sẵn (OCR/bên ngoài): {source_srt_override} — bỏ qua Demucs + Whisper")
+            source_srt_path = source_srt_override
+            if not os.path.exists(source_srt_path) or os.path.getsize(source_srt_path) == 0:
+                raise RuntimeError(f"SRT nguồn không tồn tại hoặc rỗng: {source_srt_path}")
+        else:
+            whisper_audio_path = audio_path
+            if clean_audio:
+                logger.info("clean_audio is enabled. Running vocal isolation with Demucs...")
+                whisper_audio_path = isolate_vocals(audio_path, task_dir)
+                
+            # 2. Whisper Transcription
+            logger.info(f"Transcribing audio with Whisper (Source Language: {source_lang})...")
+            source_srt_path = os.path.join(task_dir, "source_subtitles.srt")
             
-        # 2. Whisper Transcription
-        logger.info(f"Transcribing audio with Whisper (Source Language: {source_lang})...")
-        source_srt_path = os.path.join(task_dir, "source_subtitles.srt")
-        
-        # Map human readable name to Whisper codes
-        whisper_lang = None
-        if source_lang.lower() in ["english", "en"]:
-            whisper_lang = "en"
-        elif source_lang.lower() in ["chinese", "zh"]:
-            whisper_lang = "zh"
+            # Map human readable name to Whisper codes
+            whisper_lang = None
+            if source_lang.lower() in ["english", "en"]:
+                whisper_lang = "en"
+            elif source_lang.lower() in ["chinese", "zh"]:
+                whisper_lang = "zh"
+                
+            create_subtitle(whisper_audio_path, source_srt_path, language=whisper_lang)
             
-        create_subtitle(whisper_audio_path, source_srt_path, language=whisper_lang)
-        
-        if not os.path.exists(source_srt_path) or os.path.getsize(source_srt_path) == 0:
-            logger.error("Whisper transcription did not generate any subtitles.")
-            raise RuntimeError("Transcription failed: empty subtitle file generated.")
-            
-        # 3. Release Whisper model to free memory
-        release_whisper_model()
+            if not os.path.exists(source_srt_path) or os.path.getsize(source_srt_path) == 0:
+                logger.error("Whisper transcription did not generate any subtitles.")
+                raise RuntimeError("Transcription failed: empty subtitle file generated.")
+                
+            # 3. Release Whisper model to free memory
+            release_whisper_model()
         
         # 4. Translate SRT to Vietnamese using Gemini
         logger.info("Translating subtitles to Vietnamese via Gemini API...")
