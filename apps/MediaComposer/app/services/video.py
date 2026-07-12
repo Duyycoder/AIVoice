@@ -1563,6 +1563,13 @@ def burn_subtitles_ffmpeg(
     if force_style_parts:
         force_style_str = ":force_style='" + ",".join(force_style_parts) + "'"
         
+    # Define high-quality encoding parameters to prevent compression loss
+    codec_args = []
+    if codec == "libx264":
+        codec_args = ["-crf", "18", "-preset", "veryfast"]
+    elif codec == "h264_nvenc":
+        codec_args = ["-cq", "19", "-preset", "slow"]
+
     # Prepare ffmpeg command
     if rel_audio:
         # Map video from input 0 and audio from input 1
@@ -1574,7 +1581,8 @@ def burn_subtitles_ffmpeg(
             "-vf", f"subtitles={sub_filter_path}{force_style_str}",
             "-map", "0:v:0",
             "-map", "1:a:0",
-            "-c:v", codec,
+            "-c:v", codec
+        ] + codec_args + [
             "-c:a", "aac",
             rel_output
         ]
@@ -1584,7 +1592,8 @@ def burn_subtitles_ffmpeg(
             "-y",
             "-i", rel_video,
             "-vf", f"subtitles={sub_filter_path}{force_style_str}",
-            "-c:v", codec,
+            "-c:v", codec
+        ] + codec_args + [
             "-c:a", "copy",
             rel_output
         ]
