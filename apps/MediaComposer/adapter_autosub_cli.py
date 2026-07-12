@@ -53,6 +53,7 @@ def main():
     parser.add_argument("--bg-alpha", type=int, default=None, help="Subtitle background opacity (0-255)")
     parser.add_argument("--sub-position", default=None, choices=["bottom", "top", "center", "custom"], help="Subtitle position on video")
     parser.add_argument("--custom-position", type=float, default=None, help="Custom Y ratio (0-100 from top)")
+    parser.add_argument("--cookies-file", default=None, help="Path to cookies file for video downloader")
 
     args = parser.parse_args()
     
@@ -64,7 +65,7 @@ def main():
             from app.services.video_downloader import download_video
             try:
                 # Download video to output_dir temporarily
-                video_path = download_video(args.download_url, args.output_dir, args.platform)
+                video_path = download_video(args.download_url, args.output_dir, args.platform, cookies_file=args.cookies_file)
             except Exception as e:
                 log_json("autosub_error", {"error": f"Tải video thất bại: {e}"})
                 sys.exit(1)

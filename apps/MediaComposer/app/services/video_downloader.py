@@ -9,7 +9,7 @@ def log_json(event: str, data: dict):
     print(json.dumps({"event": event, **data}, ensure_ascii=False))
     sys.stdout.flush()
 
-def download_video(url: str, output_dir: str, platform: str = "generic", progress_cb=None) -> str:
+def download_video(url: str, output_dir: str, platform: str = "generic", progress_cb=None, cookies_file: str = None) -> str:
     """Tải 1 video về output_dir, trả về đường dẫn file mp4. Raise nếu lỗi."""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -60,6 +60,13 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
         'quiet': True,
         'progress_hooks': [ytdl_hook],
     }
+    
+    if cookies_file:
+        abs_cookies_path = os.path.abspath(cookies_file)
+        if os.path.exists(abs_cookies_path):
+            ydl_opts['cookiefile'] = abs_cookies_path
+        else:
+            log_json("download_warning", {"message": f"Không tìm thấy file cookies tại: {cookies_file}"})
     
     log_json("download_start", {"url": url, "platform": platform})
     
