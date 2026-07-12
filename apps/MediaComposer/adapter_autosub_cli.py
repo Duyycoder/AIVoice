@@ -110,8 +110,7 @@ def main():
             )
 
         # Run translation workflow
-        from app.services.composer import MediaComposer
-        composer = MediaComposer()
+        from app.services.composer import composer
         
         log_json("autosub_progress", {"message": "Bắt đầu chạy workflow tạo phụ đề và lồng tiếng...", "percent": 10})
         
@@ -140,6 +139,7 @@ def main():
         final_video_name = f"{base_name}_autosub_{timestamp}.mp4"
         final_output_path = os.path.join(args.output_dir, final_video_name)
         
+        os.makedirs(args.output_dir, exist_ok=True)
         shutil.copy(translated_video_path, final_output_path)
         
         # Check translation warning (CB2 warning check)
@@ -166,17 +166,18 @@ def main():
         
     finally:
         # VRAM release
-        try:
-            from app.services.subtitle import release_whisper_model
-            release_whisper_model()
-        except:
-            pass
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except:
-            pass
-        gc.collect()
+        if not args.prepare_only:
+            try:
+                from app.services.subtitle import release_whisper_model
+                release_whisper_model()
+            except Exception:
+                pass
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            gc.collect()
 
 if __name__ == "__main__":
     main()

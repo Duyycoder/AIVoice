@@ -1,4 +1,8 @@
 import os
+os.environ['FLAGS_use_onednn'] = '0'
+os.environ['FLAGS_use_mkldnn'] = '0'
+os.environ['PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT'] = '0'
+os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
 import sys
 import subprocess
 import json
@@ -92,8 +96,8 @@ def extract_hardsub_ocr_srt(
         # Some versions might call it crop_width/crop_height.
         # Let's dynamically pass these parameters or try to handle errors.
         kwargs = {
-            "file_path": video_path,
-            "subtitle_path": output_srt,
+            "video_path": video_path,
+            "file_path": output_srt,
             "lang": lang,
             "time_start": time_start or "0:00",
             "time_end": time_end or "",

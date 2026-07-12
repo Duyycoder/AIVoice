@@ -363,6 +363,24 @@ class ComposerWorkflow:
             target_lang="Vietnamese"
         )
         
+        # Ensure SRT has at least one segment to avoid MoviePy / libass crashes on empty/silent videos
+        has_segments = False
+        if os.path.exists(translated_srt_path):
+            try:
+                with open(translated_srt_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read().strip()
+                if content:
+                    from app.services.translation import parse_srt
+                    if parse_srt(content):
+                        has_segments = True
+            except Exception:
+                pass
+        
+        if not has_segments:
+            logger.info("No subtitle segments. Appending dummy subtitle segment to avoid empty subtitle crash.")
+            with open(translated_srt_path, "w", encoding="utf-8") as f:
+                f.write("1\n00:00:00,000 --> 00:00:01,000\n \n")
+        
         # 5. Optional Dubbing (Voiceover) Generation
         dubbed_audio_path = None
         if enable_voiceover:
