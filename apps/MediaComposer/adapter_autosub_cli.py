@@ -41,6 +41,18 @@ def main():
     parser.add_argument("--llm-api-key", default="", help="API Key for translation LLM")
     parser.add_argument("--llm-base-url", default="", help="Base URL for translation LLM")
     parser.add_argument("--llm-model", default="", help="Model name for translation LLM")
+    
+    # Subtitle Customization Styling arguments
+    parser.add_argument("--font-name", default=None, help="Subtitle font filename")
+    parser.add_argument("--font-size", type=int, default=None, help="Subtitle font size")
+    parser.add_argument("--text-color", default=None, help="Subtitle text color (hex or named)")
+    parser.add_argument("--stroke-color", default=None, help="Subtitle stroke/border color")
+    parser.add_argument("--stroke-width", type=float, default=None, help="Subtitle stroke/border width")
+    parser.add_argument("--bg-style", default=None, choices=["None", "Box"], help="Subtitle background style")
+    parser.add_argument("--bg-color", default=None, help="Subtitle background box color")
+    parser.add_argument("--bg-alpha", type=int, default=None, help="Subtitle background opacity (0-255)")
+    parser.add_argument("--sub-position", default=None, choices=["bottom", "top", "center", "custom"], help="Subtitle position on video")
+    parser.add_argument("--custom-position", type=float, default=None, help="Custom Y ratio (0-100 from top)")
 
     args = parser.parse_args()
     
@@ -127,7 +139,17 @@ def main():
             ducking_ratio=args.ducking_ratio,
             auto_clone=args.auto_clone,
             clean_audio=clean_audio_flag,
-            source_srt_override=source_srt
+            source_srt_override=source_srt,
+            font_name=args.font_name,
+            font_size=args.font_size,
+            text_color=args.text_color,
+            stroke_color=args.stroke_color,
+            stroke_width=args.stroke_width,
+            bg_style=args.bg_style,
+            bg_color=args.bg_color,
+            bg_alpha=args.bg_alpha,
+            position=args.sub_position,
+            custom_position=args.custom_position
         )
         
         # Copy output file to the specified output-dir

@@ -1410,7 +1410,34 @@ def split_video_file(
     return output_files
 
 
-def burn_subtitles_ffmpeg(video_path: str, subtitle_path: str, output_path: str, codec: str = None, audio_path: str = None) -> bool:
+def _hex_to_ass_color(color: str) -> str:
+    named = {"white": "FFFFFF", "black": "000000", "yellow": "FFFF00",
+             "red": "FF0000", "green": "00FF00", "blue": "0000FF"}
+    c = color.strip().lstrip("#")
+    c = named.get(c.lower(), c)
+    if len(c) != 6:
+        c = "FFFFFF"
+    rr, gg, bb = c[0:2], c[2:4], c[4:6]
+    return f"&H00{bb}{gg}{rr}".upper()
+
+
+def burn_subtitles_ffmpeg(
+    video_path: str,
+    subtitle_path: str,
+    output_path: str,
+    codec: str = None,
+    audio_path: str = None,
+    font_name: str = None,
+    font_size: int = None,
+    text_color: str = None,
+    stroke_color: str = None,
+    stroke_width: float = None,
+    bg_style: str = None,
+    bg_color: str = None,
+    bg_alpha: int = None,
+    position: str = None,
+    custom_y_ratio: float = None
+) -> bool:
     """
     Burns subtitles into a video file using FFmpeg's native 'subtitles' filter.
     Runs FFmpeg in the directory of the target video using relative paths to avoid Windows-specific path escaping issues.
@@ -1469,6 +1496,73 @@ def burn_subtitles_ffmpeg(video_path: str, subtitle_path: str, output_path: str,
     # Replace backslashes with forward slashes for the ffmpeg subtitles filter parameter
     sub_filter_path = rel_sub.replace("\\", "/")
     
+    # Build force_style parameter for subtitles filter
+    force_style_parts = []
+    if font_name:
+        font_base = os.path.splitext(font_name)[0]
+        mapping = {
+            "Montserrat-Bold": "Montserrat",
+            "Montserrat-Regular": "Montserrat",
+            "BeVietnamPro-Bold": "Be Vietnam Pro",
+            "BeVietnamPro-SemiBold": "Be Vietnam Pro",
+            "BeVietnamPro-Regular": "Be Vietnam Pro",
+            "Arial-Bold": "Arial",
+            "Arial-Regular": "Arial",
+            "Charm-Bold": "Charm",
+            "Charm-Regular": "Charm",
+            "STHeitiMedium": "STHeiti",
+            "STHeitiLight": "STHeiti",
+            "MicrosoftYaHeiBold": "Microsoft YaHei",
+            "MicrosoftYaHeiNormal": "Microsoft YaHei",
+            "UTM Kabel KT": "UTM Kabel KT"
+        }
+        font_family = mapping.get(font_base, font_base)
+        force_style_parts.append(f"FontName={font_family}")
+        
+    if font_size:
+        force_style_parts.append(f"FontSize={font_size}")
+        
+    if text_color:
+        force_style_parts.append(f"PrimaryColour={_hex_to_ass_color(text_color)}")
+        
+    if stroke_width is not None:
+        force_style_parts.append(f"Outline={stroke_width}")
+        
+    if stroke_color:
+        force_style_parts.append(f"OutlineColour={_hex_to_ass_color(stroke_color)}")
+        
+    if bg_style == "Box":
+        force_style_parts.append("BorderStyle=3")
+        box_color = bg_color or "#000000"
+        ass_box_color = _hex_to_ass_color(box_color)
+        if bg_alpha is not None:
+            transparency = 255 - max(0, min(255, bg_alpha))
+            alpha_hex = f"{transparency:02X}"
+            ass_box_color = ass_box_color.replace("&H00", f"&H{alpha_hex}")
+        force_style_parts.append(f"OutlineColour={ass_box_color}")
+        force_style_parts.append(f"BackColour={ass_box_color}")
+    else:
+        force_style_parts.append("BorderStyle=1")
+        force_style_parts.append("BackColour=&HFF000000")
+        
+    align = 2
+    if position == "top":
+        align = 8
+    elif position in ("center", "middle"):
+        align = 5
+    force_style_parts.append(f"Alignment={align}")
+    
+    if position == "custom" and custom_y_ratio is not None:
+        try:
+            margin_v = int((100 - custom_y_ratio) * 3.6)
+            force_style_parts.append(f"MarginV={margin_v}")
+        except Exception:
+            pass
+            
+    force_style_str = ""
+    if force_style_parts:
+        force_style_str = ":force_style='" + ",".join(force_style_parts) + "'"
+        
     # Prepare ffmpeg command
     if rel_audio:
         # Map video from input 0 and audio from input 1
@@ -1477,7 +1571,7 @@ def burn_subtitles_ffmpeg(video_path: str, subtitle_path: str, output_path: str,
             "-y",
             "-i", rel_video,
             "-i", rel_audio,
-            "-vf", f"subtitles={sub_filter_path}",
+            "-vf", f"subtitles={sub_filter_path}{force_style_str}",
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-c:v", codec,
@@ -1489,7 +1583,7 @@ def burn_subtitles_ffmpeg(video_path: str, subtitle_path: str, output_path: str,
             ffmpeg_exe,
             "-y",
             "-i", rel_video,
-            "-vf", f"subtitles={sub_filter_path}",
+            "-vf", f"subtitles={sub_filter_path}{force_style_str}",
             "-c:v", codec,
             "-c:a", "copy",
             rel_output

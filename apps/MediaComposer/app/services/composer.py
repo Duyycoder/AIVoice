@@ -281,7 +281,17 @@ class ComposerWorkflow:
         ducking_ratio: float = 90.0,
         auto_clone: bool = False,
         clean_audio: bool = False,
-        source_srt_override: str = ""
+        source_srt_override: str = "",
+        font_name: str = None,
+        font_size: int = None,
+        text_color: str = None,
+        stroke_color: str = None,
+        stroke_width: float = None,
+        bg_style: str = None,
+        bg_color: str = None,
+        bg_alpha: int = None,
+        position: str = None,
+        custom_position: float = None
     ) -> str:
         """
         Orchestrates the automatic translation and subtitling workflow:
@@ -410,7 +420,17 @@ class ComposerWorkflow:
                 video_path=video_path,
                 subtitle_path=translated_srt_path,
                 output_path=final_video_path,
-                audio_path=target_audio
+                audio_path=target_audio,
+                font_name=font_name,
+                font_size=font_size,
+                text_color=text_color,
+                stroke_color=stroke_color,
+                stroke_width=stroke_width,
+                bg_style=bg_style,
+                bg_color=bg_color,
+                bg_alpha=bg_alpha,
+                position=position,
+                custom_y_ratio=custom_position
             )
             if not success:
                 logger.warning("FFmpeg native subtitle burning failed. Falling back to MoviePy...")
@@ -437,8 +457,7 @@ class ComposerWorkflow:
             except Exception:
                 aspect = VideoAspect.portrait
                 
-            bg_style = config.whisper.get("background_style", "None")
-            bg_color = False if bg_style == "None" else config.whisper.get("text_background_color", "#000000")
+            bg_color_val = False if bg_style == "None" else (bg_color or config.whisper.get("text_background_color", "#000000"))
             
             params = VideoParams(
                 video_aspect=aspect,
@@ -448,16 +467,16 @@ class ComposerWorkflow:
                 bgm_file="",
                 bgm_volume=0.0,
                 subtitle_enabled=True,
-                font_name=config.whisper.get("font_name", "STHeitiMedium.ttc"),
-                font_size=int(config.whisper.get("font_size", 45)), # Slightly smaller by default for subtitles
-                text_fore_color=config.whisper.get("text_fore_color", "#FFFFFF"),
-                stroke_color=config.whisper.get("stroke_color", "#000000"),
-                stroke_width=float(config.whisper.get("stroke_width", 1.5)),
-                text_background_color=bg_color,
-                subtitle_bg_alpha=int(config.whisper.get("subtitle_bg_alpha", 140)),
+                font_name=font_name or config.whisper.get("font_name", "STHeitiMedium.ttc"),
+                font_size=int(font_size or config.whisper.get("font_size", 45)),
+                text_fore_color=text_color or config.whisper.get("text_fore_color", "#FFFFFF"),
+                stroke_color=stroke_color or config.whisper.get("stroke_color", "#000000"),
+                stroke_width=float(stroke_width if stroke_width is not None else config.whisper.get("stroke_width", 1.5)),
+                text_background_color=bg_color_val,
+                subtitle_bg_alpha=int(bg_alpha if bg_alpha is not None else config.whisper.get("subtitle_bg_alpha", 140)),
                 rounded_subtitle_background=bool(config.whisper.get("rounded_subtitle_background", False)),
-                subtitle_position=config.whisper.get("subtitle_position", "bottom"),
-                custom_position=float(config.whisper.get("custom_position", 70.0)),
+                subtitle_position=position or config.whisper.get("subtitle_position", "bottom"),
+                custom_position=float(custom_position if custom_position is not None else config.whisper.get("custom_position", 70.0)),
                 n_threads=os.cpu_count() or 4
             )
             
