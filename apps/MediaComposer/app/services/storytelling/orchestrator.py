@@ -272,7 +272,10 @@ class StorytellingOrchestrator:
                 parse_srt, map_semantic_scenes_to_srt, generate_srt_from_scenes)
             resolved_srt = srt_path if (srt_path and os.path.exists(srt_path)) else ""
             
-            if not resolved_srt:
+            # Whisper (medium/cuda) tốn ~2-3GB VRAM + ~60s/chương. Mặc định TẮT để
+            # tiết kiệm VRAM: khi không có SRT sẵn, dùng timing theo tỷ lệ từ (bên dưới)
+            # rồi tự tạo SRT từ kịch bản. Chỉ chạy Whisper khi use_whisper=True.
+            if not resolved_srt and use_whisper:
                 update_prog("2a. Dùng Whisper nhận diện thời gian...", 16)
                 try:
                     from app.services.subtitle import create_subtitle
@@ -344,6 +347,10 @@ class StorytellingOrchestrator:
         img_h = st_config.get("image_height", 512)
         
         update_prog("4. Sinh hình ảnh SD (image_generator)... Đang warmup model", 10 if reroll_index is None else 20)
+        # Giải phóng LLM local (Ollama) khỏi VRAM TRƯỚC khi nạp Stable Diffusion.
+        # Trên GPU 6GB, Ollama qwen (~3-5GB) neo trong VRAM sẽ va chạm với SD gây OOM.
+        from app.services.llm import unload_local_llm
+        unload_local_llm()
         pipe = StorytellingPipeline(self.context)
         pipe.warmup()
         # T2: ip_adapter_scale đọc từ config — cùng nguồn sự thật với Studio

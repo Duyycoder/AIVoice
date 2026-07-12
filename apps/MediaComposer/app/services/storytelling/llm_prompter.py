@@ -106,7 +106,7 @@ Pick the type that best serves THIS scene's storytelling. Roughly 30% close, 40%
 5. **CAMERA & LIGHTING:** Add ONE camera tag and ONE lighting tag at the end (e.g., "wide shot, cinematic lighting").
 6. **ACTION & CONTINUITY:** Read the "Director's Note" to understand the visual context and ensure the environment matches the story's progression.
 7. **ACTION WEIGHTING (CRITICAL):** Wrap the main action/pose of the scene in attention weight syntax `(action tags:1.3)`, placed right after the style prefix. Every distinct physical detail (what a character HOLDS, WHERE they are, weather) gets its own weighted tag, e.g. "(kneeling before the altar:1.3), (holding a glowing sword:1.35)". Without weights the model ignores these details.
-8. **LENGTH:** Keep "image_prompt" UNDER 60 words. Prompts are encoded without truncation, but shorter prompts follow composition better. If trimming, cut camera/lighting first. NEVER cut character appearance keywords — they must appear within the FIRST 40 words.
+8. **LENGTH (CRITICAL — weak image model):** Keep "image_prompt" UNDER 40 words. The downstream image model is WEAK: it follows SHORT, CONCRETE prompts far better than long ones. Use only high-impact visual nouns (subject, setting, key objects, 1 camera + 1 lighting tag). DROP vague adjectives, mood words, and redundant synonyms. Put subject + character appearance in the FIRST 20 words. Fewer, stronger tags beat many weak ones.
 
 Known characters: {json.dumps(char_list, ensure_ascii=False)}
 Story genre: {genre}"""

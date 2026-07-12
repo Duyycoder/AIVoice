@@ -69,3 +69,32 @@ def get_llm_client() -> tuple[OpenAI, str]:
     import httpx
     # Đặt timeout 60s để tránh treo tiến trình khi dùng Local LLM bị nghẽn
     return OpenAI(api_key=api_key, base_url=base_url, timeout=httpx.Timeout(60.0)), model
+
+
+def _is_ollama_endpoint() -> bool:
+    base_url = (config.app.get("llm_base_url") or config.app.get("openai_base_url", "")).lower()
+    return "11434" in base_url or "ollama" in base_url
+
+
+def unload_local_llm() -> None:
+    """Nếu LLM hiện tại là Ollama (local), yêu cầu Ollama GIẢI PHÓNG model khỏi VRAM
+    ngay lập tức (keep_alive=0).
+
+    Gọi ở ranh giới pha LLM -> Stable Diffusion: Ollama qwen giữ ~3-5GB VRAM và
+    (mặc định) neo 5 phút sau mỗi lần gọi, va chạm với SD trên GPU 6GB gây OOM.
+    Best-effort: lỗi thì bỏ qua (vd đang dùng Gemini local, Ollama đã tắt...).
+    """
+    if not _is_ollama_endpoint():
+        return
+    base_url = config.app.get("llm_base_url") or config.app.get("openai_base_url", "")
+    model = config.app.get("llm_model") or config.app.get("openai_model", "")
+    try:
+        import requests
+        # base_url thường là ".../v1" — API native của Ollama nằm ở gốc host
+        root = base_url.rstrip("/")
+        if root.endswith("/v1"):
+            root = root[:-3]
+        requests.post(f"{root}/api/generate", json={"model": model, "keep_alive": 0}, timeout=10)
+        logger.info(f"[LLM] Đã yêu cầu Ollama giải phóng model '{model}' khỏi VRAM (keep_alive=0).")
+    except Exception as e:
+        logger.warning(f"[LLM] Không unload được Ollama (bỏ qua): {e}")

@@ -128,8 +128,15 @@ class StorytellingPipeline:
         self.warnings.clear()
 
         checkpoint = self.context.checkpoint if self.context and self.context.checkpoint else "stablediffusionapi/anything-v5"
-        if checkpoint == "anything-v5":
-            checkpoint = "stablediffusionapi/anything-v5"
+        # Ánh xạ tên rút gọn → repo-id HuggingFace đầy đủ. Thiếu bước này, tên như
+        # "dreamshaper-8" bị gửi thẳng lên Hub như repo-id sai → lỗi 401/Not Found
+        # dù model ĐÃ có sẵn trong cache cục bộ (models--lykon--dreamshaper-8).
+        # Tên đã chứa "/" hoặc là đường dẫn cục bộ thì giữ nguyên.
+        _CHECKPOINT_ALIASES = {
+            "anything-v5": "stablediffusionapi/anything-v5",
+            "dreamshaper-8": "lykon/dreamshaper-8",
+        }
+        checkpoint = _CHECKPOINT_ALIASES.get(checkpoint, checkpoint)
 
         # Tắt hf_transfer để tránh lỗi file lock khi download model
         os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
