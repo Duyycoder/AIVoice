@@ -31,7 +31,7 @@ def main():
     parser.add_argument("--enable-upscale", action="store_true", default=True, help="Enable RealESRGAN image upscaling")
     parser.add_argument("--no-upscale", action="store_false", dest="enable_upscale", help="Disable RealESRGAN image upscaling")
     parser.add_argument("--burn-subtitles", action="store_true", default=True, help="Burn subtitles into final video")
-    parser.add_argument("--no-subtitles", action="store_false", dest="burn-subtitles", help="Disable subtitles burning")
+    parser.add_argument("--no-subtitles", action="store_false", dest="burn_subtitles", help="Disable subtitles burning")
     parser.add_argument("--use-semantic-split", action="store_true", default=True, help="Use semantic split for scene parsing")
     parser.add_argument("--no-semantic-split", action="store_false", dest="use_semantic_split", help="Disable semantic split")
     parser.add_argument("--extract-characters", action="store_true", default=True, help="Auto extract characters using LLM")
@@ -41,6 +41,9 @@ def main():
     parser.add_argument("--hardware-profile", default="auto", help="Hardware profile: auto, cuda_high, cuda_low, cpu")
     parser.add_argument("--style", default="anime_2d_flat", help="Art style name")
     parser.add_argument("--checkpoint", default="anything-v5", help="Stable Diffusion checkpoint path or hugginface name")
+    parser.add_argument("--llm-api-key", default=None, help="LLM API key")
+    parser.add_argument("--llm-base-url", default=None, help="LLM base URL")
+    parser.add_argument("--llm-model", default=None, help="LLM model name")
 
     args = parser.parse_args()
 
@@ -49,6 +52,14 @@ def main():
         config.storytelling["hardware_profile"] = args.hardware_profile
         config.storytelling["enable_face_detailer"] = args.enable_face_detailer
         config.save_config()
+
+        # In-memory overrides for LLM (not persisted to config.toml)
+        if args.llm_api_key:
+            config.app["llm_api_key"] = args.llm_api_key
+        if args.llm_base_url:
+            config.app["llm_base_url"] = args.llm_base_url
+        if args.llm_model:
+            config.app["llm_model"] = args.llm_model
 
         from app.services.storytelling.context_manager import _STORAGE_ENV
         log_json("video_init", {

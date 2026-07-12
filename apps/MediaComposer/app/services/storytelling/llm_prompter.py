@@ -4,7 +4,7 @@ from loguru import logger
 from app.services.llm import get_llm_client
 from app.services.storytelling.models import Scene, StoryContext
 
-def _call_llm(messages: List[dict], max_tokens: int = 500) -> str:
+def _call_llm(messages: List[dict], max_tokens: int = 800) -> str:
     try:
         client, model = get_llm_client()
     except Exception as e:
@@ -15,13 +15,41 @@ def _call_llm(messages: List[dict], max_tokens: int = 500) -> str:
             model=model,
             messages=messages,
             temperature=0.4,
-            max_tokens=800,
+            max_tokens=max_tokens,
             response_format={"type": "json_object"}
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Error calling LLM: {e}")
         return ""
+
+GENRE_SPECIFIC_RULES = {
+    "tien_hiep": """**GENRE-SPECIFIC VISUAL RULES (Tiên Hiệp / Cổ Trang):**
+- Style: Traditional Chinese fantasy, martial arts (wuxia/xianxia), cultivation, and mythology.
+- STRICTLY AVOID modern elements (no cars, no modern buildings, no electronics, no modern clothing/glasses).
+- Environment: majestic misty mountains, floating islands, bamboo forests, ancient Chinese pavilions/temples, cultivation caves, celestial skies.
+- Visual elements: spiritual energy aura, flying swords, traditional robes (Hanfu), long hair, glowing talismans.
+- Use tags: "ancient Chinese robes, long hair, sword cultivation, misty mountains, traditional architecture".""",
+
+    "ngon_tinh": """**GENRE-SPECIFIC VISUAL RULES (Ngôn Tình / Đô Thị):**
+- Style: Modern realistic, emotional, romantic, and urban.
+- Clothing: Contemporary fashion (suits, stylish shirts, modern dresses, casual attire).
+- Environment: Modern city streets, cozy apartments, elegant offices, cafes, rainy streetscapes, parks.
+- Focus: Rich facial expressions, eye contact, body language, romantic and warm atmosphere, soft lighting.
+- Use tags: "modern fashion, emotional eyes, urban cafe, city streets, warm romantic lighting".""",
+
+    "khoa_huyen": """**GENRE-SPECIFIC VISUAL RULES (Khoa Huyễn / Viễn Tưởng):**
+- Style: Futuristic, high-tech, space exploration, and sci-fi.
+- Clothing: High-tech spacesuits, futuristic armor, robotic implants, modern combat suits.
+- Environment: Spaceships, high-tech control rooms, futuristic laboratories, neon-lit cyberpunk cities, alien planets.
+- Visual elements: Holographic screens, glowing terminals, neon lights, outer space backgrounds, stars and nebulas.
+- Use tags: "futuristic city, holographic displays, high-tech armor, neon lights, spaceship interior, advanced technology".""",
+
+    "default": """**GENERAL VISUAL RULES:**
+- Focus on high-quality cinematic framing, atmospheric lighting, and clear focus.
+- Describe the setting, environment, weather, and lighting in detail to establish a strong visual context.
+- Ensure characters are integrated naturally into the background."""
+}
 
 def _build_system_prompt(context: StoryContext) -> str:
     # Clean portrait-inducing tags from character lists sent to LLM
@@ -42,6 +70,9 @@ def _build_system_prompt(context: StoryContext) -> str:
         
     style_prefix = f"(highly detailed background, cinematic lighting, {model_tag})"
     
+    genre = context.genre or "default"
+    genre_rules = GENRE_SPECIFIC_RULES.get(genre, GENRE_SPECIFIC_RULES["default"])
+    
     return f"""You are an expert prompt engineer for cinematic Stable Diffusion image generation.
 IMPORTANT: You are a TEXT-ONLY AI. DO NOT generate images. Your only job is to write a TEXT string (a prompt) that will be used by another system.
 
@@ -52,6 +83,8 @@ Given Vietnamese text from a novel scene, output a JSON object matching exactly 
   "primary_character": "Name1",
   "shot_type": "close|medium|wide"
 }}
+
+{genre_rules}
 
 **SHOT TYPE RULES:**
 - "close": dialogue, strong emotion, facial reactions, 1 character focus → camera tags like "upper body, portrait"
@@ -76,7 +109,7 @@ Pick the type that best serves THIS scene's storytelling. Roughly 30% close, 40%
 8. **LENGTH:** Keep "image_prompt" UNDER 60 words. Prompts are encoded without truncation, but shorter prompts follow composition better. If trimming, cut camera/lighting first. NEVER cut character appearance keywords — they must appear within the FIRST 40 words.
 
 Known characters: {json.dumps(char_list, ensure_ascii=False)}
-Story genre: {context.genre}"""
+Story genre: {genre}"""
 
 def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryContext, retries: int = 1, director_note: str = "") -> bool:
     if scene.image_prompt:
@@ -157,7 +190,7 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryCo
     scene.image_prompt = f"{style_prefix}, scenery, majestic landscape, cinematic, depth of field"
     return False
 
-def generate_storyboard_context(scenes: List[Scene]) -> dict:
+def generate_storyboard_context(scenes: List[Scene], context: StoryContext) -> dict:
     """Bước 1: Story Director Pass. Gọi LLM để tóm tắt bối cảnh và hành động xuyên suốt."""
     if not scenes:
         return {}
@@ -169,12 +202,19 @@ def generate_storyboard_context(scenes: List[Scene]) -> dict:
     for s in scenes:
         full_script += f"Scene {s.scene_id}: {s.text_vi}\n"
         
-    system_prompt = """You are a Storyboard Director for a cinematic movie.
+    genre = context.genre or "default"
+    genre_rules = GENRE_SPECIFIC_RULES.get(genre, GENRE_SPECIFIC_RULES["default"])
+    
+    system_prompt = f"""You are a Storyboard Director for a cinematic movie.
 IMPORTANT: You are a TEXT-ONLY AI. DO NOT generate images.
 Read the following script and provide a brief 1-sentence visual direction (Director's Note) for each Scene.
+Make sure the visual style matches the genre: {genre}.
+
+{genre_rules}
+
 Focus ONLY on: Who is in the frame, what are they doing, and where are they? Ensure continuity between scenes (if Scene 1 is in a courtyard, Scene 2 is likely still there unless stated otherwise).
 Output ONLY a valid JSON dictionary mapping scene ID (as string) to the director's note.
-Example: {"0": "Dịch Phong is sitting in his wooden shop, looking bored.", "1": "Lạc Lan Tuyết walks into the shop, looking coldly at him."}"""
+Example: {{"0": "Dịch Phong is sitting in his wooden shop, looking bored.", "1": "Lạc Lan Tuyết walks into the shop, looking coldly at him."}}"""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -209,7 +249,7 @@ def generate_prompts_batch(
     system_prompt = _build_system_prompt(context)
     
     # Pre-processing: Generate Director's Notes for all scenes
-    director_notes = generate_storyboard_context(scenes)
+    director_notes = generate_storyboard_context(scenes, context)
     
     from concurrent.futures import ThreadPoolExecutor, as_completed
     

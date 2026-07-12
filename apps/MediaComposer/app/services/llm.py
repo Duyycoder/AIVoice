@@ -60,9 +60,9 @@ class LLMNotConfiguredError(Exception):
 
 def get_llm_client() -> tuple[OpenAI, str]:
     """Trả về (OpenAI client, model_name) dựa trên config hiện tại."""
-    api_key = config.app.get("openai_api_key", "")
-    base_url = config.app.get("openai_base_url", "https://api.openai.com/v1")
-    model = config.app.get("openai_model", "gpt-4o-mini")
+    api_key = config.app.get("llm_api_key") or config.app.get("openai_api_key", "")
+    base_url = config.app.get("llm_base_url") or config.app.get("openai_base_url", "https://api.openai.com/v1")
+    model = config.app.get("llm_model") or config.app.get("openai_model", "gpt-4o-mini")
     if not api_key:
         raise LLMNotConfiguredError("Chưa cấu hình API Key. Vào Global Settings để thiết lập.")
     

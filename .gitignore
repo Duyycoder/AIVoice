@@ -14,3 +14,5 @@ storage/
 temp/
 tmp/
 *.pyc
+apps/MediaComposer/config.toml
+

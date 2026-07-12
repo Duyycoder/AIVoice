@@ -13,6 +13,9 @@ class Config:
             "openai_base_url": "https://api.openai.com/v1",
             "openai_model": "gpt-4o-mini",
             "llm_provider": "OpenAI",
+            "llm_api_key": "",
+            "llm_base_url": "",
+            "llm_model": "",
         }
         default_device = "cuda" if torch.cuda.is_available() else "cpu"
         default_compute = "float16" if default_device == "cuda" else "int8"
