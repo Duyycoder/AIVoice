@@ -153,7 +153,9 @@ def extract_voice_sample(audio_path: str, srt_path: str, output_ref_path: str) -
         return False
 
 def shorten_text_via_gemini(text: str, target_duration: float) -> str:
-    """Uses local Gemini API to rewrite the text to be shorter to fit the duration limit."""
+    """[DEPRECATED — không còn được gọi] Trước đây rút gọn lời thoại để vừa thời lượng,
+    nhưng làm audio lệch chữ so với phụ đề đang hiển thị. Giữ lại phòng khi cần bật lại
+    dạng tuỳ chọn. Fit thời lượng hiện do atempo (Rule 2 trong generate_dubbed_audio) lo."""
     api_key = config.app.get("openai_api_key")
     if not api_key:
         logger.warning("No API key configured for Gemini text shortening. Returning original text.")
@@ -349,21 +351,13 @@ def generate_dubbed_audio(
         actual_dur = get_audio_duration(temp_seg_raw)
         logger.info(f"Segment {idx}: Target duration = {target_dur:.2f}s, TTS actual = {actual_dur:.2f}s")
         
-        # Rule 1: Gemini auto-shortening if speech is too long (> 1.4x target duration)
-        # Allow a tolerance of 0.3s (do not shorten if deviation is within tolerance)
+        # Rule 1 (Gemini text-shortening) ĐÃ BỎ: giữ lời thoại khớp nguyên văn phụ đề để
+        # audio không lệch chữ so với sub (dubbing chỉ đọc đúng câu đang hiển thị).
+        # Việc fit thời lượng do Rule 2 (tua tốc độ) đảm nhiệm — không đổi chữ.
         tolerance = 0.3
-        if actual_dur > target_dur * 1.4 and (actual_dur - target_dur) > tolerance:
-            logger.info(f"Segment {idx} is too long ({actual_dur:.2f}s > {target_dur * 1.4:.2f}s). Triggering Gemini shortener...")
-            shortened_text = shorten_text_via_gemini(raw_text, target_dur)
-            # Re-generate
-            if os.path.exists(temp_seg_raw):
-                os.remove(temp_seg_raw)
-            run_tts(shortened_text, temp_seg_raw)
-            actual_dur = get_audio_duration(temp_seg_raw)
-            logger.info(f"Segment {idx} (shortened): New actual duration = {actual_dur:.2f}s")
-            
+
         # Rule 2: Time-stretching/Speeding up if it still exceeds target by more than the tolerance
-        if actual_dur > target_dur + tolerance:
+        if target_dur > 0 and actual_dur > target_dur + tolerance:
             factor = actual_dur / target_dur
             factor = min(factor, 1.4)  # Safety limit
             logger.info(f"Segment {idx}: Speeding up by {factor:.2f}x to fit target duration...")
