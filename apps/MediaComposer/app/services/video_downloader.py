@@ -61,76 +61,129 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
             else:
                 log_json("download_progress", {"percent": 100.0, "status": "finished"})
 
-    # Setup YoutubeDL options
-    ydl_opts = {
-        # Format selection (đã kiểm chứng thực tế trên TikTok):
-        #  - 'bv*+ba'    : YouTube/Bilibili -> ghép best-video + best-audio (full res, có tiếng).
-        #  - fallback 'b[vcodec!*=h265][vcodec!*=hev]' : TikTok CHỈ có các bản muxed, và bản
-        #    h265/bytevc1 (thường là 1080p) bị TRẢ VỀ VIDEO-ONLY dù metadata ghi có aac →
-        #    phải NÉ h265/hevc để lấy bản h264 (có audio thật, ~540p).
-        #  - fallback cuối 'b' : phòng khi không có bản h264 nào.
-        'format': 'bv*+ba/b[vcodec!*=h265][vcodec!*=hev]/b',
-        'outtmpl': os.path.join(output_dir, 'dl_%(id)s.%(ext)s'),
-        'merge_output_format': 'mp4',
-        'ffmpeg_location': ffmpeg_dir,
-        'noplaylist': True,
-        'quiet': True,
-        'retries': 5,
-        'fragment_retries': 5,
-        'progress_hooks': [ytdl_hook],
-    }
-    
+    # ---- Phân giải cookies (dùng chung cho MỌI lần tải bên dưới) ----
+    resolved_cookiefile = None
     if cookies_file:
         abs_cookies_path = os.path.abspath(cookies_file)
         if not os.path.exists(abs_cookies_path):
             # __file__ = <repo>/AIVoice/apps/MediaComposer/app/services/video_downloader.py
             # -> 4x ".." = AIVoice root ; 5x ".." = repository root (parent of AIVoice)
             this_dir = os.path.dirname(__file__)
-
-            # Try resolving relative to repository root (parent of AIVoice) — vị trí ví dụ UI: configs/cookies_iqiyi.txt
             repo_root = os.path.abspath(os.path.join(this_dir, "..", "..", "..", "..", ".."))
             rel_repo_path = os.path.join(repo_root, cookies_file)
-
-            # Try resolving relative to AIVoice submodule root
             aivoice_root = os.path.abspath(os.path.join(this_dir, "..", "..", "..", ".."))
             rel_aivoice_path = os.path.join(aivoice_root, cookies_file)
-            
             if os.path.exists(rel_repo_path):
                 abs_cookies_path = rel_repo_path
             elif os.path.exists(rel_aivoice_path):
                 abs_cookies_path = rel_aivoice_path
-                
+
         if os.path.exists(abs_cookies_path):
-            ydl_opts['cookiefile'] = abs_cookies_path
+            resolved_cookiefile = abs_cookies_path
             log_json("download_info", {"message": f"Sử dụng file cookies tại: {abs_cookies_path}"})
         else:
             msg = f"Không tìm thấy file cookies tại: {cookies_file}"
             log_json("download_error", {"message": msg})
             raise FileNotFoundError(msg)
-    
-    log_json("download_start", {"url": url, "platform": platform})
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        try:
+
+    def _base_opts():
+        o = {
+            'merge_output_format': 'mp4',
+            'ffmpeg_location': ffmpeg_dir,
+            'noplaylist': True,
+            'quiet': True,
+            'retries': 5,
+            'fragment_retries': 5,
+            'progress_hooks': [ytdl_hook],
+        }
+        if resolved_cookiefile:
+            o['cookiefile'] = resolved_cookiefile
+        return o
+
+    def _download(fmt: str, tmpl: str):
+        """Tải theo 1 format string, trả (đường dẫn tuyệt đối, id)."""
+        opts = _base_opts()
+        opts['format'] = fmt
+        opts['outtmpl'] = os.path.join(output_dir, tmpl)
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            # Ensure the output filename has .mp4 extension
-            base, _ = os.path.splitext(filename)
-            mp4_filename = base + ".mp4"
-            
-            if not os.path.exists(mp4_filename) and os.path.exists(filename):
-                os.rename(filename, mp4_filename)
-                
-            if not os.path.exists(mp4_filename):
-                # Look for downloaded files in output_dir
-                files = os.listdir(output_dir)
-                for f in files:
-                    if f.startswith(f"dl_{info.get('id')}"):
-                        mp4_filename = os.path.join(output_dir, f)
+            fn = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(fn)
+            mp4 = base + ".mp4"
+            if not os.path.exists(mp4):
+                mp4 = fn if os.path.exists(fn) else mp4
+            if not os.path.exists(mp4):
+                prefix = os.path.basename(base)
+                for f in os.listdir(output_dir):
+                    if f.startswith(prefix):
+                        mp4 = os.path.join(output_dir, f)
                         break
-                        
-            log_json("download_done", {"path": mp4_filename})
-            return os.path.abspath(mp4_filename)
+            return os.path.abspath(mp4), info.get('id')
+
+    def _has_audio(path: str) -> bool:
+        try:
+            from moviepy.video.io.VideoFileClip import VideoFileClip
+            c = VideoFileClip(path)
+            ok = c.audio is not None
+            c.close()
+            return ok
         except Exception as e:
-            log_json("download_error", {"error": str(e)})
-            raise RuntimeError(f"Lỗi khi tải video: {e}")
+            log_json("download_warning", {"message": f"Không kiểm tra được luồng audio ({e}) — coi như đã có."})
+            return True  # không chắc chắn -> tránh tải lại thừa
+
+    log_json("download_start", {"url": url, "platform": platform})
+    try:
+        # 1) Tải bản CHẤT LƯỢNG CAO NHẤT (có thể video-only trên TikTok h265 1080p).
+        video_path, vid = _download('bv*+ba/b', 'dl_%(id)s.%(ext)s')
+
+        # 2) Nếu đã có tiếng -> xong (YouTube/Bilibili/đa số trường hợp).
+        if _has_audio(video_path):
+            log_json("download_done", {"path": video_path})
+            return video_path
+
+        # 3) Video HQ không kèm tiếng (TikTok h265): tải luồng audio h264 riêng rồi ffmpeg mux
+        #    -> giữ nguyên độ phân giải cao NHƯNG có tiếng. Loại h265/hevc khỏi nguồn audio vì
+        #    các bản đó khai man có aac mà thực chất video-only.
+        log_json("download_info", {"message": "Bản video HQ không kèm tiếng — đang tải luồng âm thanh riêng để ghép..."})
+        try:
+            audio_src, _ = _download('ba*[vcodec!*=h265][vcodec!*=hev]/b[vcodec!*=h265]', 'audiosrc_%(id)s.%(ext)s')
+        except Exception as e:
+            log_json("download_warning", {"message": f"Không tải được luồng âm thanh riêng ({e}) — trả video không tiếng."})
+            log_json("download_done", {"path": video_path})
+            return video_path
+
+        if not _has_audio(audio_src):
+            log_json("download_warning", {"message": "Nguồn âm thanh tách ra cũng không có tiếng — trả video không tiếng."})
+            try:
+                os.remove(audio_src)
+            except Exception:
+                pass
+            log_json("download_done", {"path": video_path})
+            return video_path
+
+        import subprocess
+        muxed_tmp = os.path.join(output_dir, f"dl_{vid}_av.mp4")
+        cmd = [ffmpeg_bin, "-y", "-i", video_path, "-i", audio_src,
+               "-map", "0:v:0", "-map", "1:a:0", "-c", "copy", muxed_tmp]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            os.remove(audio_src)
+        except Exception:
+            pass
+
+        if r.returncode != 0:
+            log_json("download_warning", {"message": f"Ghép video+audio thất bại — giữ video không tiếng: {r.stderr[-300:]}"})
+            log_json("download_done", {"path": video_path})
+            return video_path
+
+        # Thay bản HQ-không-tiếng bằng bản đã ghép, giữ nguyên tên dl_<id>.mp4
+        try:
+            os.replace(muxed_tmp, video_path)
+            final = video_path
+        except Exception:
+            final = muxed_tmp
+        log_json("download_done", {"path": os.path.abspath(final)})
+        return os.path.abspath(final)
+    except Exception as e:
+        log_json("download_error", {"error": str(e)})
+        raise RuntimeError(f"Lỗi khi tải video: {e}")
