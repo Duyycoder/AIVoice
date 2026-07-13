@@ -75,12 +75,16 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
     if cookies_file:
         abs_cookies_path = os.path.abspath(cookies_file)
         if not os.path.exists(abs_cookies_path):
-            # Try resolving relative to repository root (one level above AIVoice)
-            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+            # __file__ = <repo>/AIVoice/apps/MediaComposer/app/services/video_downloader.py
+            # -> 4x ".." = AIVoice root ; 5x ".." = repository root (parent of AIVoice)
+            this_dir = os.path.dirname(__file__)
+
+            # Try resolving relative to repository root (parent of AIVoice) — vị trí ví dụ UI: configs/cookies_iqiyi.txt
+            repo_root = os.path.abspath(os.path.join(this_dir, "..", "..", "..", "..", ".."))
             rel_repo_path = os.path.join(repo_root, cookies_file)
-            
+
             # Try resolving relative to AIVoice submodule root
-            aivoice_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            aivoice_root = os.path.abspath(os.path.join(this_dir, "..", "..", "..", ".."))
             rel_aivoice_path = os.path.join(aivoice_root, cookies_file)
             
             if os.path.exists(rel_repo_path):
