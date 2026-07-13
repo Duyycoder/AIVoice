@@ -311,27 +311,53 @@ class ComposerWorkflow:
         task_dir = utils.task_dir(task_id)
         logger.info(f"Starting automatic translation workflow for video: {video_path}")
         
-        # 1. Extract audio from video
-        audio_path = os.path.join(task_dir, "extracted_audio.wav")
+        # 1. Extract audio from video (chỉ khi video thực sự có luồng âm thanh)
         ffmpeg_bin = utils.get_ffmpeg_binary()
-        
-        # We convert to mono, 16kHz PCM WAV for Whisper optimization
-        audio_cmd = [
-            ffmpeg_bin,
-            "-y",
-            "-i", video_path,
-            "-vn",
-            "-ac", "1",
-            "-ar", "16000",
-            "-acodec", "pcm_s16le",
-            audio_path
-        ]
-        logger.info(f"Extracting optimized audio track: {' '.join(audio_cmd)}")
-        res = subprocess.run(audio_cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            logger.error(f"Failed to extract audio: {res.stderr}")
-            raise RuntimeError(f"Failed to extract audio track: {res.stderr}")
-            
+        audio_path = os.path.join(task_dir, "extracted_audio.wav")
+
+        # Phát hiện video có audio hay không bằng moviepy (KHÔNG dùng ffprobe — CB5).
+        # Nhiều video mạng xã hội (vd TikTok slideshow, hoặc bản tải bị mất track audio)
+        # chỉ có luồng video → lệnh trích -vn sẽ tạo file rỗng và ffmpeg báo lỗi.
+        has_audio = True
+        try:
+            from moviepy.video.io.VideoFileClip import VideoFileClip
+            _probe = VideoFileClip(video_path)
+            has_audio = _probe.audio is not None
+            _probe.close()
+        except Exception as e:
+            logger.warning(f"Không kiểm tra được luồng âm thanh qua moviepy: {e} — sẽ thử trích trực tiếp.")
+
+        if has_audio:
+            # We convert to mono, 16kHz PCM WAV for Whisper optimization
+            audio_cmd = [
+                ffmpeg_bin,
+                "-y",
+                "-i", video_path,
+                "-vn",
+                "-ac", "1",
+                "-ar", "16000",
+                "-acodec", "pcm_s16le",
+                audio_path
+            ]
+            logger.info(f"Extracting optimized audio track: {' '.join(audio_cmd)}")
+            res = subprocess.run(audio_cmd, capture_output=True, text=True)
+            if res.returncode != 0:
+                logger.error(f"Failed to extract audio: {res.stderr}")
+                raise RuntimeError(f"Failed to extract audio track: {res.stderr}")
+        else:
+            # Video không có audio: Whisper không có gì để nghe. Chỉ chạy tiếp được nếu đã có
+            # SRT nguồn sẵn (chế độ OCR). Lồng tiếng cũng phải tắt vì bước ducking cần audio gốc.
+            audio_path = None
+            if not source_srt_override:
+                raise RuntimeError(
+                    "Video không có luồng âm thanh nên không thể phiên âm bằng Whisper. "
+                    "Hãy dùng chế độ 'Tách chữ trên hình (OCR)', hoặc chọn video có tiếng."
+                )
+            logger.warning("Video gốc không có audio — bỏ qua trích audio, tiếp tục bằng SRT nguồn (OCR).")
+            if enable_voiceover:
+                logger.warning("Tắt lồng tiếng: video gốc không có audio để trộn/ducking.")
+                enable_voiceover = False
+
         if source_srt_override:
             logger.info(f"Dùng SRT nguồn có sẵn (OCR/bên ngoài): {source_srt_override} — bỏ qua Demucs + Whisper")
             source_srt_path = source_srt_override

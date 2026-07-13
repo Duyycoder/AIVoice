@@ -63,7 +63,9 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
 
     # Setup YoutubeDL options
     ydl_opts = {
-        'format': 'mp4/best',
+        # bv*+ba/b: ưu tiên ghép luồng video tốt nhất + audio tốt nhất (tránh tải nhầm bản
+        # video-only như TikTok đôi khi trả về); fallback 'b' là file progressive tốt nhất.
+        'format': 'bv*+ba/b',
         'outtmpl': os.path.join(output_dir, 'dl_%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
         'ffmpeg_location': ffmpeg_dir,
