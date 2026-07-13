@@ -17,10 +17,16 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
     ffmpeg_bin = utils.get_ffmpeg_binary()
     ffmpeg_dir = os.path.dirname(ffmpeg_bin)
     
-    # Append ffmpeg_dir to PATH so yt-dlp can find phantomjs.exe
+    # Append ffmpeg_dir and phantomjs_dir to PATH so yt-dlp can find ffmpeg and phantomjs.exe
+    phantomjs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "third_party", "phantomjs"))
     original_path = os.environ.get("PATH", "")
+    paths_to_add = []
     if ffmpeg_dir not in original_path:
-        os.environ["PATH"] = ffmpeg_dir + os.pathsep + original_path
+        paths_to_add.append(ffmpeg_dir)
+    if phantomjs_dir not in original_path:
+        paths_to_add.append(phantomjs_dir)
+    if paths_to_add:
+        os.environ["PATH"] = os.pathsep.join(paths_to_add) + os.pathsep + original_path
         
     # Progress hook for yt-dlp
     def ytdl_hook(d):
@@ -68,10 +74,27 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
     
     if cookies_file:
         abs_cookies_path = os.path.abspath(cookies_file)
+        if not os.path.exists(abs_cookies_path):
+            # Try resolving relative to repository root (one level above AIVoice)
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+            rel_repo_path = os.path.join(repo_root, cookies_file)
+            
+            # Try resolving relative to AIVoice submodule root
+            aivoice_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            rel_aivoice_path = os.path.join(aivoice_root, cookies_file)
+            
+            if os.path.exists(rel_repo_path):
+                abs_cookies_path = rel_repo_path
+            elif os.path.exists(rel_aivoice_path):
+                abs_cookies_path = rel_aivoice_path
+                
         if os.path.exists(abs_cookies_path):
             ydl_opts['cookiefile'] = abs_cookies_path
+            log_json("download_info", {"message": f"Sử dụng file cookies tại: {abs_cookies_path}"})
         else:
-            log_json("download_warning", {"message": f"Không tìm thấy file cookies tại: {cookies_file}"})
+            msg = f"Không tìm thấy file cookies tại: {cookies_file}"
+            log_json("download_error", {"message": msg})
+            raise FileNotFoundError(msg)
     
     log_json("download_start", {"url": url, "platform": platform})
     

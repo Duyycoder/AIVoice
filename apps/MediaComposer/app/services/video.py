@@ -1496,6 +1496,14 @@ def burn_subtitles_ffmpeg(
     # Replace backslashes with forward slashes for the ffmpeg subtitles filter parameter
     sub_filter_path = rel_sub.replace("\\", "/")
     
+    # F1: Resolve relative path to fonts directory so libass can load custom fonts
+    font_dir_abs = utils.font_dir()
+    try:
+        rel_fonts = os.path.relpath(font_dir_abs, start=work_dir).replace("\\", "/")
+    except ValueError:
+        rel_fonts = font_dir_abs.replace("\\", "/")  # cross-drive fallback
+    fonts_dir_opt = f":fontsdir='{rel_fonts}'"
+    
     # Build force_style parameter for subtitles filter
     force_style_parts = []
     if font_name:
@@ -1554,7 +1562,16 @@ def burn_subtitles_ffmpeg(
     
     if position == "custom" and custom_y_ratio is not None:
         try:
-            margin_v = int((100 - custom_y_ratio) * 3.6)
+            video_height = 360  # Default fallback
+            try:
+                from moviepy.video.io.VideoFileClip import VideoFileClip
+                clip = VideoFileClip(abs_video_path)
+                video_height = clip.size[1]
+                clip.close()
+            except Exception as e:
+                logger.warning(f"Could not read video height via moviepy: {e}. Using fallback 360.")
+                
+            margin_v = int((100 - custom_y_ratio) * (video_height / 100.0))
             force_style_parts.append(f"MarginV={margin_v}")
         except Exception:
             pass
@@ -1578,7 +1595,7 @@ def burn_subtitles_ffmpeg(
             "-y",
             "-i", rel_video,
             "-i", rel_audio,
-            "-vf", f"subtitles={sub_filter_path}{force_style_str}",
+            "-vf", f"subtitles={sub_filter_path}{fonts_dir_opt}{force_style_str}",
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-c:v", codec
@@ -1591,7 +1608,7 @@ def burn_subtitles_ffmpeg(
             ffmpeg_exe,
             "-y",
             "-i", rel_video,
-            "-vf", f"subtitles={sub_filter_path}{force_style_str}",
+            "-vf", f"subtitles={sub_filter_path}{fonts_dir_opt}{force_style_str}",
             "-c:v", codec
         ] + codec_args + [
             "-c:a", "copy",
