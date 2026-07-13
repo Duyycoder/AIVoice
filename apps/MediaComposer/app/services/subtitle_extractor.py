@@ -3,7 +3,74 @@ os.environ['FLAGS_use_onednn'] = '0'
 os.environ['FLAGS_use_mkldnn'] = '0'
 os.environ['PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT'] = '0'
 os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+
 import sys
+if __name__ == "__main__":
+    # DLL collision safety: Mock torch to prevent modelscope/paddlex from loading real PyTorch CUDA DLLs
+    import types
+    from unittest.mock import MagicMock
+
+    class MockMetaclass(type):
+        def __getattr__(cls, name):
+            return MockClass
+        def __call__(cls, *args, **kwargs):
+            return MockInstance()
+
+    class MockClass(metaclass=MockMetaclass):
+        pass
+
+    class MockInstance:
+        def __getattr__(self, name):
+            return self
+        def __call__(self, *args, **kwargs):
+            return self
+        def __bool__(self):
+            return False
+        def __iter__(self):
+            return iter([])
+
+    KNOWN_CLASSES = {'device', 'dtype', 'Tensor', 'Module', 'Parameter'}
+
+    class DynamicMockModule(types.ModuleType):
+        def __init__(self, name):
+            super().__init__(name)
+            self.__path__ = []
+            self.__spec__ = sys.modules['os'].__spec__
+            
+        def __getattr__(self, name):
+            if name[0].isupper() or name in KNOWN_CLASSES:
+                return MockClass
+            sub_name = f"{self.__name__}.{name}"
+            if sub_name not in sys.modules:
+                sys.modules[sub_name] = DynamicMockModule(sub_name)
+            sub_m = sys.modules[sub_name]
+            setattr(self, name, sub_m)
+            return sub_m
+
+        def __call__(self, *args, **kwargs):
+            return self
+
+        def __bool__(self):
+            return False
+
+    torch_mock = DynamicMockModule('torch')
+    sys.modules['torch'] = torch_mock
+
+    submodules = [
+        'torch.multiprocessing', 'torch.distributed', 'torch.nn', 'torch.utils',
+        'torch.utils.data', 'torch.cuda', 'torch.jit', 'torch.optim', 'torch.autograd',
+        'torch.nn.functional', 'torch.nn.init', 'torch.nn.parameter', 'torch.nn.modules',
+    ]
+    for sub in submodules:
+        sub_mock = DynamicMockModule(sub)
+        sys.modules[sub] = sub_mock
+        parts = sub.split('.')
+        parent = torch_mock
+        for part in parts[1:-1]:
+            parent = getattr(parent, part)
+        setattr(parent, parts[-1], sub_mock)
+
+import paddle
 import subprocess
 import json
 from app.utils import utils
@@ -113,8 +180,17 @@ def extract_hardsub_ocr_srt(
             kwargs["crop_width"] = crop_width
             kwargs["crop_height"] = crop_height
             
-        log_json("ocr_progress", {"message": "Đang chạy trích xuất phụ đề OCR (PaddleOCR)..."})
-        save_subtitles_to_file(**kwargs)
+        if use_gpu:
+            try:
+                log_json("ocr_progress", {"message": "Đang chạy trích xuất phụ đề OCR (PaddleOCR) trên GPU..."})
+                save_subtitles_to_file(**kwargs)
+            except Exception as e:
+                log_json("ocr_progress", {"message": f"Lỗi chạy GPU OCR ({e}). Đang tự động chuyển sang chế độ CPU..."})
+                kwargs["use_gpu"] = False
+                save_subtitles_to_file(**kwargs)
+        else:
+            log_json("ocr_progress", {"message": "Đang chạy trích xuất phụ đề OCR (PaddleOCR) trên CPU..."})
+            save_subtitles_to_file(**kwargs)
         
         if not os.path.exists(output_srt) or os.path.getsize(output_srt) == 0:
             raise RuntimeError("OCR failed to generate subtitle file or generated file is empty.")
@@ -124,3 +200,42 @@ def extract_hardsub_ocr_srt(
     except Exception as e:
         log_json("ocr_error", {"error": str(e)})
         raise e
+    finally:
+        # Giải phóng VRAM paddle sau OCR
+        try:
+            import paddle
+            paddle.device.cuda.empty_cache()
+        except Exception:
+            pass
+        import gc
+        gc.collect()
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Standalone subtitle extractor")
+    parser.add_argument("--video-path", required=True)
+    parser.add_argument("--output-srt", required=True)
+    parser.add_argument("--lang", default="ch")
+    parser.add_argument("--crop-x", type=int, default=-1)
+    parser.add_argument("--crop-y", type=int, default=-1)
+    parser.add_argument("--crop-w", type=int, default=-1)
+    parser.add_argument("--crop-h", type=int, default=-1)
+    parser.add_argument("--use-gpu", action="store_true")
+    args = parser.parse_args()
+
+    crop = None
+    if args.crop_x >= 0 and args.crop_y >= 0 and args.crop_w > 0 and args.crop_h > 0:
+        crop = (args.crop_x, args.crop_y, args.crop_w, args.crop_h)
+
+    try:
+        extract_hardsub_ocr_srt(
+            video_path=args.video_path,
+            output_srt=args.output_srt,
+            lang=args.lang,
+            crop=crop,
+            use_gpu=args.use_gpu
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

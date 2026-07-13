@@ -54,6 +54,7 @@ def main():
     parser.add_argument("--sub-position", default=None, choices=["bottom", "top", "center", "custom"], help="Subtitle position on video")
     parser.add_argument("--custom-position", type=float, default=None, help="Custom Y ratio (0-100 from top)")
     parser.add_argument("--cookies-file", default=None, help="Path to cookies file for video downloader")
+    parser.add_argument("--use-gpu", action="store_true", default=False, help="Use GPU for PaddleOCR")
 
     args = parser.parse_args()
     
@@ -107,7 +108,6 @@ def main():
 
         source_srt = ""
         if args.sub_source == "ocr":
-            from app.services.subtitle_extractor import extract_hardsub_ocr_srt
             ocr_srt_path = os.path.join(task_dir, "ocr_subtitles.srt")
             
             crop_tuple = None
@@ -115,12 +115,57 @@ def main():
                 crop_tuple = (args.crop_x, args.crop_y, args.crop_w, args.crop_h)
                 
             ocr_lang = "ch" if args.source_lang.lower() in ["chinese", "zh"] else "en"
-            source_srt = extract_hardsub_ocr_srt(
-                video_path=video_path,
-                output_srt=ocr_srt_path,
-                lang=ocr_lang,
-                crop=crop_tuple
+            
+            # Run OCR in a separate subprocess to avoid CUDA/cuDNN DLL conflicts with PyTorch/Composer
+            log_json("autosub_progress", {"message": "Khởi động tiến trình con PaddleOCR...", "percent": 5})
+            
+            import subprocess
+            cmd_ocr = [
+                sys.executable,
+                "-m", "app.services.subtitle_extractor",
+                "--video-path", video_path,
+                "--output-srt", ocr_srt_path,
+                "--lang", ocr_lang
+            ]
+            if crop_tuple:
+                cmd_ocr.extend([
+                    "--crop-x", str(crop_tuple[0]),
+                    "--crop-y", str(crop_tuple[1]),
+                    "--crop-w", str(crop_tuple[2]),
+                    "--crop-h", str(crop_tuple[3])
+                ])
+            if args.use_gpu:
+                cmd_ocr.append("--use-gpu")
+                
+            # Setup environment with PYTHONPATH containing MediaComposer roots
+            env = os.environ.copy()
+            mc_root = os.path.dirname(os.path.abspath(__file__))
+            paths = [mc_root, os.path.join(mc_root, "app")]
+            existing_pythonpath = env.get("PYTHONPATH", "")
+            if existing_pythonpath:
+                paths.append(existing_pythonpath)
+            env["PYTHONPATH"] = os.pathsep.join(paths)
+            
+            proc = subprocess.Popen(
+                cmd_ocr,
+                stdout=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                env=env,
+                cwd=mc_root
             )
+            
+            # Pipe output to stdout in real-time for orchestrator tracking
+            for line in proc.stdout:
+                print(line, end="")
+                sys.stdout.flush()
+                
+            returncode = proc.wait()
+                
+            if returncode != 0:
+                raise RuntimeError(f"OCR Subprocess failed with exit code {returncode}")
+                
+            source_srt = ocr_srt_path
 
         # Run translation workflow
         from app.services.composer import composer
