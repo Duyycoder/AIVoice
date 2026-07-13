@@ -63,14 +63,20 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
 
     # Setup YoutubeDL options
     ydl_opts = {
-        # bv*+ba/b: ưu tiên ghép luồng video tốt nhất + audio tốt nhất (tránh tải nhầm bản
-        # video-only như TikTok đôi khi trả về); fallback 'b' là file progressive tốt nhất.
-        'format': 'bv*+ba/b',
+        # Format selection (đã kiểm chứng thực tế trên TikTok):
+        #  - 'bv*+ba'    : YouTube/Bilibili -> ghép best-video + best-audio (full res, có tiếng).
+        #  - fallback 'b[vcodec!*=h265][vcodec!*=hev]' : TikTok CHỈ có các bản muxed, và bản
+        #    h265/bytevc1 (thường là 1080p) bị TRẢ VỀ VIDEO-ONLY dù metadata ghi có aac →
+        #    phải NÉ h265/hevc để lấy bản h264 (có audio thật, ~540p).
+        #  - fallback cuối 'b' : phòng khi không có bản h264 nào.
+        'format': 'bv*+ba/b[vcodec!*=h265][vcodec!*=hev]/b',
         'outtmpl': os.path.join(output_dir, 'dl_%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
         'ffmpeg_location': ffmpeg_dir,
         'noplaylist': True,
         'quiet': True,
+        'retries': 5,
+        'fragment_retries': 5,
         'progress_hooks': [ytdl_hook],
     }
     
