@@ -39,6 +39,8 @@ def main():
     parser.add_argument("--enable-face-detailer", action="store_true", default=False, help="Enable Face Detailer")
     parser.add_argument("--no-face-detailer", action="store_false", dest="enable_face_detailer", help="Disable Face Detailer")
     parser.add_argument("--hardware-profile", default="auto", help="Hardware profile: auto, cuda_high, cuda_low, cpu")
+    parser.add_argument("--render-mode", default="classic", choices=["classic", "studio"],
+                        help="classic = 1 anh/canh (cu); studio = render theo lop (nen + nhan vat) roi ghep")
     parser.add_argument("--style", default="anime_2d_flat", help="Art style name")
     parser.add_argument("--checkpoint", default="anything-v5", help="Stable Diffusion checkpoint path or hugginface name")
     parser.add_argument("--llm-api-key", default=None, help="LLM API key")
@@ -51,6 +53,7 @@ def main():
         from app.config import config
         config.storytelling["hardware_profile"] = args.hardware_profile
         config.storytelling["enable_face_detailer"] = args.enable_face_detailer
+        config.storytelling["render_mode"] = args.render_mode
         config.save_config()
 
         # In-memory overrides for LLM (not persisted to config.toml)
