@@ -117,11 +117,37 @@ class ImageGenTask:
     primary_character: str
     style_preset: str
 
-@dataclass 
+@dataclass
 class ImageGenResult:
     task_id: int
     image_path: str
     seed: int
     prompt_used: str
     character_slugs: List[str]
+
+
+# ---------------------------------------------------------------------------
+# Studio Compositing (nhánh feat/studio-compositing) — render theo lớp.
+# Các dataclass này KHÔNG được nhúng vào Scene (tránh ảnh hưởng asdict/state.json);
+# StudioPipeline tính LayerPlan tạm thời cho mỗi cảnh khi render.
+# ---------------------------------------------------------------------------
+@dataclass
+class CharacterLayer:
+    """Một lớp nhân vật đặt lên nền khi ghép cảnh."""
+    slug: str                    # nhân vật (khớp ContextManager)
+    prompt: str                  # mô tả ngoại hình (KHÔNG mô tả nền)
+    anchor_x: str = "center"     # trục ngang: left | center | right
+    anchor_y: str = "bottom"     # trục dọc: bottom | middle (tùy bối cảnh)
+    scale: float = 0.9           # tỉ lệ chiều cao lớp so với khung (0-1)
+    z_order: int = 0             # lớn hơn = phía trước
+    flip: bool = False           # lật ngang
+
+
+@dataclass
+class LayerPlan:
+    """Kế hoạch ghép 1 cảnh: 1 nền + N lớp nhân vật."""
+    location_id: str                              # khoá cache nền
+    background_prompt: str                        # prompt nền (no humans, scenery)
+    characters: List[CharacterLayer] = field(default_factory=list)
+    render_mode: str = "studio"                   # "studio" | "classic" (fallback)
 

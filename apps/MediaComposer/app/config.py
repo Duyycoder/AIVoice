@@ -56,6 +56,25 @@ class Config:
             "face_detailer_skip_sim": 0.62,
             # Mức độ giống nhân vật (IP-Adapter) — nguồn sự thật chung cho Studio + Batch
             "ip_adapter_scale": 0.6,
+            # ----------------------------------------------------------------
+            # STUDIO COMPOSITING (nhánh feat/studio-compositing) — render theo lớp.
+            # Mặc định "classic" ⇒ giữ nguyên hành vi cũ; đặt "studio" để bật.
+            # ----------------------------------------------------------------
+            "render_mode": "classic",              # "classic" | "studio"
+            "studio_bg_cache": True,               # tái dùng nền theo location
+            "studio_layout_source": "heuristic",   # "heuristic" | "llm" (llm bật ở P3)
+            "studio_matte_bg_color": "#00B140",    # màu nền phẳng để chroma-key
+            "studio_matte_threshold": 0.18,        # ngưỡng khoảng cách màu (0-1) tách nền
+            "studio_matte_feather_px": 3,          # làm mềm mép alpha
+            "studio_matte_despill": True,          # khử ám màu nền ở viền
+            "studio_char_use_detailer": True,      # detailer chỉ chạy ở lớp nhân vật
+            "studio_char_use_ip_adapter": True,    # dùng ảnh ref (IP-Adapter) cho nhân vật
+            # Auto-fallback về classic cho cảnh khó
+            "studio_fallback_max_chars": 3,        # > ngưỡng → render classic cả cảnh
+            "studio_fallback_interaction_tags": [
+                "hug", "embrace", "fight", "holding hands", "carry", "kiss"
+            ],
+            "studio_shadow_opacity": 0.0,          # 0 = tắt bóng đổ (bật ở P4)
         }
         self.proxy = None
         self.load_config()

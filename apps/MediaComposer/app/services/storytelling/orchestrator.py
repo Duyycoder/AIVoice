@@ -345,7 +345,24 @@ class StorytellingOrchestrator:
         st_config = load_storytelling_config()
         img_w = st_config.get("image_width", 896)
         img_h = st_config.get("image_height", 512)
-        
+
+        # ------------------------------------------------------------------
+        # STUDIO COMPOSITING (feature flag render_mode="studio"): render theo
+        # lớp (nền + nhân vật riêng) rồi ghép. Reroll giữ luồng classic.
+        # Mặc định "classic" → bỏ qua khối này, hành vi cũ nguyên vẹn.
+        # ------------------------------------------------------------------
+        if st_config.get("render_mode", "classic") == "studio" and reroll_index is None:
+            from app.services.llm import unload_local_llm
+            unload_local_llm()
+            from app.services.storytelling.studio.studio_pipeline import StudioPipeline
+            StudioPipeline(self.ctx_mgr, self.context).run_batch(scenes, draft_dir, update_prog)
+            state = self.load_state() or {}
+            self.save_state("STORYBOARD_READY", scenes, task_dir,
+                            state.get("audio_path", ""), state.get("srt_path", ""),
+                            state.get("md_path", ""))
+            update_prog("Hoàn thành Trạm 2 (Studio): Storyboard đã sẵn sàng!", 100)
+            return scenes
+
         update_prog("4. Sinh hình ảnh SD (image_generator)... Đang warmup model", 10 if reroll_index is None else 20)
         # Giải phóng LLM local (Ollama) khỏi VRAM TRƯỚC khi nạp Stable Diffusion.
         # Trên GPU 6GB, Ollama qwen (~3-5GB) neo trong VRAM sẽ va chạm với SD gây OOM.
