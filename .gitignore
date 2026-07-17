@@ -16,4 +16,5 @@ tmp/
 *.pyc
 apps/MediaComposer/config.toml
 apps/MediaComposer/third_party/
+apps/MediaComposer/ai_images/
 

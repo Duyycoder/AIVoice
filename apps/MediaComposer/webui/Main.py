@@ -640,13 +640,14 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Manual Mode (Upload)", 
-    "Auto Mode (Fetch)", 
-    "Split Video (Workflow 3)", 
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Manual Mode (Upload)",
+    "Auto Mode (Fetch)",
+    "Split Video (Workflow 3)",
     "Auto Translate & Sub (Workflow 4)",
     "📖 AI Storytelling 2D",
-    "🎬 Video Upscale (Workflow 6)"
+    "🎬 Video Upscale (Workflow 6)",
+    "🎨 Tạo Ảnh AI (Workflow 7)"
 ])
 
 def save_uploaded_file(uploaded_file, dest_dir):
@@ -2978,6 +2979,184 @@ with tab6:
                         mime="video/mp4",
                         key="dl_upscaled_video_immediate"
                     )
+
+with tab7:
+    st.header("Workflow 7: Tạo Ảnh AI (Text-to-Image)")
+    st.markdown("Nhập prompt, chọn mô hình và tinh chỉnh thông số sinh ảnh — không cần tạo bộ truyện hay nhân vật.")
+
+    qi_provider = config.storytelling.get("image_gen_provider", "Stable Diffusion (Local GPU)")
+    if qi_provider == "Local Gemini (API)":
+        st.warning("⚠️ Bộ sinh ảnh toàn cục đang là **Local Gemini (API)** (đổi trong tab AI Storytelling → BỘ SINH ẢNH & MÔ HÌNH). "
+                   "Ảnh sẽ được sinh qua Gemini API — mô hình SD và các thông số bên dưới sẽ bị BỎ QUA.")
+
+    # --- Chọn mô hình ---
+    qi_model_options = {
+        "Anything V5 (Anime chuyên dụng)": "stablediffusionapi/anything-v5",
+        "DreamShaper 8 (Đa năng nhất — Anime + Semi-realistic)": "lykon/dreamshaper-8",
+        "Realistic Vision 6 (Chân thực — Photorealistic)": "nyz3/Realistic_Vision_V6.0_B1_VAE",
+        "CyberRealistic (Chân thực + Ánh sáng mạnh)": "cyberdelia/CyberRealistic",
+        "Tùy chỉnh (Repo HuggingFace / đường dẫn local)...": "__custom__",
+    }
+    qi_model_label = st.selectbox(
+        "🧠 Mô hình sinh ảnh (Checkpoint)",
+        list(qi_model_options.keys()),
+        index=1,
+        key="qi_model",
+        help="Model chỉ được tải/đổi khi bấm Tạo Ảnh. Lần đầu dùng một model sẽ mất vài phút để tải về."
+    )
+    qi_checkpoint = qi_model_options[qi_model_label]
+    if qi_checkpoint == "__custom__":
+        qi_checkpoint = st.text_input(
+            "Repo HuggingFace hoặc đường dẫn model cục bộ",
+            placeholder="VD: lykon/dreamshaper-8 hoặc D:/models/my_model",
+            key="qi_custom_ckpt"
+        ).strip()
+
+    # --- Prompt ---
+    qi_prompt = st.text_area(
+        "📝 Prompt (tiếng Anh — hỗ trợ cú pháp trọng số (tag:1.3))",
+        height=120,
+        placeholder="VD: 1girl, silver hair, hanfu, ancient chinese palace, moonlight, cinematic lighting",
+        key="qi_prompt"
+    )
+    qi_neg = st.text_area(
+        "❌ Negative Prompt",
+        value="(worst quality, low quality:1.4), lowres, bad anatomy, bad hands, extra fingers, watermark, text, jpeg artifacts",
+        height=70,
+        key="qi_neg",
+        help="Chỉ có tác dụng khi Guidance Scale > 1.0 (CFG bật)."
+    )
+
+    # --- Thông số sinh ảnh ---
+    with st.expander("⚙️ Thông số sinh ảnh", expanded=True):
+        _qi_cfg = load_storytelling_config()
+        col_size, col_num = st.columns(2)
+        with col_size:
+            qi_aspect = st.selectbox(
+                "Tỷ lệ ảnh (Aspect Ratio)",
+                ["16:9 (Landscape)", "9:16 (Portrait)", "1:1 (Square)", "4:3 (Ngang Cổ Điển)", "3:4 (Dọc Cổ Điển)", "21:9 (Cinematic)", "Kích thước tùy chỉnh..."],
+                index=0,
+                key="qi_aspect",
+                help="SD1.5 được train ở ~512px nên khung càng rộng/dài càng dễ lặp nhân vật hoặc méo bố cục. 16:9 và 1:1 an toàn nhất."
+            )
+        with col_num:
+            qi_num = st.slider("Số ảnh muốn tạo", 1, 8, 1, key="qi_num",
+                               help="Sinh tuần tự từng ảnh để tiết kiệm VRAM. Seed cố định sẽ tự +1 cho mỗi ảnh tiếp theo.")
+
+        # Cạnh dài <=768 cho SD1.5 (giống 2 chế độ sinh ảnh của Storytelling)
+        qi_ratio_map = {
+            "16:9 (Landscape)": (768, 432),
+            "9:16 (Portrait)": (432, 768),
+            "1:1 (Square)": (640, 640),
+            "4:3 (Ngang Cổ Điển)": (704, 528),
+            "3:4 (Dọc Cổ Điển)": (528, 704),
+            "21:9 (Cinematic)": (768, 328),
+        }
+        if qi_aspect == "Kích thước tùy chỉnh...":
+            col_w, col_h = st.columns(2)
+            with col_w:
+                qi_w = st.number_input("Chiều rộng (px)", min_value=256, max_value=1024, value=768, step=8, key="qi_w")
+            with col_h:
+                qi_h = st.number_input("Chiều cao (px)", min_value=256, max_value=1024, value=432, step=8, key="qi_h")
+        else:
+            qi_w, qi_h = qi_ratio_map[qi_aspect]
+            st.caption(f"📐 Kích thước sinh: **{qi_w} × {qi_h}px**")
+
+        qi_steps = st.slider(
+            "Inference Steps", 1, 50, int(_qi_cfg.get("num_inference_steps", 8)), key="qi_steps",
+            help="Số bước khử nhiễu — càng cao càng chi tiết nhưng càng chậm.\n\n• 1–14: tự động dùng chế độ NHANH (Hyper-SD LoRA) — hợp với 2/4/8 steps, nên để Guidance ≤ 1.5 (hoặc 5.0 với bản CFG-lora 8 steps).\n• 15–50: chế độ CHẤT LƯỢNG (DPM++ Karras) — 25 là điểm cân bằng tốt; trên 35 gần như không đẹp thêm."
+        )
+        qi_guidance = st.slider(
+            "Guidance Scale (CFG)", 0.0, 20.0, float(_qi_cfg.get("guidance_scale", 5.0)), 0.5, key="qi_guidance",
+            help="Mức độ 'nghe lời' prompt.\n\n• ≤ 1.0: TẮT CFG — nhanh gấp đôi nhưng Negative Prompt bị BỎ QUA (chỉ dùng với chế độ nhanh Hyper-SD).\n• 5–8: chuẩn cho chế độ chất lượng — bám prompt tốt, màu tự nhiên.\n• > 10: bám prompt quá gắt → màu cháy, ảnh 'nhựa'."
+        )
+        qi_seed = st.number_input(
+            "Seed (-1 = Random)", value=-1, key="qi_seed",
+            help="Cùng seed + cùng prompt + cùng thông số = ra đúng ảnh đó lại. Đặt -1 để mỗi lần ra biến thể mới."
+        )
+
+    qi_out_dir = os.path.join(st.session_state.get("output_folder", root_dir), "ai_images")
+    st.info(f"📁 Ảnh sẽ được lưu vào: `{qi_out_dir}`")
+
+    if st.button("🎨 Tạo Ảnh", type="primary", key="qi_generate"):
+        if not qi_prompt.strip():
+            st.error("Vui lòng nhập prompt!")
+        elif not qi_checkpoint:
+            st.error("Vui lòng nhập repo HuggingFace hoặc đường dẫn model tùy chỉnh!")
+        else:
+            from app.services.storytelling.image_generator import StorytellingPipeline
+            from app.services.storytelling.models import StoryContext
+
+            os.makedirs(qi_out_dir, exist_ok=True)
+
+            # Truyền checkpoint qua StoryContext — pipeline singleton tự release/reload khi đổi model
+            qi_ctx = StoryContext(story_name="QuickImageGen", story_slug="quick_image_gen",
+                                  genre="", checkpoint=qi_checkpoint)
+            qi_pipeline = StorytellingPipeline(qi_ctx)
+            if hasattr(qi_pipeline, "set_character_lora"):
+                qi_pipeline.set_character_lora(None)  # tab này không dùng LoRA nhân vật
+
+            qi_progress_text = st.empty()
+            qi_progress_bar = st.progress(0)
+            qi_results = []
+            try:
+                qi_progress_text.text("Đang tải mô hình (lần đầu có thể mất vài phút)...")
+                qi_pipeline.warmup(num_steps=int(qi_steps), guidance_scale=float(qi_guidance))
+                for _w in qi_pipeline.warnings:
+                    st.warning(_w)
+
+                total = int(qi_num)
+                stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                for i in range(total):
+                    qi_progress_text.text(f"Đang sinh ảnh {i + 1}/{total}...")
+                    seed_i = -1 if int(qi_seed) == -1 else int(qi_seed) + i
+                    img, used_seed = qi_pipeline.generate_draft(
+                        prompt=qi_prompt.strip(),
+                        negative_prompt=qi_neg.strip(),
+                        face_embedding=None,
+                        face_image=None,
+                        seed=seed_i,
+                        width=int(qi_w),
+                        height=int(qi_h),
+                        num_steps=int(qi_steps),
+                        guidance_scale=float(qi_guidance),
+                    )
+                    out_path = os.path.join(qi_out_dir, f"img_{stamp}_{i + 1}_seed{used_seed}.png")
+                    img.save(out_path)
+                    qi_results.append({"path": out_path, "seed": used_seed})
+                    qi_progress_bar.progress((i + 1) / total)
+            except Exception as ex:
+                import traceback
+                logger.error(f"Lỗi Workflow 7 (Tạo Ảnh AI): {ex}")
+                logger.error(traceback.format_exc())
+                st.error(f"Lỗi sinh ảnh: {ex}")
+            finally:
+                try:
+                    qi_pipeline.free_vram_cache()
+                except Exception:
+                    pass
+
+            if qi_results:
+                st.session_state["qi_results"] = qi_results
+                qi_progress_text.text("")
+
+    # Kết quả giữ trong session_state để không mất khi Streamlit rerun
+    if st.session_state.get("qi_results"):
+        saved_results = [r for r in st.session_state["qi_results"] if os.path.exists(r["path"])]
+        if saved_results:
+            st.success(f"✅ Đã tạo {len(saved_results)} ảnh!")
+            qi_cols = st.columns(3)
+            for idx, r in enumerate(saved_results):
+                with qi_cols[idx % 3]:
+                    st.image(r["path"], caption=f"Seed: {r['seed']}")
+                    with open(r["path"], "rb") as f:
+                        st.download_button(
+                            label="📥 Tải xuống",
+                            data=f.read(),
+                            file_name=os.path.basename(r["path"]),
+                            mime="image/png",
+                            key=f"qi_dl_{idx}"
+                        )
 
 
 
