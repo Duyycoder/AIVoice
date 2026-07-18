@@ -1,0 +1,51 @@
+name: AIVoice CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'feat/**'
+      - 'dev/**'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/MediaComposer
+
+jobs:
+  gpu-free-checks:
+    name: Studio lint, compile and tests (GPU-free)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install lean test dependencies
+        run: >-
+          python -m pip install ruff pytest numpy pillow loguru openai toml
+          opencv-python-headless
+
+      - name: Critical lint
+        run: python -m ruff check app tests --select E9,F63,F7,F82
+
+      - name: Compile storytelling modules
+        run: python -m compileall app/services/storytelling -q
+
+      - name: Run GPU-free suite
+        run: python -m pytest tests -q
