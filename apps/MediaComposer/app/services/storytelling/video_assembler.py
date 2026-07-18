@@ -165,7 +165,16 @@ def assemble_video(
         shutil.copyfile(srt_path, temp_srt_path)
         # FIX: áp đầy đủ style phụ đề từ config (màu, viền, vị trí) thay vì chỉ font+size
         sub_style = _build_subtitle_style(st_config)
-        vf = f"subtitles='temp_sub.srt':force_style='{sub_style}'"
+        
+        from app.utils import utils
+        font_dir_abs = utils.font_dir()
+        try:
+            rel_fonts = os.path.relpath(font_dir_abs, start=work_dir).replace("\\", "/")
+        except ValueError:
+            rel_fonts = font_dir_abs.replace("\\", "/")
+        fonts_dir_opt = f":fontsdir='{rel_fonts}'"
+        
+        vf = f"subtitles='temp_sub.srt'{fonts_dir_opt}:force_style='{sub_style}'"
         cmd2.extend(["-vf", vf])
 
     total_dur = sum(f.duration_sec for f in frames)
@@ -216,7 +225,16 @@ def generate_draft_video(
         shutil.copyfile(srt_path, temp_srt_path)
         font_name = _get_valid_font(st_config.get("subtitle_font", "Arial"))
         font_size = max(14, int(st_config.get("subtitle_font_size", 28) * 0.6))
-        vf = f"scale={draft_w}:{draft_h},subtitles='draft_temp_sub.srt':force_style='FontName={font_name},FontSize={font_size}'"
+        
+        from app.utils import utils
+        font_dir_abs = utils.font_dir()
+        try:
+            rel_fonts = os.path.relpath(font_dir_abs, start=work_dir).replace("\\", "/")
+        except ValueError:
+            rel_fonts = font_dir_abs.replace("\\", "/")
+        fonts_dir_opt = f":fontsdir='{rel_fonts}'"
+        
+        vf = f"scale={draft_w}:{draft_h},subtitles='draft_temp_sub.srt'{fonts_dir_opt}:force_style='FontName={font_name},FontSize={font_size}'"
     else:
         vf = f"scale={draft_w}:{draft_h}"
     
