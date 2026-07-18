@@ -56,7 +56,8 @@ def scan_batch_dir(batch_dir: str) -> List[BatchItem]:
         return items
 
     # Layout 1: flat files
-    md_files = {}
+    md_files_all = {}
+    md_files_vi = {}
     audio_files = {}
     srt_files = {}
 
@@ -67,12 +68,19 @@ def scan_batch_dir(batch_dir: str) -> List[BatchItem]:
         stem, ext = os.path.splitext(f)
         ext_lower = ext.lower()
         if ext_lower == ".md":
+            md_files_all[stem] = fpath
+            # Đánh dấu " - [VI] " là định dạng đầu ra của pipeline TTS (bản dịch).
             if " - [VI] " in f:
-                md_files[stem] = fpath
+                md_files_vi[stem] = fpath
         elif ext_lower in AUDIO_EXTENSIONS:
             audio_files[stem] = fpath
         elif ext_lower == ".srt":
             srt_files[stem] = fpath
+
+    # Nếu thư mục có bản dịch [VI] (đầu ra TTS lẫn cả file nguồn gốc), chỉ ghép
+    # đúng các bản [VI]. Ngược lại (tên phẳng thông thường: ep01.md + ep01.wav)
+    # ghép mọi .md theo stem — đồng nhất với layout thư mục con bên dưới.
+    md_files = md_files_vi if md_files_vi else md_files_all
 
     for stem, md_path in sorted(md_files.items()):
         if stem in audio_files:
@@ -338,6 +346,19 @@ def _process_single_item_pass_a(
             use_semantic_split=use_semantic_split,
             state_path_override=item_state_path,
         )
+        # FIX (bug batch): step1 tạo task_dir uuid RIÊNG (chứa frames) nhưng state.json
+        # lại được lưu ở item_state_path (batch dir). Pass B đọc state THEO task_dir đã
+        # lưu → lệch chỗ → "Không thể load state". Dời state.json vào chính task_dir của
+        # step1 để Pass A/B khớp nhau.
+        aligned_state_path = os.path.join(task_dir, "state.json")
+        if os.path.abspath(aligned_state_path) != os.path.abspath(item_state_path):
+            prev = orchestrator.load_state() or {}
+            orchestrator._state_path_override = aligned_state_path
+            orchestrator.save_state(
+                "SCRIPT_READY", scenes, task_dir,
+                prev.get("audio_path", ""), prev.get("srt_path", ""), prev.get("md_path", ""),
+            )
+            item_state_path = aligned_state_path
         state.update_item(item.stem, STATUS_SCRIPT_DONE, task_dir=task_dir)
         current_status = STATUS_SCRIPT_DONE
     else:
