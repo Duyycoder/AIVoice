@@ -81,7 +81,11 @@ Given Vietnamese text from a novel scene, output a JSON object matching exactly 
   "image_prompt": "tag1, tag2, tag3",
   "characters": ["Name1", "Name2"],
   "primary_character": "Name1",
-  "shot_type": "close|medium|wide"
+  "shot_type": "close|medium|wide",
+  "background_prompt": "optional string - clean background description for separate BG rendering",
+  "layout": [
+    {{"name": "Name1", "anchor_x": 0.5, "anchor_y": 0.9, "scale": 0.8, "z": 0}}
+  ]
 }}
 
 {genre_rules}
@@ -176,6 +180,10 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryCo
             # T5: cỡ cảnh — quyết định khung sinh ảnh (close=dọc mặt to)
             raw_shot = str(data.get("shot_type", "")).strip().lower()
             scene.shot_type = raw_shot if raw_shot in ("close", "medium", "wide") else "wide"
+            
+            # P3b: Layout LLM (tuỳ chọn)
+            scene._llm_background_prompt = data.get("background_prompt")
+            scene._llm_layout = data.get("layout")
 
             # SAFETY NET: prompt vượt 77 token đã có compel xử lý; chặn trần 75 từ
             # để tránh LLM viết lan man làm loãng composition.

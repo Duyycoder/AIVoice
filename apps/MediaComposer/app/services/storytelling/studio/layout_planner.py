@@ -55,6 +55,67 @@ def build_layer_plan(shot_type: str,
     )
 
 
+def build_layer_plan_from_llm(llm_layout: list,
+                              chars: List[dict],
+                              background_prompt: str,
+                              location_id: str) -> Optional[LayerPlan]:
+    """Parse layout từ LLM. Trả None nếu JSON hỏng/thiếu/sai định dạng."""
+    if not isinstance(llm_layout, list) or not llm_layout:
+        return None
+
+    import unicodedata
+    def _norm(s: str) -> str:
+        return unicodedata.normalize("NFKD", s or "").encode(
+            "ASCII", "ignore").decode("utf-8").lower().replace(" ", "").replace("_", "")
+
+    char_map = {_norm(ch.get("slug", "")): ch for ch in chars}
+    
+    layers: List[CharacterLayer] = []
+    for item in llm_layout:
+        if not isinstance(item, dict):
+            return None
+        
+        name = item.get("name")
+        if not name:
+            continue
+            
+        slug_norm = _norm(name)
+        if slug_norm not in char_map:
+            continue
+            
+        try:
+            ax = float(item.get("anchor_x", 0.5))
+            ay = float(item.get("anchor_y", 0.9))
+            scale = float(item.get("scale", 0.8))
+            z = int(item.get("z", 0))
+            
+            if not (0.0 <= ax <= 1.0 and 0.0 <= ay <= 1.0 and 0.0 < scale <= 1.0):
+                return None
+                
+            ch_data = char_map[slug_norm]
+            layers.append(CharacterLayer(
+                slug=ch_data.get("slug", ""),
+                prompt=ch_data.get("prompt", ""),
+                anchor_x=ax,
+                anchor_y=ay,
+                scale=scale,
+                z_order=z,
+            ))
+        except (ValueError, TypeError):
+            return None
+
+    if not layers:
+        return None
+
+    return LayerPlan(
+        location_id=location_id,
+        background_prompt=background_prompt,
+        characters=layers,
+        render_mode="studio",
+    )
+
+
+
 def needs_classic_fallback(n_chars: int,
                            image_prompt: str,
                            max_chars: int,

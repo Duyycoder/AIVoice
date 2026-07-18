@@ -131,13 +131,15 @@ class ImageGenResult:
 # Các dataclass này KHÔNG được nhúng vào Scene (tránh ảnh hưởng asdict/state.json);
 # StudioPipeline tính LayerPlan tạm thời cho mỗi cảnh khi render.
 # ---------------------------------------------------------------------------
+from typing import Optional, List, Dict, Union
+
 @dataclass
 class CharacterLayer:
     """Một lớp nhân vật đặt lên nền khi ghép cảnh."""
     slug: str                    # nhân vật (khớp ContextManager)
     prompt: str                  # mô tả ngoại hình (KHÔNG mô tả nền)
-    anchor_x: str = "center"     # trục ngang: left | center | right
-    anchor_y: str = "bottom"     # trục dọc: bottom | middle (tùy bối cảnh)
+    anchor_x: Union[str, float] = "center" # trục ngang: left | center | right hoặc float 0-1
+    anchor_y: Union[str, float] = "bottom" # trục dọc: bottom | middle hoặc float 0-1
     scale: float = 0.9           # tỉ lệ chiều cao lớp so với khung (0-1)
     z_order: int = 0             # lớn hơn = phía trước
     flip: bool = False           # lật ngang

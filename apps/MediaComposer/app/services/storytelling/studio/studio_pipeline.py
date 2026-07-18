@@ -117,16 +117,42 @@ class StudioPipeline:
         return f"scene_{getattr(scene, 'scene_id', 0):03d}"
 
     def _background_prompt(self, scene) -> str:
-        base = (getattr(scene, "image_prompt", "") or "").strip().strip(",")
-        return f"{base}, no humans, no people, scenery, empty background".strip(", ")
+        llm_bg = getattr(scene, "_llm_background_prompt", None)
+        if llm_bg and str(llm_bg).strip():
+            base = str(llm_bg).strip()
+        else:
+            base = (getattr(scene, "image_prompt", "") or "").strip().strip(",")
+            
+        tags = [t.strip() for t in base.split(",")]
+        for t in ["no humans", "no people", "scenery", "empty background"]:
+            if t not in tags:
+                tags.append(t)
+        return ", ".join(tags)
 
     def plan_scene(self, scene, slugs: List[str]) -> LayerPlan:
         chars = [{"slug": s, "prompt": self._appearance_for(s)} for s in slugs]
+        bg_prompt = self._background_prompt(scene)
+        loc_id = self._scene_location(scene)
+        
+        cfg = load_storytelling_config()
+        source = cfg.get("studio_layout_source", "heuristic")
+        
+        if source == "llm":
+            llm_layout = getattr(scene, "_llm_layout", None)
+            if llm_layout:
+                from app.services.storytelling.studio.layout_planner import build_layer_plan_from_llm
+                plan = build_layer_plan_from_llm(llm_layout, chars, bg_prompt, loc_id)
+                if plan:
+                    return plan
+                else:
+                    from loguru import logger
+                    logger.warning("[Studio] Parsing LLM layout hỏng → fallback heuristic.")
+                    
         return build_layer_plan(
             shot_type=getattr(scene, "shot_type", "wide"),
             chars=chars,
-            background_prompt=self._background_prompt(scene),
-            location_id=self._scene_location(scene),
+            background_prompt=bg_prompt,
+            location_id=loc_id,
         )
 
     # ------------------------------------------------------------------
@@ -141,7 +167,8 @@ class StudioPipeline:
                     char_render_fn: Callable[[object], Image.Image],
                     matter: ChromaMatter,
                     bg_renderer: BackgroundRenderer,
-                    harmonize: bool = True) -> None:
+                    harmonize: bool = True,
+                    shadow_opacity: float = 0.0) -> None:
         bg = bg_renderer.get_or_render(plan.location_id, plan.background_prompt, size, bg_render_fn)
         if bg.size != size:
             bg = bg.resize(size)
@@ -157,7 +184,7 @@ class StudioPipeline:
                 continue
             layers.append((rgba, layer))
 
-        frame = composite(bg, layers, harmonize=harmonize)
+        frame = composite(bg, layers, harmonize=harmonize, shadow_opacity=shadow_opacity)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         frame.save(out_path)
 
@@ -269,7 +296,8 @@ class StudioPipeline:
                     self.render_plan(plan, size, out_path,
                                      bg_render_fn=bg_render_fn,
                                      char_render_fn=char_render_fn,
-                                     matter=matter, bg_renderer=bg_renderer)
+                                     matter=matter, bg_renderer=bg_renderer,
+                                     shadow_opacity=float(cfg.get("studio_shadow_opacity", 0.0)))
             except Exception as e:
                 logger.error(f"[Studio] Cảnh {i} lỗi ({e}) — thử fallback classic.")
                 try:

@@ -314,7 +314,31 @@ def _process_single_item_pass_a(
 
     current_status = state.get_item_status(item.stem)
 
+    # FIX: item "failed" trước đó → reset về pending để chạy lại từ đầu.
+    # state.json có thể không tồn tại (step1 crash trước khi save) nên
+    # nhánh else (load_state) sẽ luôn thất bại nếu giữ status "failed".
+    if current_status == STATUS_FAILED:
+        logger.info(f"[BatchRunner] Reset '{item.stem}' từ failed → pending để retry.")
+        current_status = STATUS_PENDING
+
     existing_task_dir = state.get_item_task_dir(item.stem)
+    is_valid_state = False
+    if existing_task_dir and os.path.isdir(existing_task_dir):
+        if os.path.exists(os.path.join(existing_task_dir, "state.json")):
+            is_valid_state = True
+            
+    if not is_valid_state:
+        if current_status not in (STATUS_PENDING, ""):
+            logger.warning(f"[BatchRunner] Trạng thái '{current_status}' nhưng không tìm thấy state.json hợp lệ. Reset về pending.")
+            current_status = STATUS_PENDING
+            state.update_item(item.stem, STATUS_PENDING, task_dir="")
+            
+        if existing_task_dir and os.path.isdir(existing_task_dir):
+            import shutil
+            shutil.rmtree(existing_task_dir, ignore_errors=True)
+            logger.info(f"[BatchRunner] Xoá task_dir rác: {existing_task_dir}")
+        existing_task_dir = ""
+
     if existing_task_dir and os.path.isdir(existing_task_dir):
         task_dir = existing_task_dir
     else:
