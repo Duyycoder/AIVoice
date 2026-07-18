@@ -12,13 +12,25 @@ mc_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, mc_root)
 sys.path.insert(0, os.path.join(mc_root, "app"))
 
-from app.services.storytelling.context_manager import ContextManager
-from app.services.storytelling.batch_video_runner import run_batch, scan_batch_dir
+from app.services.storytelling.context_manager import ContextManager  # noqa: E402
+from app.services.storytelling.batch_video_runner import run_batch, scan_batch_dir  # noqa: E402
 
 def log_json(event: str, data: dict):
     """Outputs progress log as a JSON string to stdout."""
     print(json.dumps({"event": event, **data}, ensure_ascii=False))
     sys.stdout.flush()
+
+
+def count_incomplete_items(report, total_items: int) -> int:
+    """Mọi item không có kết quả video_done đều làm adapter exit khác 0."""
+    completed = sum(
+        1 for item in report.items
+        if item.get("status") == "video_done"
+        and item.get("video_path")
+        and os.path.isfile(item["video_path"])
+        and os.path.getsize(item["video_path"]) > 0
+    )
+    return max(0, int(total_items) - completed)
 
 def main():
     parser = argparse.ArgumentParser(description="Non-interactive CLI Adapter for MediaComposer Video Generation")
@@ -167,12 +179,14 @@ def main():
         )
 
         # Output final execution details
-        failed_count = sum(1 for it in report.items if it.get("status") == "failed")
+        failed_count = count_incomplete_items(report, len(items))
         log_json("video_batch_completed", {
             "total": len(report.items),
             "failed": failed_count,
             "status": "success" if failed_count == 0 else "partial_failure"
         })
+        if failed_count:
+            raise SystemExit(1)
 
     except Exception as e:
         log_json("video_error", {"error": str(e)})

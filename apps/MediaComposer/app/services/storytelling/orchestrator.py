@@ -31,10 +31,10 @@ class StorytellingOrchestrator:
 
     def save_state(self, step: str, scenes: list, task_dir: str, audio_path: str = "", srt_path: str = "", md_path: str = "") -> None:
         import json
-        from dataclasses import asdict
+        from app.services.storytelling.models import scene_to_dict
         state_data = {
             "step": step,
-            "scenes": [asdict(s) for s in scenes],
+            "scenes": [scene_to_dict(s) for s in scenes],
             "task_dir": task_dir,
             "audio_path": audio_path,
             "srt_path": srt_path,
@@ -139,7 +139,7 @@ class StorytellingOrchestrator:
         """Chuyển SemanticScene (Phase C) → Scene dataclass.
         
         Chọn primary_character theo: nhân vật có identity + xuất hiện đầu tiên.
-        Gắn _semantic_meta (attr động, mất sau resume — chấp nhận được).
+        Gắn _semantic_meta (attr động, được scene_to_dict giữ qua resume).
         """
         import unicodedata
         from app.services.storytelling.models import Scene
@@ -177,7 +177,7 @@ class StorytellingOrchestrator:
                 accepted_seed=-1,
                 frame_path="",
             )
-            # Gắn metadata semantic cho llm_prompter (attr động, mất sau resume)
+            # Gắn metadata semantic cho llm_prompter; scene_to_dict giữ qua resume.
             scene._semantic_meta = {
                 "location": ss.location,
                 "action": ss.action,
@@ -511,7 +511,9 @@ class StorytellingOrchestrator:
             
         # Giải phóng rác bộ nhớ CUDA tạm thời mà không hủy mô hình SD nếu không cần thiết
         try:
-            import gc, torch
+            import gc
+
+            import torch
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

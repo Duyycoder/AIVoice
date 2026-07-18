@@ -10,9 +10,9 @@ from app.services.storytelling.models import CharacterLayer, LayerPlan
 
 # scale + neo dọc theo cỡ cảnh
 _SHOT_DEFAULTS = {
-    "close":  (1.0, "middle"),   # cận: nửa người/chân dung ngang tầm mắt
-    "medium": (0.8, "bottom"),   # trung: đứng, chiếm ~80% chiều cao
-    "wide":   (0.45, "bottom"),  # rộng: nhỏ, đứng trên nền
+    "close":  (1.0, "middle", "close"),   # cận: nửa người/chân dung ngang tầm mắt
+    "medium": (0.8, "bottom", "medium"),  # trung: 3/4 người, neo đáy
+    "wide":   (0.45, "bottom", "full"),   # rộng: toàn thân nhỏ, đứng trên nền
 }
 
 
@@ -33,7 +33,7 @@ def build_layer_plan(shot_type: str,
                      background_prompt: str,
                      location_id: str) -> LayerPlan:
     """chars: list {'slug': str, 'prompt': str} → LayerPlan (heuristic)."""
-    base_scale, anchor_y = _SHOT_DEFAULTS.get(
+    base_scale, anchor_y, framing = _SHOT_DEFAULTS.get(
         (shot_type or "wide").lower(), _SHOT_DEFAULTS["wide"])
     anchors = _distribute_anchor_x(len(chars))
 
@@ -46,6 +46,7 @@ def build_layer_plan(shot_type: str,
             anchor_y=anchor_y,
             scale=base_scale,
             z_order=i,
+            framing=framing,
         ))
     return LayerPlan(
         location_id=location_id,
@@ -58,7 +59,8 @@ def build_layer_plan(shot_type: str,
 def build_layer_plan_from_llm(llm_layout: list,
                               chars: List[dict],
                               background_prompt: str,
-                              location_id: str) -> Optional[LayerPlan]:
+                              location_id: str,
+                              shot_type: str = "wide") -> Optional[LayerPlan]:
     """Parse layout từ LLM. Trả None nếu JSON hỏng/thiếu/sai định dạng."""
     if not isinstance(llm_layout, list) or not llm_layout:
         return None
@@ -68,9 +70,23 @@ def build_layer_plan_from_llm(llm_layout: list,
         return unicodedata.normalize("NFKD", s or "").encode(
             "ASCII", "ignore").decode("utf-8").lower().replace(" ", "").replace("_", "")
 
-    char_map = {_norm(ch.get("slug", "")): ch for ch in chars}
+    char_map = {}
+    required_slugs = set()
+    for ch in chars:
+        slug = ch.get("slug", "")
+        if not slug:
+            continue
+        required_slugs.add(slug)
+        # LLM trả display name; slug cũ có thể bị mất ký tự có dấu khi tạo.
+        for key in (slug, ch.get("name", "")):
+            norm_key = _norm(key)
+            if norm_key:
+                char_map[norm_key] = ch
     
+    _, _, framing = _SHOT_DEFAULTS.get(
+        (shot_type or "wide").lower(), _SHOT_DEFAULTS["wide"])
     layers: List[CharacterLayer] = []
+    seen_slugs = set()
     for item in llm_layout:
         if not isinstance(item, dict):
             return None
@@ -93,18 +109,29 @@ def build_layer_plan_from_llm(llm_layout: list,
                 return None
                 
             ch_data = char_map[slug_norm]
+            slug = ch_data.get("slug", "")
+            if slug in seen_slugs:
+                return None
+            seen_slugs.add(slug)
+            pose = str(item.get("prompt") or item.get("pose") or "").strip().strip(",")
+            layer_prompt = ch_data.get("prompt", "")
+            if pose:
+                layer_prompt = ", ".join(x for x in (pose, layer_prompt) if x)
             layers.append(CharacterLayer(
-                slug=ch_data.get("slug", ""),
-                prompt=ch_data.get("prompt", ""),
+                slug=slug,
+                prompt=layer_prompt,
                 anchor_x=ax,
                 anchor_y=ay,
                 scale=scale,
                 z_order=z,
+                framing=framing,
             ))
         except (ValueError, TypeError):
             return None
 
-    if not layers:
+    # Layout thiếu dù chỉ một nhân vật cũng phải fallback heuristic; nếu không
+    # nhân vật đó sẽ biến mất âm thầm khỏi frame.
+    if not layers or seen_slugs != required_slugs:
         return None
 
     return LayerPlan(

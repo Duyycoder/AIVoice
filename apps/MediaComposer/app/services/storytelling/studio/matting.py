@@ -54,7 +54,7 @@ class ChromaMatter(Matter):
         alpha = np.clip((dist - self.threshold) / self.ramp, 0.0, 1.0)
 
         if self.despill:
-            rgb = self._despill(rgb)
+            rgb = self._despill(rgb, alpha)
 
         alpha_img = Image.fromarray((alpha * 255.0).astype(np.uint8))  # 2D uint8 → "L"
         if self.feather_px > 0:
@@ -64,14 +64,84 @@ class ChromaMatter(Matter):
         out.putalpha(alpha_img)
         return out
 
-    def _despill(self, rgb: np.ndarray) -> np.ndarray:
-        """Khử ám màu nền: giới hạn kênh trội của nền ≤ max của 2 kênh còn lại."""
-        ch = int(np.argmax(self.bg_rgb))
-        others = [i for i in range(3) if i != ch]
-        cap = np.maximum(rgb[..., others[0]], rgb[..., others[1]])
+    def _despill(self, rgb: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+        """Khử màu nền ở mép bán trong suốt, giữ màu hợp lệ trong foreground."""
+        # Màu chroma có thể có nhiều kênh trội (magenta = đỏ + lam), vì vậy
+        # không được chỉ xử lý argmax đầu tiên. Kênh trội là kênh cao hơn kênh
+        # thấp nhất của màu nền một khoảng đủ lớn; nền gần xám thì bỏ despill.
+        dominant = self.bg_rgb > (float(self.bg_rgb.min()) + 64.0)
+        others = np.flatnonzero(~dominant)
+        if not dominant.any() or not len(others):
+            return rgb
+        cap = np.max(rgb[..., others], axis=-1)
         rgb = rgb.copy()
-        rgb[..., ch] = np.minimum(rgb[..., ch], cap)
+        edge_strength = 1.0 - alpha
+        for channel in np.flatnonzero(dominant):
+            reduced = np.minimum(rgb[..., channel], cap)
+            rgb[..., channel] = (
+                rgb[..., channel] * alpha + reduced * edge_strength)
         return rgb
+
+
+class GrabCutMatter(Matter):
+    """Fallback CPU nhanh khi model tạo nền đơn giản nhưng không đúng màu chroma."""
+
+    def __init__(self, iterations: int = 5, feather_px: int = 3,
+                 max_analysis_size: int = 384):
+        self.iterations = max(1, int(iterations))
+        self.feather_px = max(0, int(feather_px))
+        self.max_analysis_size = max(64, int(max_analysis_size))
+
+    def cutout(self, image: Image.Image) -> Image.Image:
+        try:
+            import cv2
+        except ImportError as e:
+            raise RuntimeError("GrabCut fallback cần opencv-python") from e
+
+        rgb_full = np.asarray(image.convert("RGB"), dtype=np.uint8)
+        h, w = rgb_full.shape[:2]
+        if h < 4 or w < 4:
+            return image.convert("RGBA")
+
+        # Ảnh phẳng hoàn toàn (thường là chroma hỏng trong test/generation) không
+        # có foreground để GrabCut học; trả mask rỗng ngay thay vì chạy rất lâu.
+        if float(rgb_full.reshape(-1, 3).std(axis=0).max()) < 2.0:
+            out = image.convert("RGBA")
+            out.putalpha(Image.new("L", image.size, 0))
+            return out
+
+        scale = min(1.0, self.max_analysis_size / float(max(h, w)))
+        if scale < 1.0:
+            sw, sh = max(4, int(round(w * scale))), max(4, int(round(h * scale)))
+            rgb = cv2.resize(rgb_full, (sw, sh), interpolation=cv2.INTER_AREA)
+        else:
+            rgb = rgb_full
+        ah, aw = rgb.shape[:2]
+
+        # Viền 1px chắc chắn là nền; phần trong là vùng GrabCut tự phân loại.
+        mask = np.full((ah, aw), cv2.GC_PR_BGD, dtype=np.uint8)
+        rect = (1, 1, aw - 2, ah - 2)
+        bg_model = np.zeros((1, 65), dtype=np.float64)
+        fg_model = np.zeros((1, 65), dtype=np.float64)
+        cv2.grabCut(rgb, mask, rect, bg_model, fg_model,
+                    self.iterations, cv2.GC_INIT_WITH_RECT)
+        alpha = np.where(
+            (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0
+        ).astype(np.uint8)
+
+        # Bỏ các đốm nền nhỏ nhưng giữ chi tiết tóc/áo đã nối với chủ thể.
+        kernel = np.ones((3, 3), np.uint8)
+        alpha = cv2.morphologyEx(alpha, cv2.MORPH_OPEN, kernel)
+        alpha = cv2.morphologyEx(alpha, cv2.MORPH_CLOSE, kernel)
+        if (aw, ah) != (w, h):
+            alpha = cv2.resize(alpha, (w, h), interpolation=cv2.INTER_LINEAR)
+        alpha_img = Image.fromarray(alpha)
+        if self.feather_px:
+            alpha_img = alpha_img.filter(ImageFilter.GaussianBlur(self.feather_px))
+
+        out = image.convert("RGBA")
+        out.putalpha(alpha_img)
+        return out
 
 
 def alpha_coverage(rgba: Image.Image, opaque_thresh: int = 16) -> float:

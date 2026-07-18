@@ -7,7 +7,7 @@ truyền vào qua `render_fn` để module này không phụ thuộc GPU.
 import os
 import re
 import unicodedata
-from typing import Callable, Optional, Tuple
+from typing import Callable, Tuple
 
 from loguru import logger
 from PIL import Image
@@ -46,7 +46,7 @@ class BackgroundRenderer:
                 logger.warning(f"[Studio][BG] Cache lỗi ({e}) — render lại.")
 
         img = render_fn(prompt, size).convert("RGB")
-        if path:
+        if self.enabled and path:
             try:
                 img.save(path)
             except Exception as e:

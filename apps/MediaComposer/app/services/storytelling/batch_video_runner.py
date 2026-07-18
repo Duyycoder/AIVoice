@@ -8,9 +8,10 @@ Bỏ N cặp (md + audio [+ srt]) vào 1 thư mục → nhận N video.
 """
 import os
 import json
+import shutil
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from typing import List, Optional, Callable
 from loguru import logger
 
@@ -42,6 +43,59 @@ STATUS_VIDEO_DONE = "video_done"
 STATUS_FAILED = "failed"
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac"}
+
+
+def _is_valid_video(path: str) -> bool:
+    """Kiểm tra tối thiểu trước khi tin trạng thái ``video_done`` đã lưu."""
+    try:
+        return bool(path and os.path.isfile(path) and os.path.getsize(path) > 0)
+    except OSError:
+        return False
+
+
+def _resume_status_from_task_state(task_dir: str) -> str:
+    """Suy ra phase an toàn để chạy lại khi output MP4 bị mất."""
+    state_path = os.path.join(task_dir or "", "state.json")
+    try:
+        with open(state_path, "r", encoding="utf-8") as handle:
+            step = str(json.load(handle).get("step", "")).upper()
+    except (OSError, ValueError, TypeError):
+        return STATUS_PENDING
+
+    if step == "DONE":
+        return STATUS_UPSCALE_DONE
+    if step == "STORYBOARD_READY":
+        return STATUS_IMAGES_DONE
+    if step == "SCRIPT_READY":
+        return STATUS_SCRIPT_DONE
+    return STATUS_PENDING
+
+
+def _reconcile_video_done(state, item, output_dir: str) -> str:
+    """Xác thực/cứu output thay vì bỏ qua mù quáng theo batch_state cũ."""
+    item_status = state.get_item_status(item.stem)
+    if item_status != STATUS_VIDEO_DONE:
+        return item_status
+
+    output_path = os.path.join(output_dir, f"{item.stem}.mp4")
+    if _is_valid_video(output_path):
+        return item_status
+
+    task_dir = state.get_item_task_dir(item.stem)
+    recoverable = os.path.join(task_dir, "final_video.mp4") if task_dir else ""
+    if _is_valid_video(recoverable):
+        os.makedirs(output_dir, exist_ok=True)
+        shutil.copy2(recoverable, output_path)
+        logger.warning(
+            f"[BatchRunner] Phục hồi output video_done bị thiếu: {output_path}")
+        return item_status
+
+    resume_status = _resume_status_from_task_state(task_dir)
+    state.update_item(item.stem, resume_status, task_dir=task_dir)
+    logger.warning(
+        f"[BatchRunner] video_done nhưng không có MP4 cho {item.stem}; "
+        f"hạ trạng thái về {resume_status} để chạy lại.")
+    return resume_status
 
 
 def scan_batch_dir(batch_dir: str) -> List[BatchItem]:
@@ -192,7 +246,7 @@ def run_batch(
             logger.info("[BatchRunner] Stop flag set — dừng sau item trước.")
             break
 
-        item_status = state.get_item_status(item.stem)
+        item_status = _reconcile_video_done(state, item, output_dir)
 
         # Bỏ qua nếu đã hoàn thành sinh ảnh hoặc đã xong toàn bộ video
         if item_status in (STATUS_IMAGES_DONE, STATUS_UPSCALE_DONE, STATUS_VIDEO_DONE):
@@ -247,7 +301,7 @@ def run_batch(
             logger.info("[BatchRunner] Stop flag set — dừng sau item trước.")
             break
 
-        item_status = state.get_item_status(item.stem)
+        item_status = _reconcile_video_done(state, item, output_dir)
 
         if item_status == STATUS_VIDEO_DONE:
             logger.info(f"[BatchRunner] Bỏ qua Pass B cho {item.stem}: đã done.")

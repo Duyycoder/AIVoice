@@ -11,7 +11,7 @@ if _MC_ROOT not in sys.path:
 
 from app.services.storytelling.models import CharacterLayer  # noqa: E402
 from app.services.storytelling.studio.compositor import (  # noqa: E402
-    anchor_x_pos, anchor_y_pos, fit_layer_size, composite)
+    anchor_x_pos, anchor_y_pos, fit_layer_size, composite, trim_transparent)
 
 
 def test_anchor_x():
@@ -63,3 +63,16 @@ def test_composite_z_order():
     # lớp z lớn (xanh lá) nằm trên
     _, g, _ = out.getpixel((50, 50))
     assert g > 200
+
+
+def test_trim_transparent_makes_scale_apply_to_visible_character():
+    padded = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    padded.paste(Image.new("RGBA", (20, 40), (255, 0, 0, 255)), (40, 60))
+    assert trim_transparent(padded).size == (20, 40)
+
+    bg = Image.new("RGB", (100, 100), (0, 0, 255))
+    layer = CharacterLayer(slug="a", prompt="", scale=0.5,
+                           anchor_x="center", anchor_y="bottom")
+    out = composite(bg, [(padded, layer)], harmonize=False)
+    # Visible cutout cao đúng 50% frame; nếu scale canvas chroma thì điểm này còn nền.
+    assert out.getpixel((50, 55))[0] > 200

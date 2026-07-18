@@ -63,5 +63,6 @@ def test_cache_disabled_always_renders():
         r.get_or_render("loc_a", "p", (32, 32), fn)
         r.get_or_render("loc_a", "p", (32, 32), fn)
         assert fn.calls == 2
+        assert not os.path.exists(r.cache_path("loc_a"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

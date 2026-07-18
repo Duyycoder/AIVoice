@@ -28,6 +28,16 @@ def test_build_from_llm_valid():
     assert plan.characters[1].anchor_x == 0.8
     assert plan.characters[1].z_order == 1
 
+def test_build_from_llm_adds_character_pose_prompt():
+    layout = [{"name": "A", "anchor_x": 0.5, "anchor_y": 0.9,
+               "scale": 0.8, "z": 0, "prompt": "holding a sword, angry"}]
+    chars = [{"name": "A", "slug": "a", "prompt": "black robe"}]
+
+    plan = build_layer_plan_from_llm(layout, chars, "", "", shot_type="close")
+
+    assert plan.characters[0].prompt == "holding a sword, angry, black robe"
+    assert plan.characters[0].framing == "close"
+
 def test_build_from_llm_invalid_falls_none():
     # Thiếu dictionary
     assert build_layer_plan_from_llm([["invalid"]], [{"slug": "a", "prompt": ""}], "", "") is None
@@ -48,6 +58,23 @@ def test_build_from_llm_name_normalization():
     plan = build_layer_plan_from_llm(layout, chars, "", "")
     assert plan is not None
     assert plan.characters[0].slug == "dichphong"
+
+def test_build_from_llm_maps_display_name_to_legacy_slug():
+    layout = [{"name": "Dịch Phong", "anchor_x": 0.5, "anchor_y": 0.9, "scale": 0.8, "z": 0}]
+    chars = [{"name": "Dịch Phong", "slug": "d_ch_phong", "prompt": "..."}]
+
+    plan = build_layer_plan_from_llm(layout, chars, "", "")
+    assert plan is not None
+    assert plan.characters[0].slug == "d_ch_phong"
+
+def test_build_from_llm_missing_character_falls_none():
+    layout = [{"name": "A", "anchor_x": 0.25, "anchor_y": 0.9, "scale": 0.8, "z": 0}]
+    chars = [
+        {"name": "A", "slug": "a", "prompt": "..."},
+        {"name": "B", "slug": "b", "prompt": "..."},
+    ]
+
+    assert build_layer_plan_from_llm(layout, chars, "", "") is None
 
 class DummyScene:
     def __init__(self, **kwargs):

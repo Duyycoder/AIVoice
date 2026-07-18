@@ -43,6 +43,13 @@ def fit_layer_size(frame_h: int, orig_size: Tuple[int, int], scale: float) -> Tu
     return target_w, target_h
 
 
+def trim_transparent(image: Image.Image) -> Image.Image:
+    """Cắt lề alpha trống để scale áp vào nhân vật, không áp vào canvas chroma."""
+    rgba = image.convert("RGBA")
+    bbox = rgba.getchannel("A").getbbox()
+    return rgba.crop(bbox) if bbox else rgba
+
+
 def _draw_shadow(canvas: Image.Image, x: int, y: int, layer_w: int, layer_h: int, opacity: float):
     """Vẽ bóng ellipse mờ dưới chân nhân vật."""
     if opacity <= 0:
@@ -78,7 +85,7 @@ def composite(background: Image.Image,
     fw, fh = canvas.size
 
     for rgba, layer in sorted(layers, key=lambda t: t[1].z_order):
-        c = rgba.convert("RGBA")
+        c = trim_transparent(rgba)
         if layer.flip:
             c = ImageOps.mirror(c)
 

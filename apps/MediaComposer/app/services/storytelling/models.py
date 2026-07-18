@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict
+from dataclasses import asdict, dataclass, field
+from typing import Dict, List, Union
 
 @dataclass
 class Scene:
@@ -19,12 +19,35 @@ class Scene:
     shot_type: str = "wide"  # close | medium | wide
 
 
+_SCENE_RUNTIME_FIELDS = (
+    "_semantic_meta",
+    "_llm_background_prompt",
+    "_llm_layout",
+)
+
+
+def scene_to_dict(scene: "Scene") -> dict:
+    """Serialize Scene và metadata JSON-safe cần cho Studio sau resume.
+
+    LayerPlan vẫn chỉ được tính tạm thời; ta chỉ giữ đầu ra LLM/semantic nhỏ gọn để
+    cache nền và layout không biến mất khi WebUI hoặc batch nạp lại ``state.json``.
+    """
+    data = asdict(scene)
+    for name in _SCENE_RUNTIME_FIELDS:
+        if hasattr(scene, name):
+            data[name] = getattr(scene, name)
+    return data
+
+
 def scene_from_dict(d: dict) -> "Scene":
-    """Tái tạo Scene từ dict (state.json cũ/mới) — lọc key lạ, key thiếu dùng default.
-    Dùng thay cho Scene(**d) để tương thích state giữa các phiên bản."""
+    """Tái tạo Scene từ state cũ/mới và khôi phục metadata Studio tùy chọn."""
     import dataclasses
     valid = {f.name for f in dataclasses.fields(Scene)}
-    return Scene(**{k: v for k, v in d.items() if k in valid})
+    scene = Scene(**{k: v for k, v in d.items() if k in valid})
+    for name in _SCENE_RUNTIME_FIELDS:
+        if name in d:
+            setattr(scene, name, d[name])
+    return scene
 
 
 @dataclass
@@ -131,8 +154,6 @@ class ImageGenResult:
 # Các dataclass này KHÔNG được nhúng vào Scene (tránh ảnh hưởng asdict/state.json);
 # StudioPipeline tính LayerPlan tạm thời cho mỗi cảnh khi render.
 # ---------------------------------------------------------------------------
-from typing import Optional, List, Dict, Union
-
 @dataclass
 class CharacterLayer:
     """Một lớp nhân vật đặt lên nền khi ghép cảnh."""
@@ -143,6 +164,7 @@ class CharacterLayer:
     scale: float = 0.9           # tỉ lệ chiều cao lớp so với khung (0-1)
     z_order: int = 0             # lớn hơn = phía trước
     flip: bool = False           # lật ngang
+    framing: str = "full"        # close | medium | full — cách sinh crop nhân vật
 
 
 @dataclass

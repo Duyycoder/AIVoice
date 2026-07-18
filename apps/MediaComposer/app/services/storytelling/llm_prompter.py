@@ -84,7 +84,8 @@ Given Vietnamese text from a novel scene, output a JSON object matching exactly 
   "shot_type": "close|medium|wide",
   "background_prompt": "optional string - clean background description for separate BG rendering",
   "layout": [
-    {{"name": "Name1", "anchor_x": 0.5, "anchor_y": 0.9, "scale": 0.8, "z": 0}}
+    {{"name": "Name1", "anchor_x": 0.5, "anchor_y": 0.9, "scale": 0.8, "z": 0,
+      "prompt": "short English pose and expression tags for this character"}}
   ]
 }}
 
@@ -111,6 +112,7 @@ Pick the type that best serves THIS scene's storytelling. Roughly 30% close, 40%
 6. **ACTION & CONTINUITY:** Read the "Director's Note" to understand the visual context and ensure the environment matches the story's progression.
 7. **ACTION WEIGHTING (CRITICAL):** Wrap the main action/pose of the scene in attention weight syntax `(action tags:1.3)`, placed right after the style prefix. Every distinct physical detail (what a character HOLDS, WHERE they are, weather) gets its own weighted tag, e.g. "(kneeling before the altar:1.3), (holding a glowing sword:1.35)". Without weights the model ignores these details.
 8. **LENGTH (CRITICAL — weak image model):** Keep "image_prompt" UNDER 40 words. The downstream image model is WEAK: it follows SHORT, CONCRETE prompts far better than long ones. Use only high-impact visual nouns (subject, setting, key objects, 1 camera + 1 lighting tag). DROP vague adjectives, mood words, and redundant synonyms. Put subject + character appearance in the FIRST 20 words. Fewer, stronger tags beat many weak ones.
+9. **STUDIO LAYOUT:** Include every listed scene character exactly once in `layout`. Its `prompt` contains ONLY that character's English pose, action, held object, and expression; never scenery or another character.
 
 Known characters: {json.dumps(char_list, ensure_ascii=False)}
 Story genre: {genre}"""
@@ -122,7 +124,7 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryCo
     user_prompt = f"Scene text:\n{scene.text_vi}"
     if director_note:
         user_prompt += f"\n\nDirector's Note (Visual Context):\n{director_note}"
-    # Semantic scene metadata (Phase C) — attr động, mất sau resume nhưng chấp nhận được
+    # Semantic scene metadata (Phase C) — attr động, scene_to_dict giữ qua resume
     if hasattr(scene, '_semantic_meta') and scene._semantic_meta:
         meta = scene._semantic_meta
         if meta.get('location'):
@@ -191,7 +193,7 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryCo
                 from app.services.storytelling.prompt_translator import PromptTranslator
                 scene.image_prompt = PromptTranslator._clamp_prompt_words(scene.image_prompt, max_words=75)
                 return True
-        except json.JSONDecodeError as e:
+        except json.JSONDecodeError:
             logger.warning(f"Failed to decode JSON from LLM on attempt {attempt+1}. Content: {cleaned_content}")
             
     # Fallback if failed
