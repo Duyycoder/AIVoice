@@ -11,6 +11,11 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 mc_root = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, mc_root)
 sys.path.insert(0, os.path.join(mc_root, "app"))
+# Repo root (3 cấp trên MediaComposer) để import được `orchestrator.storage.slugify`
+# ngay cả khi chạy adapter độc lập (không qua orchestrator đã set PYTHONPATH).
+_repo_root = os.path.abspath(os.path.join(mc_root, "..", "..", ".."))
+if _repo_root not in sys.path:
+    sys.path.append(_repo_root)
 
 from app.services.storytelling.context_manager import ContextManager  # noqa: E402
 from app.services.storytelling.batch_video_runner import run_batch, scan_batch_dir  # noqa: E402
