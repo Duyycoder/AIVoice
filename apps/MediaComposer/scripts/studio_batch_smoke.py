@@ -41,8 +41,9 @@ def main():
         keywords_en="young man, short black hair, black leather jacket, white shirt, "
                     "necklace, calm expression",
         has_embedding=False)
+    _ckpt = sys.argv[2] if len(sys.argv) > 2 else "stablediffusionapi/anything-v5"
     ctx = StoryContext(story_name="qt", story_slug=slug, genre="fantasy",
-                       checkpoint="stablediffusionapi/anything-v5", characters=[char])
+                       checkpoint=_ckpt, characters=[char])
     ctx._style_prompt_path = ctx_mgr.style_file
     ctx_mgr.context = ctx  # some helpers read ctx_mgr.context
 

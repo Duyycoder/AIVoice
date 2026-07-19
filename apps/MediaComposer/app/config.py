@@ -95,6 +95,12 @@ class Config:
             # Nhân vật ĐÃ có LoRA thì bỏ qua face detailer (LoRA đã giữ nhận dạng) —
             # tiết kiệm ~40% thời gian sinh mỗi nhân vật chính, chất lượng vẫn ổn.
             "studio_lora_skip_detailer": True,
+            # Chất lượng render Studio (nền + nhân vật). >0 sẽ ghi đè num_inference_steps
+            # cho riêng Studio: 8 = nhanh/phẳng (anything-v5), 18-22 = nét/chi tiết
+            # (khuyên dùng checkpoint dreamshaper-8 để tiệm cận nanobanana). 0 = theo
+            # num_inference_steps chung.
+            "studio_render_steps": 0,
+            "studio_render_guidance": 0.0,
         }
         self.proxy = None
         self.load_config()

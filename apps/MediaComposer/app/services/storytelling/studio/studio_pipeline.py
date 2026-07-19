@@ -406,11 +406,14 @@ class StudioPipeline:
         shot_map = {"close": (576, 704), "medium": (704, 528), "wide": size}
         w, h = shot_map.get(getattr(scene, "shot_type", "wide"), size)
 
+        q_steps = int(cfg.get("studio_render_steps", 0)) or None
+        q_guidance = float(cfg.get("studio_render_guidance", 0.0)) or None
         img, seed = pipe.generate_draft(
             prompt=scene.image_prompt,
             negative_prompt=self.context.get_negative_prompt(),
             face_embedding=face_emb, face_image=face_img,
             seed=-1, width=w, height=h,
+            num_steps=q_steps, guidance_scale=q_guidance,
         )
         if cfg.get("enable_face_detailer", True):
             from app.services.storytelling.face_detailer import detail_faces
@@ -522,6 +525,9 @@ class StudioPipeline:
         lora_skip_detailer = bool(cfg.get("studio_lora_skip_detailer", True))
         _checkpoint = getattr(self.context, "checkpoint", "") or ""
         from app.services.storytelling.character_bootstrap import has_trained_lora
+        # Chất lượng render (>0 ghi đè steps chung cho Studio). Xem config studio_render_*.
+        q_steps = int(cfg.get("studio_render_steps", 0)) or None
+        q_guidance = float(cfg.get("studio_render_guidance", 0.0)) or None
 
         def bg_render_fn(prompt, sz):
             # Character LoRA là stateful; phải tắt trước khi sinh nền location mới.
@@ -529,7 +535,8 @@ class StudioPipeline:
                 pipe.set_character_lora(None)
             img, _ = pipe.generate_draft(
                 prompt=prompt, negative_prompt=self.context.get_negative_prompt(),
-                face_embedding=None, face_image=None, seed=-1, width=sz[0], height=sz[1])
+                face_embedding=None, face_image=None, seed=-1, width=sz[0], height=sz[1],
+                num_steps=q_steps, guidance_scale=q_guidance)
             return img
 
         total = max(len(scenes), 1)
@@ -566,7 +573,8 @@ class StudioPipeline:
                             face_image=face_img, face_embedding=face_emb,
                             negative_prompt=self.context.get_negative_prompt(),
                             use_detailer=layer_detailer,
-                            framing=getattr(layer, "framing", "full"))
+                            framing=getattr(layer, "framing", "full"),
+                            num_steps=q_steps, guidance_scale=q_guidance)
                         if use_ip and face_img is None and face_emb is None:
                             self._try_bootstrap_ref(i, layer.slug, img)
                         return img

@@ -111,7 +111,9 @@ class CharacterRenderer:
                face_embedding: Optional[np.ndarray] = None,
                negative_prompt: str = "",
                use_detailer: bool = True,
-               framing: str = "full") -> Tuple[Image.Image, int]:
+               framing: str = "full",
+               num_steps: Optional[int] = None,
+               guidance_scale: Optional[float] = None) -> Tuple[Image.Image, int]:
         color = bg_color_name(bg_hex)
         prompt = build_character_prompt(appearance, color, framing=framing)
         neg = build_character_negative_prompt(negative_prompt, framing)
@@ -124,6 +126,8 @@ class CharacterRenderer:
             seed=-1,
             width=size[0],
             height=size[1],
+            num_steps=num_steps,
+            guidance_scale=guidance_scale,
         )
 
         if use_detailer:
