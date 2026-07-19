@@ -92,6 +92,9 @@ class Config:
             "studio_auto_train_leads": True,
             "studio_auto_train_max_leads": 2,      # số nhân vật chính train tự động
             "studio_auto_train_steps": 700,        # số bước train mỗi nhân vật
+            # Nhân vật ĐÃ có LoRA thì bỏ qua face detailer (LoRA đã giữ nhận dạng) —
+            # tiết kiệm ~40% thời gian sinh mỗi nhân vật chính, chất lượng vẫn ổn.
+            "studio_lora_skip_detailer": True,
         }
         self.proxy = None
         self.load_config()

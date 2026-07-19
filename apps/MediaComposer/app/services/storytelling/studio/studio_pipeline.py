@@ -518,6 +518,10 @@ class StudioPipeline:
         char_renderer = CharacterRenderer()
         use_ip = bool(cfg.get("studio_char_use_ip_adapter", True))
         use_detailer = bool(cfg.get("studio_char_use_detailer", True))
+        # Nhân vật đã có LoRA giữ nhận dạng → bỏ detailer cho nhanh (config bật/tắt).
+        lora_skip_detailer = bool(cfg.get("studio_lora_skip_detailer", True))
+        _checkpoint = getattr(self.context, "checkpoint", "") or ""
+        from app.services.storytelling.character_bootstrap import has_trained_lora
 
         def bg_render_fn(prompt, sz):
             # Character LoRA là stateful; phải tắt trước khi sinh nền location mới.
@@ -553,11 +557,15 @@ class StudioPipeline:
                         face_emb = self._face_embedding(layer.slug) if use_ip else None
                         if hasattr(pipe, "set_character_lora"):
                             pipe.set_character_lora(layer.slug)
+                        # LoRA đã giữ nhận dạng → bỏ detailer cho nhân vật này.
+                        layer_detailer = use_detailer
+                        if lora_skip_detailer and has_trained_lora(layer.slug, _checkpoint):
+                            layer_detailer = False
                         img, _ = char_renderer.render(
                             pipe, layer.prompt, _CHAR_SIZE, bg_hex,
                             face_image=face_img, face_embedding=face_emb,
                             negative_prompt=self.context.get_negative_prompt(),
-                            use_detailer=use_detailer,
+                            use_detailer=layer_detailer,
                             framing=getattr(layer, "framing", "full"))
                         if use_ip and face_img is None and face_emb is None:
                             self._try_bootstrap_ref(i, layer.slug, img)
