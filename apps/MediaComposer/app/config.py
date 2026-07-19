@@ -86,6 +86,12 @@ class Config:
                 "hug", "embrace", "fight", "holding hands", "carry", "kiss"
             ],
             "studio_shadow_opacity": 0.0,          # 0 = tắt; >0 vẽ bóng chân nhẹ
+            # Tự train LoRA cho nhân vật chính (nam/nữ chính) 1 LẦN khi render truyện
+            # mới: bootstrap dataset từ IP-Adapter rồi train. Idempotent (đã có LoRA
+            # thì bỏ qua) nên các chương sau của truyện dùng lại, không train lại.
+            "studio_auto_train_leads": True,
+            "studio_auto_train_max_leads": 2,      # số nhân vật chính train tự động
+            "studio_auto_train_steps": 700,        # số bước train mỗi nhân vật
         }
         self.proxy = None
         self.load_config()

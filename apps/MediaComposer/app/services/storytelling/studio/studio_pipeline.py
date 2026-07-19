@@ -427,6 +427,34 @@ class StudioPipeline:
     # ------------------------------------------------------------------
     # Chạy cả batch (nạp Stable Diffusion)
     # ------------------------------------------------------------------
+    def _detect_lead_slugs(self, scenes: List, max_leads: int) -> List[str]:
+        """Nhân vật chính = xuất hiện ở NHIỀU cảnh nhất (nam/nữ chính)."""
+        from collections import Counter
+        counts: Counter = Counter()
+        for scene in scenes:
+            for slug in self._resolve_slugs(scene):
+                counts[slug] += 1
+        return [slug for slug, _ in counts.most_common(max_leads)]
+
+    def _auto_train_leads(self, scenes: List, cfg: dict,
+                          progress_cb: Optional[Callable[[str, int], None]]) -> None:
+        """Bootstrap + train LoRA cho nhân vật chính 1 lần/truyện (idempotent)."""
+        from app.services.storytelling.character_bootstrap import (
+            auto_train_leads, has_trained_lora)
+        max_leads = int(cfg.get("studio_auto_train_max_leads", 2))
+        leads = self._detect_lead_slugs(scenes, max_leads)
+        checkpoint = getattr(self.context, "checkpoint", "") or ""
+        pending = [s for s in leads if not has_trained_lora(s, checkpoint)]
+        if not pending:
+            if leads:
+                logger.info(f"[Studio] Nhân vật chính {leads} đã có LoRA — bỏ qua train.")
+            return
+        logger.info(f"[Studio] Auto-train LoRA nhân vật chính (1 lần/truyện): {pending}")
+        auto_train_leads(
+            self.ctx_mgr, lead_slugs=pending, max_leads=max_leads,
+            steps=int(cfg.get("studio_auto_train_steps", 700)),
+            progress_cb=(lambda m: progress_cb(m, 10)) if progress_cb else None)
+
     def run_batch(self, scenes: List, out_dir: str,
                   progress_cb: Optional[Callable[[str, int], None]] = None) -> List:
         cfg = load_storytelling_config()
@@ -438,6 +466,14 @@ class StudioPipeline:
             unload_local_llm()
         except Exception:
             pass
+
+        # Train LoRA nhân vật chính 1 LẦN cho truyện (idempotent). Làm TRƯỚC khi nạp
+        # SD để render vì train_character sẽ release pipeline; sau đó warmup lại sạch.
+        if bool(cfg.get("studio_auto_train_leads", True)) and self.ctx_mgr and self.context:
+            try:
+                self._auto_train_leads(scenes, cfg, progress_cb)
+            except Exception as e:
+                logger.warning(f"[Studio] auto_train_leads bỏ qua ({e}) — render không LoRA.")
 
         from app.services.storytelling.image_generator import StorytellingPipeline
         pipe = StorytellingPipeline(self.context)
