@@ -1,0 +1,3 @@
+(masterpiece, best quality:1.2), flat vector illustration, simple flat colors, minimal shading, bold clean outlines, simple clean shapes, limited color palette, webtoon style, minimalist storyboard art, soft pastel colors, clean simple background
+---
+(worst quality, low quality:1.4), 3d, realistic, photorealistic, depth of field, blur, gradient shading, complex lighting, intricate details, busy background, noisy, cluttered, heavy rendering, grainy texture, text, watermark, signature, logo, border, frame, jpeg artifacts, letters

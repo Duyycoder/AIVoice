@@ -17,10 +17,13 @@ sys.path.insert(0, _MC)
 
 from PIL import Image  # noqa: E402
 
-OUT = os.path.join(_MC, "storage", "quicktest")
+# Optional: pass a preset name (e.g. "storyboard") to compare styles; output goes
+# to storage/quicktest/<preset>/ so runs don't overwrite each other.
+_PRESET = sys.argv[1] if len(sys.argv) > 1 else "flat_anime"
+STYLE = os.path.join(_MC, "resource", "image_presets", f"{_PRESET}.txt")
+OUT = os.path.join(_MC, "storage", "quicktest",
+                   _PRESET if _PRESET != "flat_anime" else "")
 os.makedirs(OUT, exist_ok=True)
-
-STYLE = os.path.join(_MC, "resource", "image_presets", "flat_anime.txt")
 
 
 def _ctx():

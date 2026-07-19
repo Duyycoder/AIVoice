@@ -1802,7 +1802,9 @@ with tab5:
             
             presets = PromptTranslator.list_available_presets()
             preset_options = ["Tự mô tả style (Không dùng preset)", "➕ Tạo Preset Mới bằng AI..."] + presets
-            selected_preset = st.selectbox("🎨 Style Preset", preset_options, index=2 if len(preset_options)>2 else 0)
+            # Mặc định "storyboard" (flat pastel — sạch, đơn giản, hòa nền-nhân vật tốt)
+            _default_idx = preset_options.index("storyboard") if "storyboard" in preset_options else (2 if len(preset_options) > 2 else 0)
+            selected_preset = st.selectbox("🎨 Style Preset", preset_options, index=_default_idx)
             
             custom_style = ""
             if selected_preset == "Tự mô tả style (Không dùng preset)":
@@ -1965,7 +1967,9 @@ with tab5:
             is_vietnamese = st.checkbox("☑ Mô tả bằng tiếng Việt", value=True, key="bat_vi")
             
             presets = PromptTranslator.list_available_presets()
-            selected_preset = st.selectbox("🎨 Style Preset (áp dụng cho tất cả)", ["Tự mô tả style"] + presets, index=1 if len(presets)>0 else 0)
+            _preset_opts = ["Tự mô tả style"] + presets
+            _default_idx = _preset_opts.index("storyboard") if "storyboard" in _preset_opts else (1 if len(presets) > 0 else 0)
+            selected_preset = st.selectbox("🎨 Style Preset (áp dụng cho tất cả)", _preset_opts, index=_default_idx)
             custom_style = ""
             if selected_preset == "Tự mô tả style":
                 custom_style = st.text_input("Tự mô tả style", key="bat_cs")

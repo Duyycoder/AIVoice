@@ -13,11 +13,12 @@ import time
 _MC = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _MC)
 
-OUT = os.path.join(_MC, "storage", "quicktest", "batch")
+_PRESET = sys.argv[1] if len(sys.argv) > 1 else "flat_anime"
+OUT = os.path.join(_MC, "storage", "quicktest", f"batch_{_PRESET}")
 if os.path.isdir(OUT):
     shutil.rmtree(OUT)
 os.makedirs(OUT, exist_ok=True)
-STYLE = os.path.join(_MC, "resource", "image_presets", "flat_anime.txt")
+STYLE = os.path.join(_MC, "resource", "image_presets", f"{_PRESET}.txt")
 
 
 def main():
