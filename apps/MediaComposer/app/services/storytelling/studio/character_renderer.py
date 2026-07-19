@@ -18,9 +18,15 @@ BG_COLOR_NAMES = {
     "#ff00ff": "magenta",
     "#0000ff": "blue",
 }
-# Loại bỏ nền phức tạp để chroma-key sạch
+# Loại bỏ nền phức tạp + hiệu ứng/vải bay lơ lửng (SD anime hay tự thêm khăn/ruy
+# băng/hào quang trên nền trống → matte giữ lại thành rác quanh nhân vật).
 NEG_ADD = ("complex background, detailed background, scenery, landscape, "
-           "multiple people, crowd, extra person")
+           "multiple people, crowd, extra person, floating ribbon, scarf, "
+           "flowing cloth, sash, floating objects, magic effects, glowing particles, "
+           "energy aura, sparkles, motion streaks, feathers, "
+           "reference sheet, character sheet, multiple views, concept art, "
+           "text, english text, japanese text, letters, watermark, signature, "
+           "logo, blueprint, grid, annotations, ui, hud, border, frame")
 
 
 def bg_color_name(hex_color: str) -> str:

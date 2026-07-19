@@ -67,6 +67,10 @@ class Config:
             "render_mode": "classic",              # "classic" | "studio"
             "studio_bg_cache": True,               # tái dùng nền theo location
             "studio_layout_source": "llm",         # LLM nếu hợp lệ, tự fallback heuristic
+            # Engine tách nền lớp nhân vật: "rembg" (isnet-anime, segment nhân vật —
+            # bền nhất, khuyên dùng) | "chroma" (chroma-key cũ, phụ thuộc nền phẳng).
+            "studio_matte_engine": "rembg",
+            "studio_matte_model": "isnet-anime",   # model rembg (isnet-anime hợp anime)
             "studio_matte_bg_color": "#00B140",    # màu nền phẳng để chroma-key
             "studio_matte_threshold": 0.18,        # ngưỡng khoảng cách màu (0-1) tách nền
             "studio_matte_feather_px": 3,          # làm mềm mép alpha

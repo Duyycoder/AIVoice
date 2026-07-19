@@ -447,16 +447,33 @@ class StudioPipeline:
 
         size = (cfg.get("image_width", 768), cfg.get("image_height", 432))
         bg_hex = cfg.get("studio_matte_bg_color", "#00B140")
-        matter = ChromaMatter(
+        # Engine matte chính: "rembg" (isnet-anime — segment nhân vật, bền nhất) hoặc
+        # "chroma" (chroma-key cũ — chỉ tốt khi SD vẽ được nền phẳng đúng màu).
+        engine = str(cfg.get("studio_matte_engine", "rembg")).lower()
+        chroma = ChromaMatter(
             bg_color=bg_hex,
             threshold=float(cfg.get("studio_matte_threshold", 0.18)),
             feather_px=int(cfg.get("studio_matte_feather_px", 3)),
             despill=bool(cfg.get("studio_matte_despill", True)),
         )
-        fallback_matter = None
+        grabcut = None
         if bool(cfg.get("studio_matte_adaptive_fallback", True)):
-            fallback_matter = GrabCutMatter(
+            grabcut = GrabCutMatter(
                 feather_px=int(cfg.get("studio_matte_feather_px", 3)))
+        if engine == "rembg":
+            try:
+                from app.services.storytelling.studio.matting import RembgMatter
+                matter = RembgMatter(
+                    model_name=str(cfg.get("studio_matte_model", "isnet-anime")),
+                    feather_px=int(cfg.get("studio_matte_feather_px", 2)))
+                # Rembg bền hơn chroma nên xếp chroma→grabcut làm lưới an toàn.
+                fallback_matter = grabcut or chroma
+                logger.info("[Studio] Matte engine: rembg (isnet-anime).")
+            except Exception as e:
+                logger.warning(f"[Studio] Rembg không sẵn sàng ({e}) — dùng chroma-key.")
+                matter, fallback_matter = chroma, grabcut
+        else:
+            matter, fallback_matter = chroma, grabcut
         bg_cache_dir = os.path.join(out_dir, "..", "bg_cache")
         if self.ctx_mgr and getattr(self.ctx_mgr, "context_dir", ""):
             bg_cache_dir = os.path.join(self.ctx_mgr.context_dir, "bg_cache")

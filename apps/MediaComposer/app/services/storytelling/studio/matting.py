@@ -83,6 +83,52 @@ class ChromaMatter(Matter):
         return rgb
 
 
+class RembgMatter(Matter):
+    """Tách nền bằng model segment nhân vật (isnet-anime) — KHÔNG phụ thuộc màu nền.
+
+    Đây là engine matte CHÍNH cho Studio: SD1.5 hiếm khi vẽ được nền chroma phẳng
+    tuyệt đối nên chroma-key hay hỏng (ăn vào nhân vật / chừa halo). isnet-anime
+    hiểu HÌNH DÁNG nhân vật anime nên cắt sạch tóc/tay/viền và tự bỏ mảnh nền rời.
+    Chạy CPU (~0.9s/ảnh 512x768) — chấp nhận được. Model tải về .u2net lần đầu.
+    """
+
+    _sessions: dict = {}
+
+    def __init__(self, model_name: str = "isnet-anime", feather_px: int = 2,
+                 post_process: bool = True):
+        self.model_name = model_name
+        self.feather_px = max(0, int(feather_px))
+        self.post_process = bool(post_process)
+        self._session = None
+
+    def _get_session(self):
+        if self._session is not None:
+            return self._session
+        cached = RembgMatter._sessions.get(self.model_name)
+        if cached is None:
+            from rembg import new_session  # import lazy: chỉ nạp khi thật sự matte
+            cached = new_session(self.model_name)
+            RembgMatter._sessions[self.model_name] = cached
+        self._session = cached
+        return cached
+
+    def cutout(self, image: Image.Image) -> Image.Image:
+        try:
+            from rembg import remove
+        except ImportError as e:
+            raise RuntimeError("RembgMatter cần gói 'rembg' (pip install rembg)") from e
+
+        session = self._get_session()
+        out = remove(image.convert("RGB"), session=session,
+                     post_process_mask=self.post_process)
+        out = out.convert("RGBA")
+        if self.feather_px:
+            alpha = out.getchannel("A").filter(
+                ImageFilter.GaussianBlur(self.feather_px))
+            out.putalpha(alpha)
+        return out
+
+
 class GrabCutMatter(Matter):
     """Fallback CPU nhanh khi model tạo nền đơn giản nhưng không đúng màu chroma."""
 

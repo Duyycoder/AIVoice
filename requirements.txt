@@ -80,6 +80,8 @@ safetensors            # Load trọng số an toàn
 compel>=2.0.0          # Prompt dài >77 token (chunk & concat embedding)
 insightface==1.0.1     # Trích face embedding (engine faceid — ảnh người thật)
 onnxruntime-gpu==1.20.2 # Runtime cho InsightFace trên GPU
+rembg>=2.0.77          # Studio matte: tách nhân vật (isnet-anime) thay chroma-key
+pymatting>=1.1.15      # Dependency của rembg cho alpha matting
 basicsr==1.4.2         # Kiến trúc RRDBNet cho RealESRGAN (setup.bat sẽ patch torchvision import)
 realesrgan==0.3.0      # AI Upscaler 4x
 gfpgan==1.3.8          # Phụ trợ khôi phục mặt của realesrgan
