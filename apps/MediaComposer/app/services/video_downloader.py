@@ -9,6 +9,124 @@ def log_json(event: str, data: dict):
     print(json.dumps({"event": event, **data}, ensure_ascii=False))
     sys.stdout.flush()
 
+
+# ---- Làm sạch file cookies ------------------------------------------------
+# Bản export cookies từ trình duyệt kèm theo token của WAF (_waftokenid). Token
+# này gắn với dấu vân tay trình duyệt, gửi kèm từ yt-dlp (User-Agent khác) là bị
+# TikTok trả 403 ngay ở bước tải trang — trong khi bỏ nó đi thì đăng nhập vẫn
+# hiệu lực. Lọc ra 1 bản sao tạm, cũng để yt-dlp khỏi ghi đè file gốc của người
+# dùng khi nó lưu lại cookie jar lúc kết thúc.
+
+WAF_COOKIE_PREFIXES = ("_waf",)
+
+
+def sanitize_cookies_file(path: str, work_dir: str):
+    """Chép file cookies sang bản tạm, bỏ cookie WAF. Trả (đường dẫn bản tạm, tên đã bỏ).
+
+    Trả (None, []) nếu không đọc/ghi được — khi đó dùng thẳng file gốc.
+    """
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            lines = fh.read().splitlines()
+
+        kept, dropped = [], []
+        for ln in lines:
+            parts = ln.split("\t")
+            if len(parts) == 7 and not (ln.startswith("#") and not ln.startswith("#HttpOnly_")):
+                name = parts[5]
+                if name.startswith(WAF_COOKIE_PREFIXES):
+                    dropped.append(name)
+                    continue
+            kept.append(ln)
+
+        if not dropped:
+            return None, []
+
+        os.makedirs(work_dir, exist_ok=True)
+        out = os.path.join(work_dir, "_cookies_sanitized.txt")
+        with open(out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(kept) + "\n")
+        return out, dropped
+    except OSError as e:
+        log_json("download_warning", {"message": f"Không lọc được file cookies ({e}) — dùng bản gốc."})
+        return None, []
+
+
+# ---- Chẩn đoán lỗi tải ----------------------------------------------------
+# yt-dlp báo cùng một câu "No video formats found!" cho nhiều nguyên nhân rất
+# khác nhau (tập phim TikTok Series, chặn IP, chống bot). Dịch sang câu người
+# dùng hiểu được và biết làm gì tiếp.
+
+COOKIES_HINT = ("khai báo file cookies (Netscape .txt) của tài khoản xem được video "
+                "— Bước 4 → ô 'Cookies file', hoặc video.downloader_cookies trong Cấu hình")
+
+
+def _is_tiktok(url: str, platform: str) -> bool:
+    u = (url or "").lower()
+    return platform in ("tiktok", "douyin") or "tiktok.com" in u or "douyin.com" in u
+
+
+def _tiktok_drama_name(url: str, cookiefile: str = None):
+    """Tên bộ phim nếu video là 1 tập TikTok Series, None nếu không phải/không rõ.
+
+    Chạm vào nội bộ yt-dlp nên bọc try/except: bản yt-dlp mới có thể đổi API,
+    khi đó chỉ mất câu chẩn đoán chi tiết chứ không hỏng luồng báo lỗi.
+    """
+    try:
+        opts = {'quiet': True, 'no_warnings': True, 'simulate': True,
+                'ignore_no_formats_error': True, 'socket_timeout': 15, 'retries': 0}
+        if cookiefile:
+            opts['cookiefile'] = cookiefile
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            # Lượt này giải link rút gọn (vt.tiktok.com) và vượt JS challenge hộ.
+            info = ydl.extract_info(url, download=False) or {}
+            if info.get('formats'):
+                return None
+            ie = ydl.get_info_extractor('TikTok')
+            ie.set_downloader(ydl)
+            data, _status = ie._extract_web_data_and_status(
+                info['webpage_url'], info['id'], fatal=False)
+        return ((data or {}).get('dramaInfo') or {}).get('dramaName') or None
+    except Exception:
+        return None
+
+
+def diagnose_download_failure(url: str, platform: str, err, cookiefile: str = None) -> str:
+    """Dịch lỗi thô của yt-dlp thành câu nói rõ nguyên nhân + cách xử lý."""
+    msg = str(err)
+    low = msg.lower()
+
+    if "403" in low and "forbidden" in low:
+        return ("TikTok trả 403 ngay ở bước tải trang — gần như luôn do cookie WAF (_waftokenid) "
+                "trong file cookies. Bản mới đã tự lọc cookie này; nếu vẫn 403 thì export lại "
+                "cookies: đăng nhập TikTok, mở cửa sổ ẩn danh, export, rồi đóng cửa sổ đó ngay.")
+
+    if "your ip address is blocked" in low:
+        return ("TikTok chặn IP của bạn với video này (thường do giới hạn vùng). "
+                f"Đổi mạng/VPN sang vùng xem được video, hoặc {COOKIES_HINT}.")
+
+    if ("do not have permission" in low or "log into an account" in low
+            or "login required" in low or "private" in low):
+        return f"Video riêng tư hoặc yêu cầu đăng nhập. Hãy {COOKIES_HINT}."
+
+    if "no video formats found" not in low:
+        return msg
+
+    if not _is_tiktok(url, platform):
+        return (f"Không tìm thấy luồng video nào để tải — trang nguồn có thể yêu cầu "
+                f"đăng nhập hoặc đã đổi cấu trúc. Hãy {COOKIES_HINT}. (lỗi gốc: {msg})")
+
+    drama = _tiktok_drama_name(url, cookiefile)
+    if drama:
+        return (f"Video là 1 tập phim TikTok Series/mini-drama (\"{drama}\"). TikTok chỉ trả link "
+                f"phát cho phiên ĐÃ ĐĂNG NHẬP và có quyền xem tập này; khách vãng lai bị bỏ trống "
+                f"link. Hãy {COOKIES_HINT}. Nếu đã có cookies mà vẫn lỗi thì tài khoản đó chưa mở "
+                f"khoá tập phim.")
+
+    return ("TikTok trả về đủ thông tin video nhưng bỏ trống link phát (cơ chế chống bot). "
+            f"Cách xử lý: (1) {COOKIES_HINT}; (2) nếu đã có cookies mà vẫn lỗi thì đợi vài "
+            "phút rồi chạy lại — TikTok chặn tạm theo IP/phiên.")
+
 def download_video(url: str, output_dir: str, platform: str = "generic", progress_cb=None, cookies_file: str = None) -> str:
     """Tải 1 video về output_dir, trả về đường dẫn file mp4. Raise nếu lỗi."""
     if not os.path.exists(output_dir):
@@ -62,6 +180,7 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
                 log_json("download_progress", {"percent": 100.0, "status": "finished"})
 
     # ---- Phân giải cookies (dùng chung cho MỌI lần tải bên dưới) ----
+    cleanup_paths = []
     resolved_cookiefile = None
     if cookies_file:
         abs_cookies_path = os.path.abspath(cookies_file)
@@ -81,6 +200,14 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
         if os.path.exists(abs_cookies_path):
             resolved_cookiefile = abs_cookies_path
             log_json("download_info", {"message": f"Sử dụng file cookies tại: {abs_cookies_path}"})
+            sanitized, dropped = sanitize_cookies_file(abs_cookies_path, output_dir)
+            if sanitized:
+                resolved_cookiefile = sanitized
+                cleanup_paths.append(sanitized)
+                if dropped:
+                    log_json("download_info", {"message": (
+                        f"Đã bỏ {len(dropped)} cookie WAF ({', '.join(sorted(set(dropped)))}) "
+                        f"khỏi bản sao — giữ lại sẽ bị TikTok trả 403.")})
         else:
             msg = f"Không tìm thấy file cookies tại: {cookies_file}"
             log_json("download_error", {"message": msg})
@@ -185,5 +312,12 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
         log_json("download_done", {"path": os.path.abspath(final)})
         return os.path.abspath(final)
     except Exception as e:
-        log_json("download_error", {"error": str(e)})
-        raise RuntimeError(f"Lỗi khi tải video: {e}")
+        reason = diagnose_download_failure(url, platform, e, resolved_cookiefile)
+        log_json("download_error", {"error": reason, "detail": str(e)})
+        raise RuntimeError(reason)
+    finally:
+        for p in cleanup_paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
