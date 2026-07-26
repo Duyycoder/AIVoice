@@ -38,6 +38,9 @@ class PostProcessor:
         self.device = device
         self.tile_size = tile_size
         self._realesrgan_model = None
+        # A2 fix: half=True (fp16) khiến RealESRGAN tràn số ở một số GPU -> khung đen tuyền.
+        # Mặc định dùng fp32 (an toàn). Có thể bật lại fp16 cho GPU khỏe qua thuộc tính này.
+        self._use_fp16 = False
         # enable_upscaling: None means read from config at render time (default behaviour)
         self._enable_upscaling_override: Optional[bool] = enable_upscaling
 
@@ -103,7 +106,7 @@ class PostProcessor:
                 upscaled = image.resize((w * scale, h * scale), Image.Resampling.LANCZOS)
             else:
                 global _realesrgan_cache, _realesrgan_cache_key
-                cache_key = (weight_path, self.device, scale, self.tile_size)
+                cache_key = (weight_path, self.device, scale, self.tile_size, self._use_fp16)
                 if _realesrgan_cache is None or _realesrgan_cache_key != cache_key:
                     if model_name == "realesr-animevideov3":
                         from basicsr.archs.srvgg_arch import SRVGGNetCompact
@@ -121,7 +124,7 @@ class PostProcessor:
                         tile=self.tile_size,
                         tile_pad=10,
                         pre_pad=0,
-                        half=True if self.device == "cuda" else False,
+                        half=self._use_fp16 and self.device == "cuda",
                         device=torch.device(self.device)
                     )
                     _realesrgan_cache_key = cache_key
@@ -129,7 +132,13 @@ class PostProcessor:
 
                 img_cv = np.array(image)[:, :, ::-1]
                 output, _ = self._realesrgan_model.enhance(img_cv, outscale=scale)
-                upscaled = Image.fromarray(output[:, :, ::-1])
+                # A2 fix: chống khung đen — vá NaN/inf và kiểm định độ sáng đầu ra.
+                # Nếu ảnh sau upscale gần như đen tuyền trong khi ảnh gốc không đen,
+                # coi như upscale hỏng -> ném lỗi để rơi vào nhánh fallback (resize ảnh gốc).
+                output = np.nan_to_num(output, nan=0.0, posinf=255.0, neginf=0.0)
+                if float(output.mean()) < 6.0 and float(np.array(image).mean()) > 12.0:
+                    raise RuntimeError("RealESRGAN cho ra khung gần như đen (nghi tràn số) — dùng lại ảnh gốc")
+                upscaled = Image.fromarray(output[:, :, ::-1].astype(np.uint8))
 
         except Exception as e:
             logger.warning(f"RealESRGAN failed: {e}. Using PIL resize.")
