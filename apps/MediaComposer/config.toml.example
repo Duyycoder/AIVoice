@@ -46,3 +46,22 @@ ip_adapter_scale = 0.6
 enable_face_detailer   = true
 face_detailer_strength = 0.45
 
+# ---------------------------------------------------------------------------
+# STYLE LOCK — khóa phong cách ở mức TRỌNG SỐ (không chỉ mức prompt).
+# Train bằng: scripts/train_style_lora.py --style thuy_mac --images_dir <dataset>
+# Kết quả nằm ở resource/style_loras/<ten>.safetensors. Rỗng = chỉ khóa bằng prompt.
+# ---------------------------------------------------------------------------
+style_lora        = ""
+style_lora_weight = 0.8
+# Trọng số cụm hành động đặt ở đầu prompt (1.25-1.45; cao quá dễ méo giải phẫu)
+studio_action_weight = 1.35
+
+# ---------------------------------------------------------------------------
+# UNIFY PASS (render_mode = "studio") — img2img strength thấp trên frame ĐÃ ghép
+# để nhân vật ăn sáng với nền, hết vẻ "dán sticker". Số bước thật = steps*strength.
+# ---------------------------------------------------------------------------
+studio_unify_pass     = true
+studio_unify_strength = 0.28
+studio_unify_steps    = 16
+studio_unify_guidance = 5.0
+

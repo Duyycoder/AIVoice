@@ -23,6 +23,7 @@ _SCENE_RUNTIME_FIELDS = (
     "_semantic_meta",
     "_llm_background_prompt",
     "_llm_layout",
+    "_llm_action",
 )
 
 
@@ -87,7 +88,7 @@ class StoryContext:
     story_name: str
     story_slug: str
     genre: str
-    art_style: str = "anime_2d_flat"
+    art_style: str = "thuy_mac"   # preset trong resource/image_presets
     checkpoint: str = "stablediffusionapi/anything-v5"
     created_at: str = ""
     characters: List[Character] = field(default_factory=list)
@@ -159,6 +160,9 @@ class CharacterLayer:
     """Một lớp nhân vật đặt lên nền khi ghép cảnh."""
     slug: str                    # nhân vật (khớp ContextManager)
     prompt: str                  # mô tả ngoại hình (KHÔNG mô tả nền)
+    # Hành động/tư thế riêng của cảnh này, tách khỏi ngoại hình để renderer đưa
+    # LÊN ĐẦU prompt kèm trọng số. Trộn chung vào `prompt` thì SD bỏ qua hành động.
+    action: str = ""
     anchor_x: Union[str, float] = "center" # trục ngang: left | center | right hoặc float 0-1
     anchor_y: Union[str, float] = "bottom" # trục dọc: bottom | middle hoặc float 0-1
     scale: float = 0.9           # tỉ lệ chiều cao lớp so với khung (0-1)

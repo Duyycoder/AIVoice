@@ -182,11 +182,13 @@ def test_plan_includes_action_and_story_style_and_sanitizes_background(tmp_path)
         "anime ink style, scenery background, detailed environment, "
         "ancient courtyard, sunset")
     assert "1girl" not in plan.background_prompt
-    assert "holding a book" in plan.characters[0].prompt
+    # Hành động nằm ở `action` (renderer sẽ gắn trọng số), ngoại hình + style ở `prompt`.
+    assert "holding a book" in plan.characters[0].action
     assert "anime ink style" in plan.characters[0].prompt
     assert "scenery background" not in plan.characters[0].prompt
     assert "detailed environment" not in plan.characters[0].prompt
     assert "đang cầm" not in plan.characters[0].prompt
+    assert "đang cầm" not in plan.characters[0].action
 
 
 def test_multi_character_uses_only_each_characters_llm_pose(monkeypatch, tmp_path):
@@ -207,11 +209,14 @@ def test_multi_character_uses_only_each_characters_llm_pose(monkeypatch, tmp_pat
         lambda: {"studio_layout_source": "llm"})
 
     plan = pipeline.plan_scene(scene, ["alice", "bob"])
+    actions = {layer.slug: layer.action for layer in plan.characters}
     prompts = {layer.slug: layer.prompt for layer in plan.characters}
 
-    assert "holding a sword" in prompts["alice"]
-    assert "watching quietly" not in prompts["alice"]
-    assert "watching quietly" in prompts["bob"]
+    assert "holding a sword" in actions["alice"]
+    assert "watching quietly" not in actions["alice"]
+    assert "watching quietly" in actions["bob"]
+    assert "holding a sword" not in actions["bob"]
+    # Ngoại hình không được nuốt pose của nhân vật khác
     assert "holding a sword" not in prompts["bob"]
 
 

@@ -81,10 +81,16 @@ def main():
     cr = CharacterRenderer()
     appearance = ("young man, short black hair, brown leather jacket, white shirt, "
                   "necklace, calm expression, " + ctx.get_positive_prompt())
+    # Hành động đi RIÊNG để renderer gắn trọng số ở đầu prompt (xem style_lock).
+    action = os.environ.get("MC_QT_ACTION",
+                            "running forward, looking back over shoulder")
     char, _ = cr.render(pipe, appearance, (512, 768), bg_hex,
                         negative_prompt=ctx.get_negative_prompt(),
                         use_detailer=cfg.get("studio_char_use_detailer", True),
-                        framing="full")
+                        framing="full",
+                        action=action,
+                        action_weight=float(cfg.get("studio_action_weight", 1.35)))
+    print(f">> action = {action!r}")
     char.save(os.path.join(OUT, "02_character_raw.png"))
     print(f">> char {time.time()-t:.1f}s size={char.size}")
 
@@ -113,6 +119,23 @@ def main():
                            anchor_y="bottom", scale=0.55, z_order=0, framing="full")
     frame = composite(bg, [(rgba_rm, layer)], harmonize=True)
     frame.save(os.path.join(OUT, "04_composite_rembg.png"))
+
+    # 5) unify pass — so 04 (ghép thô, lộ sticker) với 05 (đã hòa trộn)
+    from app.services.storytelling.studio.unify_pass import (
+        resolve_unify_settings, unify_frame)
+    unify_cfg = resolve_unify_settings(cfg)
+    if unify_cfg:
+        t = time.time()
+        unified = unify_frame(pipe, frame,
+                              style_positive=ctx.get_positive_prompt(),
+                              background_prompt=bg_prompt,
+                              negative_prompt=ctx.get_negative_prompt(),
+                              **unify_cfg)
+        unified.save(os.path.join(OUT, "05_composite_unified.png"))
+        print(f">> unify {time.time()-t:.1f}s (strength={unify_cfg['strength']})")
+    else:
+        print(">> unify: TAT (studio_unify_pass=false)")
+
     print(f">> total {time.time()-t0:.1f}s")
     print(">> out:", OUT)
 

@@ -27,22 +27,67 @@ class ContextManager:
         
         self._context: StoryContext = None
 
+    # Preset dùng khi tạo truyện mới và khi UI không chỉ định gì khác.
+    DEFAULT_STYLE_PRESET = "thuy_mac"
+
+    _FALLBACK_STYLE = (
+        "(masterpiece, best quality:1.2), ink wash painting, monochrome grayscale, "
+        "heavy black ink, bold silhouette, high contrast, misty atmosphere\n"
+        "---\n"
+        "(worst quality:2), (low quality:2), lowres, (bad anatomy:1.4), "
+        "(bad hands:1.5), (mutated hands:1.4), text, error, missing fingers, "
+        "extra digit, fewer digits, cropped, jpeg artifacts, signature, watermark, "
+        "username, (extra limbs:1.4), (deformed:1.3), blurry, bad face, "
+        "realistic, 3D render, photograph, photorealistic, nsfw, "
+        "western cartoon, out of frame"
+    )
+
+    def _read_default_preset(self) -> str:
+        """Nội dung preset mặc định; thiếu file thì dùng chuỗi dự phòng cùng tinh thần."""
+        preset_path = os.path.join(
+            _MC_ROOT, "resource", "image_presets",
+            f"{self.DEFAULT_STYLE_PRESET}.txt")
+        try:
+            with open(preset_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return self._FALLBACK_STYLE
+
+    def apply_style_preset(self, preset_name: str) -> bool:
+        """Chép preset trong resource/image_presets vào style file của truyện.
+
+        Trước đây `adapter_video_cli` chỉ gán `context.art_style = <tên>` — một
+        chuỗi thuần, không ai đọc để đổi prompt. Style THẬT được ghi đúng một lần
+        lúc `create_context()` rồi giữ nguyên vĩnh viễn, nên chọn phong cách trên
+        UI hoàn toàn không có tác dụng lên ảnh. Hàm này nối lại mắt xích đó.
+
+        Trả False nếu không có preset tương ứng (giữ nguyên style hiện tại).
+        """
+        if not preset_name:
+            return False
+        preset_path = os.path.join(
+            _MC_ROOT, "resource", "image_presets", f"{preset_name}.txt")
+        if not os.path.exists(preset_path):
+            logger.warning(
+                f"[Context] Không có preset '{preset_name}' — giữ style hiện tại.")
+            return False
+        try:
+            with open(preset_path, "r", encoding="utf-8") as src:
+                content = src.read()
+            os.makedirs(self.context_dir, exist_ok=True)
+            with open(self.style_file, "w", encoding="utf-8") as dst:
+                dst.write(content)
+            logger.info(f"[Context] Đã áp phong cách '{preset_name}' cho truyện "
+                        f"'{self.story_slug}'.")
+            return True
+        except OSError as e:
+            logger.warning(f"[Context] Không áp được preset '{preset_name}': {e}")
+            return False
+
     def create_context(self, story_name: str, genre: str) -> StoryContext:
         os.makedirs(self.chars_dir, exist_ok=True)
-        
-        default_style = (
-            "(flat color, minimalist anime, clean lineart), \n"
-            "scenery background, detailed environment, \n"
-            "xianxia cultivation setting, sharp details\n"
-            "---\n"
-            "(worst quality:2), (low quality:2), (normal quality:2), lowres, \n"
-            "(bad anatomy:1.4), (bad hands:1.5), (mutated hands:1.4), \n"
-            "text, error, missing fingers, extra digit, fewer digits, \n"
-            "cropped, jpeg artifacts, signature, watermark, username, \n"
-            "(extra limbs:1.4), (deformed:1.3), blurry, bad face, \n"
-            "realistic, 3D render, photograph, photorealistic, nsfw, \n"
-            "western cartoon, out of frame"
-        )
+
+        default_style = self._read_default_preset()
         with open(self.style_file, "w", encoding="utf-8") as f:
             f.write(default_style)
             

@@ -27,6 +27,15 @@ FACEID_LORA_WEIGHT = 0.65
 _MC_ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 CHARACTER_LORA_DIR = os.path.join(_MC_ROOT_DIR, "resource", "character_loras")
 CHARACTER_LORA_WEIGHT = 0.8
+# Chỉ chia ô khi decode thật sự lớn. Dưới ngưỡng này tiling không tiết kiệm bộ
+# nhớ đáng kể nhưng lại tạo nguy cơ dải đen do một ô tràn số fp16.
+VAE_TILING_MIN_EDGE = 1024
+# Số lần sinh lại tối đa khi phát hiện frame có dải chết (seed khác mỗi lần).
+DEAD_REGION_RETRIES = 2
+# LoRA PHONG CÁCH (train bằng scripts/train_style_lora.py). Khác LoRA nhân vật ở
+# chỗ nó luôn bật cho MỌI ảnh của truyện — nền, nhân vật, unify pass — nên toàn bộ
+# chương có cùng một art direction ở mức TRỌNG SỐ, không chỉ mức prompt.
+STYLE_LORA_DIR = os.path.join(_MC_ROOT_DIR, "resource", "style_loras")
 
 
 def get_character_lora_path(char_slug: str) -> str:
@@ -34,6 +43,19 @@ def get_character_lora_path(char_slug: str) -> str:
     if not char_slug:
         return ""
     path = os.path.join(CHARACTER_LORA_DIR, f"{char_slug}.safetensors")
+    return path if os.path.exists(path) else ""
+
+
+def get_style_lora_path(style_name: str) -> str:
+    """Đường dẫn LoRA phong cách nếu tồn tại, ngược lại trả chuỗi rỗng.
+
+    Chấp nhận cả tên ngắn (``thuy_mac``) lẫn đường dẫn tuyệt đối tới .safetensors.
+    """
+    if not style_name:
+        return ""
+    if os.path.isabs(style_name) and os.path.exists(style_name):
+        return style_name
+    path = os.path.join(STYLE_LORA_DIR, f"{style_name}.safetensors")
     return path if os.path.exists(path) else ""
 
 
@@ -83,6 +105,9 @@ class StorytellingPipeline:
         self._active_mode: Optional[tuple] = None  # (mode, hyper_lora_name, char_lora) đang kích hoạt
         self._compel = None                  # encoder prompt dài >77 token (lazy init)
         self._char_lora_slug: Optional[str] = None  # LoRA nhân vật đang chọn
+        self._style_lora_name: Optional[str] = None  # LoRA phong cách (luôn bật)
+        self._style_lora_weight: float = 0.8
+        self._style_lora_explicit = False  # True = đã đặt tay, warmup không đè
         self.warnings: List[str] = []        # cảnh báo cần hiển thị lên UI (không nuốt lỗi âm thầm)
         self._initialized = True
 
@@ -105,6 +130,16 @@ class StorytellingPipeline:
             num_steps = st_config.get("num_inference_steps", 8)
         if guidance_scale is None:
             guidance_scale = st_config.get("guidance_scale", 1.5)
+
+        # LoRA phong cách đọc từ config mỗi lần warmup — đổi style trong UI sẽ
+        # được áp ngay ở lần sinh kế tiếp mà không phải reload cả model.
+        # NHƯNG chỉ khi chưa ai đặt tay: nếu không, mọi lời gọi set_style_lora()
+        # đều bị warmup() ngay sau đó xoá sạch (script sweep trọng số từng chạy
+        # cả 5 mức mà thực tế đều ở đúng một mức của config).
+        if not self._style_lora_explicit:
+            self.set_style_lora(st_config.get("style_lora", ""),
+                                float(st_config.get("style_lora_weight", 0.8)),
+                                explicit=False)
 
         with StorytellingPipeline._lock:
             if self._pipe is None:
@@ -227,11 +262,11 @@ class StorytellingPipeline:
             try:
                 self._pipe.enable_model_cpu_offload()
                 if hasattr(self._pipe, "vae") and self._pipe.vae is not None:
+                    # Slicing (cắt theo chiều batch) an toàn — giữ.
                     self._pipe.vae.enable_slicing()
-                    # Bật VAE Tiling cho thiết bị VRAM thấp (6GB) giúp chia nhỏ vùng decode latent thành các ô (tiling),
-                    # giảm thiểu memory spike ở khâu giải mã ảnh đầy đủ mà không làm mờ/mất chi tiết đáng kể.
-                    if hasattr(self._pipe.vae, "enable_tiling"):
-                        self._pipe.vae.enable_tiling()
+                    # TILING thì KHÔNG bật mặc định nữa: xem _set_vae_tiling().
+                    if hasattr(self._pipe.vae, "disable_tiling"):
+                        self._pipe.vae.disable_tiling()
                 logger.info("Pipeline warmup completed with CPU Offload (VRAM Save).")
             except Exception as e:
                 logger.warning(f"Không thể bật CPU Offload: {e}. Fallback load trực tiếp model lên thiết bị: {self.device}")
@@ -239,6 +274,54 @@ class StorytellingPipeline:
         else:
             self._pipe = self._pipe.to(self.device)
             logger.info(f"Pipeline warmup completed directly on device {self.device} (Maximum Speed).")
+
+    def _set_vae_tiling(self, width: int, height: int) -> None:
+        """Chỉ bật VAE tiling khi decode THỰC SỰ lớn.
+
+        Bản cũ bật tiling cho MỌI ảnh khi có CPU offload (tức luôn luôn trên GPU
+        6GB). Ở 768x432 việc đó không tiết kiệm bộ nhớ đáng kể — decode vốn đã
+        nhỏ — nhưng lại chia latent thành các ô chồng lấn, và chỉ cần MỘT ô tràn
+        số fp16 là cả dải pixel của ô đó ra đen tuyền.
+
+        Quan sát thực tế (batch 41 cảnh, 24/07): 9 frame hỏng = 22%, vùng đen
+        luôn là dải DỌC rộng đúng 512 hoặc 384 px trên khung 768 — khớp chính xác
+        biên ô tiling (latent 96 rộng, ô 64, chồng lấn 25% → bước 48 → ô pixel
+        0-512 và 384-768). Không frame nào có dải ngang, tức không phải model vẽ
+        hỏng mà là khâu giải mã.
+        """
+        vae = getattr(self._pipe, "vae", None)
+        if vae is None:
+            return
+        need_tiling = max(int(width or 0), int(height or 0)) >= VAE_TILING_MIN_EDGE
+        try:
+            if need_tiling and hasattr(vae, "enable_tiling"):
+                vae.enable_tiling()
+            elif hasattr(vae, "disable_tiling"):
+                vae.disable_tiling()
+        except Exception as e:
+            logger.warning(f"Không đặt được VAE tiling: {e}")
+
+    @staticmethod
+    def has_dead_region(image: Image.Image, min_fraction: float = 0.04) -> bool:
+        """Phát hiện dải đen/trắng chết do VAE decode hỏng.
+
+        Chỉ tính các HÀNG hoặc CỘT bão hoà hoàn toàn — vệt mực đen hợp lệ trong
+        tranh thủy mặc gần như không bao giờ phủ kín trọn một cột từ trên xuống
+        dưới, còn ô decode hỏng thì luôn phủ kín.
+        """
+        try:
+            gray = np.asarray(image.convert("L"))
+        except Exception:
+            return False
+        if gray.size == 0:
+            return False
+        height, width = gray.shape
+        for dead in (gray <= 4, gray >= 251):
+            cols = int((dead.all(axis=0)).sum())
+            rows = int((dead.all(axis=1)).sum())
+            if cols / max(width, 1) >= min_fraction or rows / max(height, 1) >= min_fraction:
+                return True
+        return False
 
     def _select_hyper_lora(self, num_steps: int, guidance_scale: float) -> str:
         if num_steps <= 2:
@@ -260,6 +343,28 @@ class StorytellingPipeline:
             self._char_lora_slug = slug
             self._active_mode = None  # buộc _configure_mode chạy lại để swap adapter
 
+    def set_style_lora(self, style_name: Optional[str], weight: float = 0.8,
+                       explicit: bool = True) -> None:
+        """Chọn LoRA phong cách dùng cho MỌI ảnh (None/không tìm thấy = tắt).
+
+        ``explicit=True`` (mặc định, dùng khi gọi tay) sẽ ghim lựa chọn này lại:
+        các lần ``warmup()`` sau đó không được lấy config đè lên nữa.
+        """
+        if explicit:
+            self._style_lora_explicit = True
+        name = style_name if get_style_lora_path(style_name or "") else None
+        weight = max(0.0, min(1.5, float(weight)))
+        if name != self._style_lora_name or weight != self._style_lora_weight:
+            if style_name and name is None:
+                msg = (f"Không tìm thấy LoRA phong cách '{style_name}' trong "
+                       f"{STYLE_LORA_DIR} — ảnh sẽ sinh KHÔNG có style lock.")
+                logger.warning(msg)
+                if msg not in self.warnings:
+                    self.warnings.append(msg)
+            self._style_lora_name = name
+            self._style_lora_weight = weight
+            self._active_mode = None
+
     def _configure_mode(self, num_steps: int, guidance_scale: float) -> None:
         """
         Đồng bộ scheduler + LoRA với tham số sinh ảnh THỰC TẾ.
@@ -269,11 +374,12 @@ class StorytellingPipeline:
         if self._pipe is None:
             return
 
+        style_key = (self._style_lora_name, self._style_lora_weight)
         if num_steps >= QUALITY_MODE_MIN_STEPS:
-            mode_key = ("quality", None, self._char_lora_slug)
+            mode_key = ("quality", None, self._char_lora_slug, style_key)
         else:
             hyper_name = self._select_hyper_lora(num_steps, guidance_scale)
-            mode_key = ("fast", hyper_name, self._char_lora_slug)
+            mode_key = ("fast", hyper_name, self._char_lora_slug, style_key)
 
         if mode_key == self._active_mode:
             return
@@ -315,6 +421,24 @@ class StorytellingPipeline:
             if adapter_name in self._loaded_loras:
                 active_adapters.append(adapter_name)
                 adapter_weights.append(1.0)
+
+        # LoRA phong cách — bật cho MỌI ảnh (nền + nhân vật + unify) nên phải đứng
+        # trước LoRA nhân vật trong danh sách adapter.
+        if self._style_lora_name:
+            style_adapter = f"style_{self._style_lora_name}"
+            if style_adapter not in self._loaded_loras:
+                style_path = get_style_lora_path(self._style_lora_name)
+                try:
+                    self._pipe.load_lora_weights(style_path, adapter_name=style_adapter)
+                    self._loaded_loras.add(style_adapter)
+                    logger.info(f"Đã load LoRA phong cách: {style_path}")
+                except Exception as e:
+                    msg = f"Không load được LoRA phong cách '{self._style_lora_name}': {e}"
+                    logger.warning(msg)
+                    self.warnings.append(msg)
+            if style_adapter in self._loaded_loras:
+                active_adapters.append(style_adapter)
+                adapter_weights.append(self._style_lora_weight)
 
         # LoRA nhân vật (nếu được chọn qua set_character_lora)
         if self._char_lora_slug:
@@ -415,6 +539,21 @@ class StorytellingPipeline:
         self._pipe.set_ip_adapter_scale(0.0)
         zero_emb = np.zeros(512, dtype=np.float32)
         return {"ip_adapter_image_embeds": self._prepare_ip_embeds(zero_emb, guidance_scale)}
+
+    @staticmethod
+    def _ensure_quality_tags(prompt: str) -> str:
+        """Chỉ thêm tag chất lượng khi prompt CHƯA có.
+
+        Bản cũ chèn cứng ``"masterpiece, best quality, highres, "`` vào MỌI prompt.
+        Style preset của truyện đã mở đầu bằng ``"(masterpiece, best quality:1.2)"``
+        nên prompt thật ra mang hai lần cùng một tuyên bố chất lượng, lại còn đẩy
+        tag không trọng số lên TRƯỚC tag có trọng số — vô hiệu hoá chính trọng số
+        mà style đặt ra, đồng thời ăn mất token đầu prompt vốn quý nhất.
+        """
+        head = (prompt or "").lower()[:120]
+        if "masterpiece" in head or "best quality" in head:
+            return prompt
+        return "masterpiece, best quality, highres, " + (prompt or "")
 
     @staticmethod
     def _a1111_to_compel(prompt: str) -> str:
@@ -557,21 +696,39 @@ class StorytellingPipeline:
         if seed == -1:
             seed = torch.randint(0, 2147483647, (1,)).item()
 
-        generator = torch.Generator(device=self.device).manual_seed(seed)
+        # Tiling chỉ bật cho decode lớn — nguyên nhân gốc của frame đen nửa khung.
+        self._set_vae_tiling(width, height)
 
         kwargs = self._build_identity_kwargs(face_embedding, face_image, guidance_scale)
+        prompt_kwargs = self._build_prompt_kwargs(self._ensure_quality_tags(prompt), negative_prompt)
 
-        quality_prompt = "masterpiece, best quality, highres, " + prompt
-        prompt_kwargs = self._build_prompt_kwargs(quality_prompt, negative_prompt)
-        result = self._pipe(
-            num_inference_steps=num_steps,
-            guidance_scale=guidance_scale,
-            width=width,
-            height=height,
-            generator=generator,
-            **prompt_kwargs,
-            **kwargs
-        ).images[0]
+        result = None
+        for attempt in range(DEAD_REGION_RETRIES + 1):
+            generator = torch.Generator(device=self.device).manual_seed(seed)
+            result = self._pipe(
+                num_inference_steps=num_steps,
+                guidance_scale=guidance_scale,
+                width=width,
+                height=height,
+                generator=generator,
+                **prompt_kwargs,
+                **kwargs
+            ).images[0]
+
+            if not self.has_dead_region(result):
+                break
+            if attempt < DEAD_REGION_RETRIES:
+                new_seed = torch.randint(0, 2147483647, (1,)).item()
+                logger.warning(
+                    f"Frame có dải chết (VAE decode hỏng) — sinh lại "
+                    f"{attempt + 1}/{DEAD_REGION_RETRIES} với seed {new_seed}.")
+                seed = new_seed
+            else:
+                msg = ("Frame vẫn còn dải chết sau khi sinh lại — cần kiểm tra tay. "
+                       "Nếu tái diễn, hạ image_width/image_height hoặc đổi VAE.")
+                logger.error(msg)
+                if msg not in self.warnings:
+                    self.warnings.append(msg)
 
         self.log_vram("sau generate")
         return result, seed
@@ -667,10 +824,10 @@ class StorytellingPipeline:
 
         generators = [torch.Generator(device=self.device).manual_seed(s) for s in seeds]
 
+        self._set_vae_tiling(width, height)
         kwargs = self._build_identity_kwargs(face_embedding, face_image, guidance_scale)
 
-        quality_prompt = "masterpiece, best quality, highres, " + prompt
-        prompt_kwargs = self._build_prompt_kwargs(quality_prompt, negative_prompt)
+        prompt_kwargs = self._build_prompt_kwargs(self._ensure_quality_tags(prompt), negative_prompt)
         images = []
 
         logger.info(f"Generating {batch_size} images sequentially to save VRAM...")

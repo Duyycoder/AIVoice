@@ -60,6 +60,24 @@ _CHARACTER_STYLE_BLOCKLIST = (
 )
 
 
+# Dưới ngưỡng này mặt trong frame cuối nhỏ tới mức face detailer không còn đóng
+# góp gì nhìn thấy được (mặt anime full-body chiếm ~1/8 chiều cao nhân vật).
+_MIN_FACE_PX_TO_DETAIL = 30
+
+
+def _face_too_small_to_detail(layer, frame_h: int) -> bool:
+    """Ước lượng mặt còn bao nhiêu pixel sau khi lớp nhân vật bị thu nhỏ vào frame."""
+    framing = getattr(layer, "framing", "full")
+    # Tỉ lệ chiều cao khuôn mặt trên chiều cao lớp, theo cỡ khung sinh nhân vật.
+    face_ratio = {"close": 0.42, "medium": 0.20}.get(framing, 0.12)
+    try:
+        scale = float(getattr(layer, "scale", 1.0))
+    except (TypeError, ValueError):
+        return False
+    layer_h_in_frame = max(0.0, min(1.0, scale)) * max(1, frame_h)
+    return (layer_h_in_frame * face_ratio) < _MIN_FACE_PX_TO_DETAIL
+
+
 class MatteQualityError(RuntimeError):
     """Chroma-key không đạt cổng chất lượng; caller phải render classic."""
 
@@ -286,7 +304,14 @@ class StudioPipeline:
 
     @staticmethod
     def _image_action_cues(scene) -> str:
-        """Lấy action tiếng Anh từ image_prompt cũ khi LLM layout chưa có pose."""
+        """Hành động của cảnh khi LLM layout chưa có pose riêng cho nhân vật.
+
+        Ưu tiên trường ``action`` LLM trả về ở Trạm 1; state cũ (chưa có trường
+        này) mới dò động từ trong image_prompt như trước.
+        """
+        llm_action = str(getattr(scene, "_llm_action", "") or "").strip()
+        if llm_action:
+            return llm_action
         cues = [tag.strip() for tag in
                 (getattr(scene, "image_prompt", "") or "").split(",")
                 if _ACTION_CUE_RE.search(tag)]
@@ -311,9 +336,11 @@ class StudioPipeline:
             chars.append({
                 "slug": slug,
                 "name": display_name,
+                # Ngoại hình + art direction; KHÔNG chứa hành động.
                 "prompt": ", ".join(value for value in (
-                    "" if has_specific_pose else fallback_action,
                     self._appearance_for(slug), style) if value),
+                # Hành động đi riêng để renderer nhấn trọng số ở đầu prompt.
+                "action": "" if has_specific_pose else fallback_action,
             })
         bg_prompt = self._background_prompt(scene)
         loc_id = self._scene_location(scene)
@@ -344,7 +371,7 @@ class StudioPipeline:
             for char in chars:
                 pose = poses.get(self._norm(char.get("name") or char["slug"]))
                 if pose:
-                    char["prompt"] = ", ".join(x for x in (pose, char["prompt"]) if x)
+                    char["action"] = pose
 
         return build_layer_plan(
             shot_type=getattr(scene, "shot_type", "wide"),
@@ -367,7 +394,8 @@ class StudioPipeline:
                     bg_renderer: BackgroundRenderer,
                     fallback_matter: Optional[Matter] = None,
                     harmonize: bool = True,
-                    shadow_opacity: float = 0.0) -> None:
+                    shadow_opacity: float = 0.0,
+                    unify_fn: Optional[Callable[[Image.Image, str], Image.Image]] = None) -> None:
         bg = bg_renderer.get_or_render(plan.location_id, plan.background_prompt, size, bg_render_fn)
         if bg.size != size:
             bg = bg.resize(size)
@@ -388,6 +416,11 @@ class StudioPipeline:
             layers.append((rgba, layer))
 
         frame = composite(bg, layers, harmonize=harmonize, shadow_opacity=shadow_opacity)
+        # Hòa trộn cả frame bằng img2img strength thấp: xóa vẻ "dán sticker" mà
+        # harmonize trung bình màu không xử lý được (mép cắt, lệch ánh sáng).
+        # Chỉ chạy khi cảnh THỰC SỰ có lớp nhân vật — cảnh toàn nền đã liền mạch.
+        if unify_fn is not None and layers:
+            frame = unify_fn(frame, plan.background_prompt)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         frame.save(out_path)
 
@@ -529,6 +562,29 @@ class StudioPipeline:
         q_steps = int(cfg.get("studio_render_steps", 0)) or None
         q_guidance = float(cfg.get("studio_render_guidance", 0.0)) or None
 
+        # Unify pass: img2img strength thấp trên frame đã ghép (xem unify_pass.py).
+        from app.services.storytelling.studio.unify_pass import (
+            resolve_unify_settings, unify_frame)
+        unify_cfg = resolve_unify_settings(cfg)
+        action_weight = float(cfg.get("studio_action_weight", 1.35))
+
+        def make_unify_fn():
+            if not unify_cfg:
+                return None
+            style_positive = self._character_style_prompt()
+            negative = self.context.get_negative_prompt() if self.context else ""
+
+            def _unify(frame, background_prompt):
+                return unify_frame(
+                    pipe, frame,
+                    style_positive=style_positive,
+                    background_prompt=background_prompt,
+                    negative_prompt=negative,
+                    **unify_cfg)
+            return _unify
+
+        unify_fn = make_unify_fn()
+
         def bg_render_fn(prompt, sz):
             # Character LoRA là stateful; phải tắt trước khi sinh nền location mới.
             if hasattr(pipe, "set_character_lora"):
@@ -568,12 +624,22 @@ class StudioPipeline:
                         layer_detailer = use_detailer
                         if lora_skip_detailer and has_trained_lora(layer.slug, _checkpoint):
                             layer_detailer = False
+                        # Cảnh rộng: lớp 512x768 sẽ bị thu về ~scale*chiều cao khung,
+                        # mặt còn dưới ~30px trong frame cuối. Chạy img2img vẽ lại mặt
+                        # cho vài chục pixel đó là ném thời gian đi — bỏ hẳn.
+                        if layer_detailer and _face_too_small_to_detail(layer, size[1]):
+                            logger.info(
+                                f"[Studio] Bỏ face detailer cho '{layer.slug}' "
+                                f"(scale={layer.scale:.2f} — mặt quá nhỏ trong frame).")
+                            layer_detailer = False
                         img, _ = char_renderer.render(
                             pipe, layer.prompt, _CHAR_SIZE, bg_hex,
                             face_image=face_img, face_embedding=face_emb,
                             negative_prompt=self.context.get_negative_prompt(),
                             use_detailer=layer_detailer,
                             framing=getattr(layer, "framing", "full"),
+                            action=getattr(layer, "action", ""),
+                            action_weight=action_weight,
                             num_steps=q_steps, guidance_scale=q_guidance)
                         if use_ip and face_img is None and face_emb is None:
                             self._try_bootstrap_ref(i, layer.slug, img)
@@ -584,7 +650,8 @@ class StudioPipeline:
                                      char_render_fn=char_render_fn,
                                      matter=matter, fallback_matter=fallback_matter,
                                      bg_renderer=bg_renderer,
-                                     shadow_opacity=float(cfg.get("studio_shadow_opacity", 0.0)))
+                                     shadow_opacity=float(cfg.get("studio_shadow_opacity", 0.0)),
+                                     unify_fn=unify_fn)
             except Exception as e:
                 logger.error(f"[Studio] Cảnh {i} lỗi ({e}) — thử fallback classic.")
                 try:

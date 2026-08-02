@@ -69,23 +69,41 @@ def bg_color_name(hex_color: str) -> str:
 
 
 _FRAMING_TAGS = {
+    # "standing" đã bị bỏ khỏi framing "full": nó là một TƯ THẾ, không phải cỡ cảnh,
+    # và trước đây nó ghi đè mọi hành động mà LLM mô tả cho cảnh.
     "close": "upper body, waist up, portrait framing",
     "medium": "three-quarter body, cowboy shot",
-    "full": "full body, standing",
+    "full": "full body",
 }
+# Khi cảnh không mô tả hành động nào thì mới rơi về tư thế mặc định.
+_DEFAULT_POSE = "standing, relaxed pose"
 
 
 def build_character_prompt(appearance: str, color_name: str,
-                           framing: str = "full") -> str:
-    """Prompt sinh nhân vật theo cỡ cảnh trên nền phẳng đồng nhất."""
-    # Giữ prompt ngắn; action/pose được planner đưa lên trước appearance.
+                           framing: str = "full",
+                           action: str = "",
+                           action_weight: float = 1.35) -> str:
+    """Prompt sinh nhân vật: HÀNH ĐỘNG trước, rồi ngoại hình, rồi nền phẳng.
+
+    SD1.5 đọc token theo thứ tự và loãng dần về cuối. Bản cũ đặt hành động lẫn
+    trong ngoại hình rồi chốt bằng ``"front view, centered subject"`` +
+    ``"standing"`` — ba tag đó triệt tiêu mọi tư thế nên nhân vật luôn đứng
+    trơ nhìn thẳng. Giờ hành động lên đầu, có trọng số, và không còn tag nào
+    ép hướng nhìn.
+    """
+    from app.services.storytelling.style_lock import (
+        strip_style_drift, weight_action)
+
     tags = [tag.strip() for tag in (appearance or "").split(",") if tag.strip()]
     appearance = ", ".join(tags[:14])
+
+    action = strip_style_drift(action or "").strip()
+    pose = weight_action(action, action_weight) if action else _DEFAULT_POSE
     framing_tags = _FRAMING_TAGS.get(framing, _FRAMING_TAGS["full"])
+
     return ", ".join(part for part in (
-        appearance, "solo", "1 person", framing_tags, "front view",
-        "centered subject", "simple background", f"flat {color_name} background",
-        "plain backdrop",
+        pose, appearance, "solo", "1 person", framing_tags,
+        "simple background", f"flat {color_name} background", "plain backdrop",
     ) if part)
 
 
@@ -112,10 +130,13 @@ class CharacterRenderer:
                negative_prompt: str = "",
                use_detailer: bool = True,
                framing: str = "full",
+               action: str = "",
+               action_weight: float = 1.35,
                num_steps: Optional[int] = None,
                guidance_scale: Optional[float] = None) -> Tuple[Image.Image, int]:
         color = bg_color_name(bg_hex)
-        prompt = build_character_prompt(appearance, color, framing=framing)
+        prompt = build_character_prompt(appearance, color, framing=framing,
+                                        action=action, action_weight=action_weight)
         neg = build_character_negative_prompt(negative_prompt, framing)
 
         img, seed = pipeline.generate_draft(

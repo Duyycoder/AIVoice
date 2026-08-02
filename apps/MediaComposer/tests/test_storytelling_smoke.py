@@ -131,6 +131,27 @@ class TestSRTMapper:
         # Cảnh cuối kết thúc tại total_duration
         assert result[-1].end_time == 10.0
 
+    def test_no_srt_blocks_weights_timing_by_word_count(self):
+        from app.services.storytelling.models import Scene
+        from app.services.storytelling.srt_mapper import map_semantic_scenes_to_srt
+        scenes = [
+            Scene(scene_id=0, text_vi="ngắn", word_count=1,
+                  start_time=0, end_time=0, duration_sec=0,
+                  image_prompt="", characters_in_scene=[], primary_character="",
+                  fallback_level=0, accepted_seed=-1, frame_path=""),
+            Scene(scene_id=1, text_vi="đoạn dài ba từ", word_count=4,
+                  start_time=0, end_time=0, duration_sec=0,
+                  image_prompt="", characters_in_scene=[], primary_character="",
+                  fallback_level=0, accepted_seed=-1, frame_path=""),
+        ]
+
+        result = map_semantic_scenes_to_srt(scenes, [], 10.0)
+
+        assert result[0].start_time == 0.0
+        assert result[0].end_time == pytest.approx(2.0)
+        assert result[1].start_time == pytest.approx(2.0)
+        assert result[1].end_time == 10.0
+
 
 class TestDatasetFIFO:
     """Test FIFO eviction trong add_dataset_image."""

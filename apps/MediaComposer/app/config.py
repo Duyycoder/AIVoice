@@ -43,7 +43,12 @@ class Config:
             "subtitle_border": 2,
             "subtitle_position": "bottom",
             "num_inference_steps": 8,
-            "guidance_scale": 1.5,
+            # 5.0 chứ KHÔNG phải 1.5. Với 8 bước + Hyper-SD CFG-lora, guidance 1.5
+            # gần như bỏ qua prompt: model tự do liên tưởng và trả về mảng texture
+            # trừu tượng thay vì chủ thể. Ảnh nền vẫn "trông được" nên lỗi này ẩn
+            # rất lâu — chỉ lộ ra ở ảnh nhân vật. config.toml.example luôn ghi 5.0;
+            # mặc định 1.5 ở đây là giá trị cũ sót lại, không khớp tài liệu.
+            "guidance_scale": 5.0,
             "hardware_profile": "auto",
             "image_gen_provider": "Stable Diffusion (Local GPU)",
             # "clip": IP-Adapter Plus Face — truyền thẳng ảnh tham chiếu, hỗ trợ anime/manhwa (khuyên dùng)
@@ -60,6 +65,20 @@ class Config:
             "face_detailer_skip_sim": 0.62,
             # Mức độ giống nhân vật (IP-Adapter) — nguồn sự thật chung cho Studio + Batch
             "ip_adapter_scale": 0.6,
+            # ----------------------------------------------------------------
+            # STYLE LOCK — khóa phong cách ở mức TRỌNG SỐ, không chỉ mức prompt.
+            # Tên file (không đuôi) trong resource/style_loras/, train bằng
+            # scripts/train_style_lora.py. Rỗng = tắt (chỉ khóa bằng prompt).
+            # ----------------------------------------------------------------
+            # Mặc định BẬT LoRA thủy mặc đã train 24/07 (46 ảnh Met CC0).
+            # Trọng số 0.45 theo sweep: 0.40-0.55 dùng được, >=0.70 tan chi tiết
+            # bàn tay/bàn chân, <=0.25 gần như không khác base model.
+            # Đặt rỗng để tắt style lock ở mức trọng số.
+            "style_lora": "thuy_mac",
+            "style_lora_weight": 0.45,
+            # Trọng số gắn cho cụm hành động ở đầu prompt (1.25-1.45 hợp lý;
+            # cao hơn dễ méo giải phẫu, thấp hơn thì nhân vật lại đứng yên).
+            "studio_action_weight": 1.35,
             # ----------------------------------------------------------------
             # STUDIO COMPOSITING (nhánh feat/studio-compositing) — render theo lớp.
             # Mặc định "classic" ⇒ giữ nguyên hành vi cũ; đặt "studio" để bật.
@@ -101,6 +120,12 @@ class Config:
             # num_inference_steps chung.
             "studio_render_steps": 0,
             "studio_render_guidance": 0.0,
+            # Unify pass: img2img strength thấp trên frame ĐÃ ghép để nhân vật ăn
+            # sáng với nền (hết vẻ dán sticker). Xem studio/unify_pass.py.
+            "studio_unify_pass": True,
+            "studio_unify_strength": 0.28,   # >0.45 sẽ vẽ lại cả bố cục (bị chặn)
+            "studio_unify_steps": 16,        # số bước thật = steps * strength
+            "studio_unify_guidance": 5.0,
         }
         self.proxy = None
         self.load_config()

@@ -46,6 +46,16 @@ def _hex_to_ass_color(color: str) -> str:
     rr, gg, bb = c[0:2], c[2:4], c[4:6]
     return f"&H{bb}{gg}{rr}".upper()
 
+def _escape_filter_path(path: str) -> str:
+    """Escape một path nằm trong giá trị quoted của FFmpeg filtergraph.
+
+    ``os.path.relpath`` raise ``ValueError`` khi output và resource nằm khác ổ
+    đĩa trên Windows. Nhánh absolute khi đó phải escape dấu ``:`` của drive;
+    nếu không libavfilter hiểu phần sau dấu hai chấm là option tiếp theo.
+    """
+    normalized = str(path).replace("\\", "/")
+    return normalized.replace(":", r"\:").replace("'", r"\'")
+
 def _build_subtitle_style(st_config: dict) -> str:
     """Ghép force_style ASS từ config: font, size, màu, viền, vị trí (trước đây chỉ áp font+size)."""
     font_name = _get_valid_font(st_config.get("subtitle_font", "Arial"))
@@ -171,7 +181,8 @@ def assemble_video(
         try:
             rel_fonts = os.path.relpath(font_dir_abs, start=work_dir).replace("\\", "/")
         except ValueError:
-            rel_fonts = font_dir_abs.replace("\\", "/")
+            rel_fonts = font_dir_abs
+        rel_fonts = _escape_filter_path(rel_fonts)
         fonts_dir_opt = f":fontsdir='{rel_fonts}'"
         
         vf = f"subtitles='temp_sub.srt'{fonts_dir_opt}:force_style='{sub_style}'"
@@ -231,7 +242,8 @@ def generate_draft_video(
         try:
             rel_fonts = os.path.relpath(font_dir_abs, start=work_dir).replace("\\", "/")
         except ValueError:
-            rel_fonts = font_dir_abs.replace("\\", "/")
+            rel_fonts = font_dir_abs
+        rel_fonts = _escape_filter_path(rel_fonts)
         fonts_dir_opt = f":fontsdir='{rel_fonts}'"
         
         vf = f"scale={draft_w}:{draft_h},subtitles='draft_temp_sub.srt'{fonts_dir_opt}:force_style='FontName={font_name},FontSize={font_size}'"

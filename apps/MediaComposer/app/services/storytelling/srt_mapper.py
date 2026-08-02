@@ -194,6 +194,28 @@ def _fallback_uniform_duration(scenes: List[Scene], total_dur: float) -> List[Sc
     return scenes
 
 
+def _fallback_proportional_duration(
+    scenes: List[Scene],
+    total_dur: float,
+) -> List[Scene]:
+    """Phân bổ toàn timeline theo số từ và giữ end cuối đúng duration."""
+    if not scenes:
+        return scenes
+
+    effective_dur = total_dur if total_dur > 0 else len(scenes) * 5.0
+    word_counts = [max(len((scene.text_vi or "").split()), 1) for scene in scenes]
+    total_words = sum(word_counts)
+    current = 0.0
+    for index, (scene, word_count) in enumerate(zip(scenes, word_counts)):
+        duration = effective_dur * word_count / total_words
+        end = effective_dur if index == len(scenes) - 1 else current + duration
+        scene.start_time = current
+        scene.end_time = end
+        scene.duration_sec = end - current
+        current = end
+    return scenes
+
+
 def map_semantic_scenes_to_srt(scenes, srt_blocks, total_duration):
     """Map semantic scenes (list of Scene dataclass) sang timeline bằng text matching.
 
@@ -213,7 +235,7 @@ def map_semantic_scenes_to_srt(scenes, srt_blocks, total_duration):
     # Nếu không có SRT blocks → fallback tỷ lệ từ
     if not srt_blocks:
         logger.info("[SemanticSRT] No SRT blocks, using word-count proportional timing.")
-        return _fallback_uniform_duration(scenes, total_duration)
+        return _fallback_proportional_duration(scenes, total_duration)
 
     def normalize_text(text):
         """Lowercase, bỏ dấu tiếng Việt, bỏ dấu câu."""
@@ -350,7 +372,7 @@ def map_semantic_scenes_to_srt(scenes, srt_blocks, total_duration):
     # Nếu không có SRT blocks → fallback tỷ lệ từ
     if not srt_blocks:
         logger.info("[SemanticSRT] No SRT blocks, using word-count proportional timing.")
-        return _fallback_uniform_duration(scenes, total_duration)
+        return _fallback_proportional_duration(scenes, total_duration)
 
     def normalize_text(text):
         """Lowercase, bỏ dấu tiếng Việt, bỏ dấu câu."""

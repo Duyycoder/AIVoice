@@ -1,4 +1,5 @@
 import os
+import shutil
 import hashlib
 import json
 from loguru import logger
@@ -27,6 +28,48 @@ def task_dir(task_id: str):
 def get_ffmpeg_binary():
     import imageio_ffmpeg
     return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def get_ffmpeg_dir_for_ytdlp():
+    """Trả về thư mục chứa binary tên đúng chuẩn 'ffmpeg' để đưa cho yt-dlp.
+
+    imageio-ffmpeg đặt tên binary kèm phiên bản (ffmpeg-win-x86_64-v7.1.exe),
+    trong khi yt-dlp chỉ chấp nhận file tên ffmpeg/ffprobe/avconv/avprobe. Trỏ
+    thẳng vào thư mục của imageio-ffmpeg thì yt-dlp coi như KHÔNG có ffmpeg và
+    bỏ luôn bước ghép video+audio ("You have requested merging of multiple
+    formats but ffmpeg is not installed"). Vì vậy tạo sẵn một bản tên chuẩn
+    (hardlink nếu cùng ổ đĩa, không thì copy) trong storage rồi trả thư mục đó.
+
+    Nếu vì lý do nào đó không tạo được bản sao thì trả về thư mục gốc — lúc đó
+    yt-dlp mất khả năng merge nhưng luồng tải vẫn chạy như trước.
+    """
+    src = get_ffmpeg_binary()
+    if os.path.splitext(os.path.basename(src))[0].lower() == "ffmpeg":
+        return os.path.dirname(src)
+
+    dst_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    try:
+        shim_dir = storage_dir("ffmpeg_bin", create=True)
+        dst = os.path.join(shim_dir, dst_name)
+        if os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src):
+            return shim_dir
+
+        tmp = f"{dst}.{os.getpid()}.tmp"
+        try:
+            os.link(src, tmp)
+        except (OSError, AttributeError, NotImplementedError):
+            shutil.copy2(src, tmp)
+        try:
+            os.replace(tmp, dst)
+        except OSError:
+            # Windows khoá file đang chạy: bản cũ vẫn dùng được thì giữ nguyên.
+            os.remove(tmp)
+            if not os.path.exists(dst):
+                raise
+        return shim_dir
+    except OSError as e:
+        logger.warning(f"Không tạo được bản ffmpeg tên chuẩn cho yt-dlp ({e}) — dùng thư mục gốc.")
+        return os.path.dirname(src)
 
 def parse_extension(file_path: str) -> str:
     _, ext = os.path.splitext(file_path)

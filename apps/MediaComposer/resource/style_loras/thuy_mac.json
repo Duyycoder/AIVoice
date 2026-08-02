@@ -1,0 +1,8 @@
+{
+  "checkpoint": "stablediffusionapi/anything-v5",
+  "style_token": "thuymac ink wash style",
+  "steps": 1500,
+  "rank": 8,
+  "lr": 8e-05,
+  "n_images": 46
+}

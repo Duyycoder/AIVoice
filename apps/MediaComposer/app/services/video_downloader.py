@@ -133,8 +133,11 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
         os.makedirs(output_dir, exist_ok=True)
         
     ffmpeg_bin = utils.get_ffmpeg_binary()
-    ffmpeg_dir = os.path.dirname(ffmpeg_bin)
-    
+    # KHÔNG dùng os.path.dirname(ffmpeg_bin): binary của imageio-ffmpeg tên là
+    # ffmpeg-win-x86_64-v7.1.exe, yt-dlp không nhận ra nên báo "ffmpeg is not
+    # installed" rồi bỏ bước ghép video+audio.
+    ffmpeg_dir = utils.get_ffmpeg_dir_for_ytdlp()
+
     # Append ffmpeg_dir and phantomjs_dir to PATH so yt-dlp can find ffmpeg and phantomjs.exe
     phantomjs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "third_party", "phantomjs"))
     original_path = os.environ.get("PATH", "")

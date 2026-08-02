@@ -32,7 +32,7 @@ def build_layer_plan(shot_type: str,
                      chars: List[dict],
                      background_prompt: str,
                      location_id: str) -> LayerPlan:
-    """chars: list {'slug': str, 'prompt': str} → LayerPlan (heuristic)."""
+    """chars: list {'slug', 'prompt', 'action'} → LayerPlan (heuristic)."""
     base_scale, anchor_y, framing = _SHOT_DEFAULTS.get(
         (shot_type or "wide").lower(), _SHOT_DEFAULTS["wide"])
     anchors = _distribute_anchor_x(len(chars))
@@ -42,6 +42,7 @@ def build_layer_plan(shot_type: str,
         layers.append(CharacterLayer(
             slug=ch.get("slug", ""),
             prompt=ch.get("prompt", ""),
+            action=ch.get("action", ""),
             anchor_x=anchors[i],
             anchor_y=anchor_y,
             scale=base_scale,
@@ -113,13 +114,13 @@ def build_layer_plan_from_llm(llm_layout: list,
             if slug in seen_slugs:
                 return None
             seen_slugs.add(slug)
+            # Pose/hành động giữ RIÊNG (không trộn vào prompt ngoại hình) để
+            # character_renderer đặt nó lên đầu prompt kèm trọng số.
             pose = str(item.get("prompt") or item.get("pose") or "").strip().strip(",")
-            layer_prompt = ch_data.get("prompt", "")
-            if pose:
-                layer_prompt = ", ".join(x for x in (pose, layer_prompt) if x)
             layers.append(CharacterLayer(
                 slug=slug,
-                prompt=layer_prompt,
+                prompt=ch_data.get("prompt", ""),
+                action=pose or ch_data.get("action", ""),
                 anchor_x=ax,
                 anchor_y=ay,
                 scale=scale,

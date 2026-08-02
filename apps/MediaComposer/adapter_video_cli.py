@@ -58,7 +58,8 @@ def main():
     parser.add_argument("--hardware-profile", default="auto", help="Hardware profile: auto, cuda_high, cuda_low, cpu")
     parser.add_argument("--render-mode", default="classic", choices=["classic", "studio"],
                         help="classic = 1 anh/canh (cu); studio = render theo lop (nen + nhan vat) roi ghep")
-    parser.add_argument("--style", default="anime_2d_flat", help="Art style name")
+    parser.add_argument("--style", default="thuy_mac",
+                        help="Ten preset trong resource/image_presets (mac dinh: thuy_mac)")
     parser.add_argument("--checkpoint", default="anything-v5", help="Stable Diffusion checkpoint path or hugginface name")
     parser.add_argument("--llm-api-key", default=None, help="LLM API key")
     parser.add_argument("--llm-base-url", default=None, help="LLM base URL")
@@ -105,9 +106,14 @@ def main():
             context = ctx_mgr.create_context(args.story_name, args.genre)
             log_json("context_created_success", {"story_slug": story_slug})
 
-        # Update style & checkpoint if specified
+        # Update style & checkpoint if specified.
+        # apply_style_preset chép preset THẬT vào style_prompt.txt — thiếu bước này
+        # thì art_style chỉ là một chuỗi trang trí và mọi truyện đều dùng chung
+        # style mặc định ghi lúc tạo context.
         context.art_style = args.style
         context.checkpoint = args.checkpoint
+        if ctx_mgr.apply_style_preset(args.style):
+            log_json("style_applied", {"style": args.style})
         ctx_mgr.save_context(context)
 
         # Scan input directory for batch items (md + audio)

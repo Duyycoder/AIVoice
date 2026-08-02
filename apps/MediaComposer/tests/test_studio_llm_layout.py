@@ -35,7 +35,10 @@ def test_build_from_llm_adds_character_pose_prompt():
 
     plan = build_layer_plan_from_llm(layout, chars, "", "", shot_type="close")
 
-    assert plan.characters[0].prompt == "holding a sword, angry, black robe"
+    # Pose giữ RIÊNG ở `action` để renderer đặt nó lên đầu prompt kèm trọng số;
+    # `prompt` chỉ còn ngoại hình.
+    assert plan.characters[0].action == "holding a sword, angry"
+    assert plan.characters[0].prompt == "black robe"
     assert plan.characters[0].framing == "close"
 
 def test_build_from_llm_invalid_falls_none():

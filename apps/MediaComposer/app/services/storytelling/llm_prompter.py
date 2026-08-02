@@ -51,6 +51,22 @@ GENRE_SPECIFIC_RULES = {
 - Ensure characters are integrated naturally into the background."""
 }
 
+def _locked_style(context: StoryContext) -> str:
+    """Style KHÓA của truyện — nguồn sự thật duy nhất cho art direction.
+
+    Trước đây hàm này là một chuỗi chèn cứng
+    ``"(highly detailed background, cinematic lighting, <model>)"`` — mâu thuẫn
+    trực tiếp với file style của truyện (vd storyboard.txt yêu cầu
+    "flat vector illustration, minimal shading"). Hai tuyên bố style đánh nhau
+    trong cùng một prompt là lý do mỗi frame ra một kiểu.
+    """
+    try:
+        style = (context.get_positive_prompt() or "").strip().strip(",")
+    except Exception:
+        style = ""
+    return style or "(masterpiece, best quality:1.2)"
+
+
 def _build_system_prompt(context: StoryContext) -> str:
     # Clean portrait-inducing tags from character lists sent to LLM
     char_list = []
@@ -64,21 +80,17 @@ def _build_system_prompt(context: StoryContext) -> str:
             "keywords": ", ".join(cleaned)
         })
     
-    model_tag = "Anything V5:1.1"
-    if context.checkpoint and "anything-v5" not in context.checkpoint.lower():
-        model_tag = context.checkpoint.split("/")[-1].replace("-", " ").title()
-        
-    style_prefix = f"(highly detailed background, cinematic lighting, {model_tag})"
-    
     genre = context.genre or "default"
     genre_rules = GENRE_SPECIFIC_RULES.get(genre, GENRE_SPECIFIC_RULES["default"])
-    
+    locked_style = _locked_style(context)
+
     return f"""You are an expert prompt engineer for cinematic Stable Diffusion image generation.
 IMPORTANT: You are a TEXT-ONLY AI. DO NOT generate images. Your only job is to write a TEXT string (a prompt) that will be used by another system.
 
 Given Vietnamese text from a novel scene, output a JSON object matching exactly this schema:
 {{
   "image_prompt": "tag1, tag2, tag3",
+  "action": "short English tags for the MAIN physical action of this scene",
   "characters": ["Name1", "Name2"],
   "primary_character": "Name1",
   "shot_type": "close|medium|wide",
@@ -99,8 +111,8 @@ Pick the type that best serves THIS scene's storytelling. Roughly 30% close, 40%
 
 **CRITICAL SD PROMPT RULES:**
 1. **SIMPLE TAGS ONLY (ENGLISH):** The "image_prompt" MUST be strictly in ENGLISH. Use ONLY a simple, comma-separated list of keywords/tags (e.g., "mountain peak, cloudy sky, sunset"). NO full sentences, NO complex grammar.
-2. **ENVIRONMENT FIRST (CRITICAL):** Your PRIMARY focus is the background and environment. Start your tags by describing the scenery in high detail (e.g., "detailed background, majestic scenery, vast landscape, ancient temple, cinematic lighting, depth of field"). Characters are secondary elements placed within this environment. NEVER use "simple background" or "white background".
-3. **STYLE PREFIX:** Always start the prompt with: "{style_prefix}, "
+2. **ENVIRONMENT FIRST:** Describe the concrete setting — place, objects, weather, time of day (e.g., "ancient temple courtyard, stone steps, pine trees, falling snow"). Characters are placed within this environment. NEVER use "simple background" or "white background".
+3. **NEVER WRITE STYLE TAGS (CRITICAL):** The art style is FIXED by the system and already applied — it is: "{locked_style}". Your output must contain ONLY concrete, physical, describable content: subjects, clothing, objects, place, weather, time of day. FORBIDDEN in your output: "masterpiece", "best quality", "highres", "detailed", "intricate", "cinematic lighting", "depth of field", "anime", "digital art", "realistic", "3d", "8k", any model name, and any other tag about medium or render quality. Writing style tags makes every frame look different — that is the single worst failure mode.
 4. **CHARACTER HANDLING:** If characters appear in the scene:
    a. In "characters"/"primary_character" fields use their EXACT NAME from the list below. But do NOT put names inside "image_prompt" (CLIP cannot read Vietnamese names — they waste tokens; identity is handled by IP-Adapter).
    b. Copy their visual `keywords` from the list below into the image_prompt.
@@ -108,11 +120,11 @@ Pick the type that best serves THIS scene's storytelling. Roughly 30% close, 40%
    d. If the scene is purely landscape/establishing shot, use "no humans, scenery".
    e. Must clearly describe male characters as not effeminate. Minimize 'young'.
    Example: "1boy, male focus, black robe, handsome, wide shot, ancient marketplace"
-5. **CAMERA & LIGHTING:** Add ONE camera tag and ONE lighting tag at the end (e.g., "wide shot, cinematic lighting").
-6. **ACTION & CONTINUITY:** Read the "Director's Note" to understand the visual context and ensure the environment matches the story's progression.
-7. **ACTION WEIGHTING (CRITICAL):** Wrap the main action/pose of the scene in attention weight syntax `(action tags:1.3)`, placed right after the style prefix. Every distinct physical detail (what a character HOLDS, WHERE they are, weather) gets its own weighted tag, e.g. "(kneeling before the altar:1.3), (holding a glowing sword:1.35)". Without weights the model ignores these details.
-8. **LENGTH (CRITICAL — weak image model):** Keep "image_prompt" UNDER 40 words. The downstream image model is WEAK: it follows SHORT, CONCRETE prompts far better than long ones. Use only high-impact visual nouns (subject, setting, key objects, 1 camera + 1 lighting tag). DROP vague adjectives, mood words, and redundant synonyms. Put subject + character appearance in the FIRST 20 words. Fewer, stronger tags beat many weak ones.
-9. **STUDIO LAYOUT:** Include every listed scene character exactly once in `layout`. Its `prompt` contains ONLY that character's English pose, action, held object, and expression; never scenery or another character.
+5. **CAMERA:** Add ONE camera tag at the end (e.g., "wide shot"). No lighting/mood tags — those belong to the fixed style.
+6. **CONTINUITY:** Read the "Director's Note" to understand the visual context and ensure the environment matches the story's progression.
+7. **ACTION FIELD (CRITICAL):** The `action` field is what makes the scene READ as a moment instead of a portrait. Put the main physical action there as 2-4 concrete English verb tags — what the body is DOING, what the hands HOLD, which way it MOVES. Good: "swinging a sword downward, lunging forward, cape flying". Bad: "feeling sad", "being powerful", "standing". Never write "standing" or "looking at viewer" — those are the default and waste the field. If the scene is genuinely static, describe the specific posture instead ("kneeling with head bowed", "leaning against the doorframe"). The system applies attention weights to this field itself — do NOT add weight syntax yourself.
+8. **LENGTH (CRITICAL — weak image model):** Keep "image_prompt" UNDER 35 words. The downstream image model is WEAK: it follows SHORT, CONCRETE prompts far better than long ones. Use only high-impact visual nouns (subject, setting, key objects, 1 camera tag). DROP vague adjectives, mood words, and redundant synonyms. Fewer, stronger tags beat many weak ones.
+9. **STUDIO LAYOUT:** Include every listed scene character exactly once in `layout`. Its `prompt` contains ONLY that character's English pose, action, held object, and expression; never scenery, never appearance, never another character.
 
 Known characters: {json.dumps(char_list, ensure_ascii=False)}
 Story genre: {genre}"""
@@ -139,12 +151,12 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryCo
         {"role": "user", "content": user_prompt}
     ]
     
-    model_tag = "Anything V5:1.1"
-    if context.checkpoint and "anything-v5" not in context.checkpoint.lower():
-        model_tag = context.checkpoint.split("/")[-1].replace("-", " ").title()
-        
-    style_prefix = f"(highly detailed background, cinematic lighting, {model_tag})"
-    
+    from app.config import load_storytelling_config
+    from app.services.storytelling.style_lock import build_locked_prompt
+
+    locked_style = _locked_style(context)
+    action_weight = float(load_storytelling_config().get("studio_action_weight", 1.35))
+
     for attempt in range(retries + 1):
         content = _call_llm(messages)
         if not content:
@@ -166,16 +178,17 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryCo
             if not isinstance(data, dict):
                 continue
             raw_prompt = data.get("image_prompt", "").strip()
+            raw_action = str(data.get("action", "") or "").strip()
             if raw_prompt:
-                old_style = "(flat color, minimalist anime, clean lineart, Anything V5:1.1)"
-                raw_prompt = raw_prompt.replace(old_style, "").strip(", ")
-                if not raw_prompt.startswith("(highly detailed background"):
-                    scene.image_prompt = f"{style_prefix}, {raw_prompt}"
-                else:
-                    scene.image_prompt = raw_prompt
+                # Style luôn do hệ thống áp, hành động luôn được gắn trọng số ở
+                # đầu prompt. LLM chỉ đóng góp phần nội dung cụ thể.
+                scene.image_prompt = build_locked_prompt(
+                    locked_style, raw_prompt,
+                    action=raw_action, action_weight=action_weight)
             else:
                 scene.image_prompt = ""
-                
+            scene._llm_action = raw_action
+
             scene.characters_in_scene = data.get("characters", [])
             scene.primary_character = data.get("primary_character") or ""
 
@@ -197,7 +210,8 @@ def _process_scene_with_retry(scene: Scene, system_prompt: str, context: StoryCo
             logger.warning(f"Failed to decode JSON from LLM on attempt {attempt+1}. Content: {cleaned_content}")
             
     # Fallback if failed
-    scene.image_prompt = f"{style_prefix}, scenery, majestic landscape, cinematic, depth of field"
+    scene.image_prompt = build_locked_prompt(
+        locked_style, "scenery, wide landscape, no humans")
     return False
 
 def generate_storyboard_context(scenes: List[Scene], context: StoryContext) -> dict:
