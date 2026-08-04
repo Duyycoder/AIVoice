@@ -18,3 +18,8 @@ apps/MediaComposer/config.toml
 apps/MediaComposer/third_party/
 apps/MediaComposer/ai_images/
 
+
+# Kokoro-Vietnamese duoc setup.bat clone tu upstream (iamdinhthuan), khong phai
+# submodule cua repo nay. Truoc day no bi commit nham thanh gitlink tro toi mot
+# repo khong ton tai, lam "git clone --recursive" cua repo tong chet giua chung.
+third_party/
