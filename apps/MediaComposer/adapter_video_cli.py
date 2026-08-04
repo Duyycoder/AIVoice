@@ -91,6 +91,21 @@ def main():
             "storage_env": _STORAGE_ENV
         })
 
+        # Thieu trong so o day KHONG lam pipeline chet: RealESRGAN am tham
+        # fallback ve PIL resize (anh mo han) va IP-Adapter mat kha nang giu
+        # nhan vat. Vi vay phai tu tai truoc khi render, khong doi setup.bat.
+        try:
+            from app.services.model_downloader import ensure_models_ready
+            status = ensure_models_ready(download_if_missing=True)
+            missing = [k for k, v in status.items() if v != "ready"]
+            if missing:
+                log_json("model_warn", {"missing": missing,
+                                        "message": "Mot so model chua tai duoc - chat luong co the giam."})
+            else:
+                log_json("model_ready", {"count": len(status)})
+        except Exception as e:
+            log_json("model_warn", {"message": f"Khong kiem tra duoc model: {e}"})
+
         # Slugify the story name to initialize ContextManager
         from orchestrator.storage import slugify
         story_slug = slugify(args.story_name)

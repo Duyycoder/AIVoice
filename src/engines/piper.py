@@ -26,12 +26,49 @@ class PiperEngine(BaseTTSEngine):
         self.voice = PiperVoice.load(path, use_cuda=use_cuda)
         self.model_path = path
 
+    @staticmethod
+    def _try_download(model_p: str) -> bool:
+        """Tải giọng Piper tiếng Việt nếu thiếu (máy mới / setup bị đứt giữa chừng)."""
+        name = os.path.basename(model_p)
+        if not name.startswith("vi_VN-vais1000-medium"):
+            return False  # giọng do người dùng tự thêm — không đoán được URL
+
+        base = ("https://huggingface.co/rhasspy/piper-voices/resolve/main"
+                "/vi/vi_VN/vais1000/medium")
+        try:
+            import requests
+            os.makedirs(os.path.dirname(model_p) or ".", exist_ok=True)
+            # Cần cả .onnx lẫn .onnx.json — thiếu file config thì PiperVoice.load lỗi.
+            for fname in ("vi_VN-vais1000-medium.onnx", "vi_VN-vais1000-medium.onnx.json"):
+                dest = os.path.join(os.path.dirname(model_p), fname)
+                if os.path.exists(dest) and os.path.getsize(dest) > 0:
+                    continue
+                print(f"[Piper] Đang tải {fname} (lần đầu)...", file=sys.stderr)
+                with requests.get(f"{base}/{fname}", stream=True, timeout=60) as res:
+                    res.raise_for_status()
+                    with open(dest, "wb") as f:
+                        for chunk in res.iter_content(1024 * 256):
+                            f.write(chunk)
+            return os.path.exists(model_p)
+        except Exception as e:
+            print(f"[Piper] Tải giọng đọc thất bại: {e}", file=sys.stderr)
+            # Không để lại file dở dang khiến lần sau tưởng đã tải xong.
+            if os.path.exists(model_p) and os.path.getsize(model_p) == 0:
+                try:
+                    os.remove(model_p)
+                except OSError:
+                    pass
+            return False
+
     def generate(self, text: str, output_path: str, **kwargs) -> bool:
         # Check model path override or default path
         model_p = kwargs.get("model") or self.model_path
         if not model_p:
             raise ValueError("Piper model path must be specified via --model or initialization.")
-            
+
+        if not os.path.exists(model_p):
+            self._try_download(model_p)
+
         if not os.path.exists(model_p):
             raise FileNotFoundError(f"Piper ONNX model file not found at: {model_p}")
             
