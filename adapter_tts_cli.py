@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--input-dir", help="Path to input directory of chapters for batch mode")
     parser.add_argument("--output", help="Path to save final audio output file (.wav)")
     parser.add_argument("--output-dir", help="Path to save batch audio outputs")
-    
+
     # Overrides for preset / defaults
     parser.add_argument("--engine", help="TTS Engine (edge/piper/clone/kokoro/vieneu)")
     parser.add_argument("--voice", help="Voice model / gender key")
@@ -172,24 +172,39 @@ def main():
 
             input_files = []
             seen_chapters = set()
+            # Đếm riêng số chương HỢP LỆ để phân biệt hai tình huống cùng cho ra
+            # danh sách rỗng: "đã đọc hết rồi" (bình thường) và "không có gì để
+            # đọc" (lỗi cấu hình - phải dừng, đừng để bước sau lãnh thay).
+            candidates = 0
             for f in sorted(all_files):
-                if f.lower().endswith((".md", ".txt")) and " - [VI] " in f:
-                    base_name = os.path.splitext(f)[0]
-                    chapter = base_name.split(" - [VI] ")[0]
-                    if base_name in audio_prefixes or chapter in audio_chapter_prefixes:
-                        continue
-                    if chapter in seen_chapters:
-                        log_json("tts_file_skip", {
-                            "file": f,
-                            "reason": f"Chương '{chapter}' có nhiều bản dịch [VI]; chỉ đọc bản đầu tiên."
-                        })
-                        continue
-                    seen_chapters.add(chapter)
-                    input_files.append(f)
-                        
+                if not (f.lower().endswith((".md", ".txt")) and " - [VI] " in f):
+                    continue
+                candidates += 1
+                base_name = os.path.splitext(f)[0]
+                chapter = base_name.split(" - [VI] ")[0]
+                if base_name in audio_prefixes or chapter in audio_chapter_prefixes:
+                    continue
+                if chapter in seen_chapters:
+                    log_json("tts_file_skip", {
+                        "file": f,
+                        "reason": f"Chương '{chapter}' có nhiều bản dịch [VI]; chỉ đọc bản đầu tiên."
+                    })
+                    continue
+                seen_chapters.add(chapter)
+                input_files.append(f)
+
             if not input_files:
-                log_json("tts_batch_warn", {"message": f"No valid [VI] text files needing TTS found in {input_dir}"})
-                sys.exit(0)
+                if candidates:
+                    log_json("tts_batch_warn", {
+                        "message": f"Cả {candidates} chương trong {input_dir} đã có audio — không còn gì để đọc."
+                    })
+                    sys.exit(0)
+                log_json("tts_error", {"message": (
+                    f"Không có tệp .md/.txt nào mang dấu ' - [VI] ' trong {input_dir}. "
+                    "Thư mục chỉ có bản gốc chưa dịch, hoặc tên tệp chương sai quy tắc — "
+                    "sửa bằng: python scripts/fix_ten_chuong.py <thư mục raw>"
+                )})
+                sys.exit(1)
 
             for idx, filename in enumerate(input_files, 1):
                 file_path = os.path.join(input_dir, filename)

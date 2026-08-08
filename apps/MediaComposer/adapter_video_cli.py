@@ -134,8 +134,14 @@ def main():
         # Scan input directory for batch items (md + audio)
         items = scan_batch_dir(args.input_dir)
         if not items:
-            log_json("video_warn", {"message": f"No valid batch items (md + audio pairs) found in {args.input_dir}"})
-            sys.exit(0)
+            # Thoát 0 ở đây là nói dối: chuỗi tự động sẽ chạy tiếp sang bước ghép
+            # video và chết ở đó với thông báo không liên quan, che mất lỗi thật.
+            log_json("video_error", {"message": (
+                f"Không có cặp (.md + audio) nào trong {args.input_dir}. "
+                "Thường là Bước 2 (lồng tiếng) chưa chạy xong, hoặc tên tệp audio "
+                "không trùng tên tệp .md."
+            )})
+            sys.exit(1)
 
         # Extract characters if none exist and enabled
         if args.extract_characters and not context.characters:
