@@ -1,4 +1,5 @@
 import os
+import shutil
 from loguru import logger
 from urllib.parse import urlparse
 from app.services.video import generate_video, combine_videos
@@ -291,16 +292,23 @@ class ComposerWorkflow:
         bg_color: str = None,
         bg_alpha: int = None,
         position: str = None,
-        custom_position: float = None
+        custom_position: float = None,
+        target_lang: str = "Vietnamese",
+        translate_only: bool = False,
+        skip_translate: bool = False
     ) -> str:
         """
         Orchestrates the automatic translation and subtitling workflow:
         1. Extract audio from video.
         2. Transcribe audio to source SRT (using Whisper) in the source language.
         3. Release Whisper model to save VRAM.
-        4. Translate SRT to Vietnamese using Gemini.
-        5. (Optional) Generate Vietnamese voiceover and apply Dynamic Audio Ducking.
+        4. Translate SRT to `target_lang` using the configured LLM.
+        5. (Optional) Generate voiceover and apply Dynamic Audio Ducking.
         6. Burn subtitles into the video (via FFmpeg native filter or MoviePy) using the mixed audio.
+
+        `translate_only=True` dừng ngay sau bước 4 và trả về đường dẫn file SRT đã
+        dịch (không lồng tiếng, không ghi phụ đề vào video) — dùng cho luồng
+        "chỉ lấy phụ đề" trên giao diện.
         """
         import subprocess
         from app.services.translation import translate_srt
@@ -389,15 +397,21 @@ class ComposerWorkflow:
             # 3. Release Whisper model to free memory
             release_whisper_model()
         
-        # 4. Translate SRT to Vietnamese using Gemini
-        logger.info("Translating subtitles to Vietnamese via Gemini API...")
+        # 4. Translate SRT to target_lang using the configured LLM
         translated_srt_path = os.path.join(task_dir, "vietnamese_subtitles.srt")
-        translate_srt(
-            srt_path=source_srt_path,
-            output_path=translated_srt_path,
-            source_lang=source_lang,
-            target_lang="Vietnamese"
-        )
+        if skip_translate:
+            # Phụ đề nạp vào ĐÃ đúng ngôn ngữ đích (người dùng tự sửa tay rồi ghi
+            # lại) — dịch thêm một lượt chỉ làm hỏng bản đã chỉnh.
+            logger.info("skip_translate=True — ghi thẳng phụ đề nguồn, không gọi LLM.")
+            shutil.copy(source_srt_path, translated_srt_path)
+        else:
+            logger.info(f"Translating subtitles to {target_lang} via LLM API...")
+            translate_srt(
+                srt_path=source_srt_path,
+                output_path=translated_srt_path,
+                source_lang=source_lang,
+                target_lang=target_lang or "Vietnamese"
+            )
         
         # Ensure SRT has at least one segment to avoid MoviePy / libass crashes on empty/silent videos
         has_segments = False
@@ -416,7 +430,13 @@ class ComposerWorkflow:
             logger.info("No subtitle segments. Appending dummy subtitle segment to avoid empty subtitle crash.")
             with open(translated_srt_path, "w", encoding="utf-8") as f:
                 f.write("1\n00:00:00,000 --> 00:00:01,000\n \n")
-        
+
+        # Chỉ lấy phụ đề: dừng trước lồng tiếng + ghi phụ đề (hai bước tốn thời
+        # gian nhất). Trả SRT để adapter chép ra thư mục người dùng.
+        if translate_only:
+            logger.info("translate_only=True — bỏ qua lồng tiếng và ghi phụ đề vào video.")
+            return translated_srt_path
+
         # 5. Optional Dubbing (Voiceover) Generation
         dubbed_audio_path = None
         if enable_voiceover:

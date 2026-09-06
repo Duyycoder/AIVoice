@@ -3,6 +3,9 @@ import sys
 import json
 import argparse
 import gc
+import re
+import shutil
+import unicodedata
 from uuid import uuid4
 
 # Prevent Windows C++ OpenMP abort (OMP: Error #15) when importing torch and cv2 together
@@ -18,6 +21,24 @@ def log_json(event: str, data: dict):
     print(json.dumps({"event": event, **data}, ensure_ascii=False))
     sys.stdout.flush()
 
+
+# Đuôi ngôn ngữ cho tên file .srt — trình phát (VLC/YouTube) nhận diện phụ đề
+# theo mã ISO trong tên file: phim.vi.srt, phim.en.srt...
+LANG_TAGS = {
+    "vietnamese": "vi", "english": "en", "chinese": "zh", "japanese": "ja",
+    "korean": "ko", "french": "fr", "spanish": "es", "german": "de",
+    "thai": "th", "indonesian": "id", "russian": "ru",
+}
+
+
+def lang_tag(name: str) -> str:
+    key = (name or "").strip().lower()
+    if key in LANG_TAGS:
+        return LANG_TAGS[key]
+    slug = unicodedata.normalize("NFKD", key).encode("ascii", "ignore").decode("utf-8")
+    slug = re.sub(r"[^a-z0-9]+", "", slug)
+    return slug[:8] or "sub"
+
 def main():
     parser = argparse.ArgumentParser(description="CLI Adapter for MediaComposer Autosub & Dubbing Workflows")
     parser.add_argument("--video-path", default="", help="Path to local video file")
@@ -26,7 +47,15 @@ def main():
     parser.add_argument("--output-dir", required=True, help="Output directory to save final result")
     parser.add_argument("--prepare-only", action="store_true", default=False, help="Only download video and extract preview image")
     parser.add_argument("--source-lang", default="English", help="Source video language (English|Chinese)")
-    parser.add_argument("--sub-source", default="whisper", choices=["whisper", "ocr"], help="Subtitle generation method")
+    parser.add_argument("--sub-source", default="whisper", choices=["whisper", "ocr", "import"],
+                        help="Subtitle generation method (import = dùng file .srt có sẵn)")
+    parser.add_argument("--source-srt", default="", help="File .srt nguồn có sẵn (bắt buộc khi --sub-source import)")
+    parser.add_argument("--target-lang", default="Vietnamese", help="Ngôn ngữ đích của phụ đề (mặc định Vietnamese)")
+    parser.add_argument("--translate-only", action="store_true", default=False,
+                        help="Chỉ dịch ra file .srt, không lồng tiếng/không ghi phụ đề vào video")
+    parser.add_argument("--no-translate", action="store_true", default=False,
+                        help="Ghi thẳng phụ đề nguồn vào video, không gọi LLM dịch (dùng với --sub-source import)")
+    parser.add_argument("--srt-out-dir", default="", help="Thư mục chép file .srt nguồn + .srt đã dịch (mặc định = --output-dir)")
     parser.add_argument("--crop-x", type=int, default=-1, help="Crop region X coord (-1 for full frame)")
     parser.add_argument("--crop-y", type=int, default=-1, help="Crop region Y coord (-1 for full frame)")
     parser.add_argument("--crop-w", type=int, default=-1, help="Crop region Width (-1 for full frame)")
@@ -107,7 +136,16 @@ def main():
             config.app["openai_model"] = args.llm_model
 
         source_srt = ""
-        if args.sub_source == "ocr":
+        if args.sub_source == "import":
+            src_given = os.path.abspath(args.source_srt) if args.source_srt else ""
+            if not src_given or not os.path.exists(src_given) or os.path.getsize(src_given) == 0:
+                raise RuntimeError(f"Không đọc được file .srt nguồn: {args.source_srt or '(trống)'}")
+            # Chép vào task_dir: workflow có thể ghi đè/đọc lại, không đụng file gốc.
+            source_srt = os.path.join(task_dir, "source_subtitles.srt")
+            shutil.copy(src_given, source_srt)
+            log_json("autosub_progress", {
+                "message": f"Dùng phụ đề gốc có sẵn: {src_given} — bỏ qua Whisper/OCR.", "percent": 8})
+        elif args.sub_source == "ocr":
             ocr_srt_path = os.path.join(task_dir, "ocr_subtitles.srt")
             
             crop_tuple = None
@@ -174,7 +212,7 @@ def main():
         
         clean_audio_flag = args.clean_audio if args.sub_source == "whisper" else False
         
-        translated_video_path = composer.run_translation_workflow(
+        workflow_result = composer.run_translation_workflow(
             task_id=task_id,
             video_path=video_path,
             source_lang=args.source_lang,
@@ -195,35 +233,60 @@ def main():
             bg_color=args.bg_color,
             bg_alpha=args.bg_alpha,
             position=args.sub_position,
-            custom_position=args.custom_position
+            custom_position=args.custom_position,
+            target_lang=args.target_lang,
+            translate_only=args.translate_only,
+            skip_translate=args.no_translate
         )
         
-        # Copy output file to the specified output-dir
-        import shutil
+        # Copy output files to the specified output-dir
         import datetime
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         video_name = os.path.basename(video_path)
         base_name, _ = os.path.splitext(video_name)
-        final_video_name = f"{base_name}_autosub_{timestamp}.mp4"
-        final_output_path = os.path.join(args.output_dir, final_video_name)
-        
+
         os.makedirs(args.output_dir, exist_ok=True)
-        shutil.copy(translated_video_path, final_output_path)
-        
-        # Check translation warning (CB2 warning check)
+        srt_dir = args.srt_out_dir or args.output_dir
+        os.makedirs(srt_dir, exist_ok=True)
+
+        # Phụ đề luôn được xuất ra: người dùng có thể sửa tay rồi ghi lại lần sau,
+        # hoặc nạp lên trình phát ngoài mà không cần chạy lại cả workflow.
         viet_srt = os.path.join(task_dir, "vietnamese_subtitles.srt")
-        if os.path.exists(viet_srt) and source_srt and os.path.exists(source_srt):
+        exported = {}
+        srt_source_in_task = source_srt or os.path.join(task_dir, "source_subtitles.srt")
+        if os.path.exists(srt_source_in_task):
+            dst = os.path.join(srt_dir, f"{base_name}.{lang_tag(args.source_lang)}.srt")
+            shutil.copy(srt_source_in_task, dst)
+            exported["srt_source"] = os.path.abspath(dst)
+        if os.path.exists(viet_srt):
+            dst = os.path.join(srt_dir, f"{base_name}.{lang_tag(args.target_lang)}.srt")
+            shutil.copy(viet_srt, dst)
+            exported["srt_translated"] = os.path.abspath(dst)
+
+        # Cảnh báo dịch hỏng (CB2): key/base_url sai thì translate_srt chép nguyên
+        # bản gốc mà KHÔNG báo lỗi — video ra đời với phụ đề chưa dịch.
+        if os.path.exists(viet_srt) and os.path.exists(srt_source_in_task):
             try:
                 with open(viet_srt, "r", encoding="utf-8") as f:
                     viet_lines = f.read().strip()
-                with open(source_srt, "r", encoding="utf-8") as f:
+                with open(srt_source_in_task, "r", encoding="utf-8") as f:
                     src_lines = f.read().strip()
                 if viet_lines == src_lines:
-                    log_json("autosub_warn", {"message": "Bản dịch trùng bản gốc — kiểm tra API key / OpenAI model / Base URL dịch!"})
-            except:
+                    log_json("autosub_warn", {"message": "Bản dịch trùng bản gốc — kiểm tra API key / model / Base URL dịch!"})
+            except OSError:
                 pass
-                
-        log_json("autosub_done", {"output": os.path.abspath(final_output_path)})
+
+        if args.translate_only:
+            log_json("autosub_done", {
+                "output": exported.get("srt_translated", os.path.abspath(workflow_result)),
+                "translate_only": True, **exported})
+            sys.exit(0)
+
+        final_video_name = f"{base_name}_autosub_{timestamp}.mp4"
+        final_output_path = os.path.join(args.output_dir, final_video_name)
+        shutil.copy(workflow_result, final_output_path)
+
+        log_json("autosub_done", {"output": os.path.abspath(final_output_path), **exported})
         sys.exit(0)
 
     except Exception as e:

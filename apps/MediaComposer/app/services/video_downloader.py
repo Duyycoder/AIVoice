@@ -324,3 +324,72 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
                 os.remove(p)
             except OSError:
                 pass
+
+
+# ---- Cào hàng loạt: giải link playlist/kênh thành danh sách video ----------
+# Tải hàng loạt cần biết TRƯỚC có bao nhiêu video để hiện hàng đợi và cho người
+# dùng cắt bớt. `extract_flat` chỉ đọc trang danh sách (không chạm từng video)
+# nên nhanh và không tốn băng thông.
+
+def _flat_entry(e: dict, fallback_url: str = "") -> dict:
+    """Chuẩn hoá một mục yt-dlp (flat hoặc đầy đủ) về đúng thứ UI cần."""
+    vid = e.get("id") or ""
+    url = e.get("url") or e.get("webpage_url") or fallback_url
+    # extract_flat trả 'url' là id trần với vài extractor -> dựng lại link đầy đủ.
+    if url and not url.startswith("http"):
+        url = e.get("webpage_url") or f"https://www.youtube.com/watch?v={vid}"
+    return {
+        "id": vid,
+        "url": url,
+        "title": (e.get("title") or "").strip() or vid or "video",
+        "duration": e.get("duration") or 0,
+        "uploader": e.get("uploader") or e.get("channel") or "",
+        "thumbnail": e.get("thumbnail") or "",
+    }
+
+
+def probe_entries(url: str, platform: str = "generic", cookies_file: str = None,
+                  max_items: int = 0) -> list:
+    """Trả danh sách video của một link.
+
+    Link 1 video -> list 1 phần tử. Link playlist/kênh/hashtag -> mọi video bên
+    trong (cắt còn `max_items` nếu > 0). Raise RuntimeError kèm câu chẩn đoán
+    nếu không đọc được trang.
+    """
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': 'in_playlist',
+        'skip_download': True,
+        'socket_timeout': 30,
+        'retries': 2,
+    }
+    if max_items and max_items > 0:
+        opts['playlistend'] = int(max_items)
+    if cookies_file and os.path.exists(cookies_file):
+        opts['cookiefile'] = cookies_file
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception as e:
+        raise RuntimeError(diagnose_download_failure(url, platform, e, cookies_file))
+
+    entries = info.get("entries")
+    if entries is None:
+        return [_flat_entry(info, url)]
+
+    out = []
+    for e in entries:
+        if not e:
+            continue
+        # Kênh YouTube trả về playlist lồng playlist (Videos/Shorts/Live).
+        if e.get("_type") == "playlist" and e.get("entries"):
+            for sub in e["entries"]:
+                if sub:
+                    out.append(_flat_entry(sub))
+        else:
+            out.append(_flat_entry(e))
+        if max_items and len(out) >= max_items:
+            break
+    return out
