@@ -222,6 +222,9 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
             'ffmpeg_location': ffmpeg_dir,
             'noplaylist': True,
             'quiet': True,
+            # Thanh tiến độ của yt-dlp in thẳng ra stdout, lẫn vào luồng JSON mà
+            # orchestrator đang đọc. Tiến độ đã có event download_progress riêng.
+            'noprogress': True,
             'retries': 5,
             'fragment_retries': 5,
             'progress_hooks': [ytdl_hook],
@@ -251,15 +254,14 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
             return os.path.abspath(mp4), info.get('id')
 
     def _has_audio(path: str) -> bool:
-        try:
-            from moviepy.video.io.VideoFileClip import VideoFileClip
-            c = VideoFileClip(path)
-            ok = c.audio is not None
-            c.close()
-            return ok
-        except Exception as e:
-            log_json("download_warning", {"message": f"Không kiểm tra được luồng audio ({e}) — coi như đã có."})
+        # Đọc thẳng từ ffmpeg: moviepy coi mã thoát của `ffmpeg -i` là lỗi nên
+        # luôn ném ngoại lệ ở đây, khiến mọi video TikTok h265 đều bị coi như
+        # "đã có tiếng" và bỏ qua bước tải luồng âm thanh riêng.
+        info = utils.probe_media_info(path)
+        if info.get("has_audio") is None:
+            log_json("download_warning", {"message": "Không kiểm tra được luồng audio — coi như đã có."})
             return True  # không chắc chắn -> tránh tải lại thừa
+        return bool(info["has_audio"])
 
     log_json("download_start", {"url": url, "platform": platform})
     try:
@@ -334,10 +336,12 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
 def _flat_entry(e: dict, fallback_url: str = "") -> dict:
     """Chuẩn hoá một mục yt-dlp (flat hoặc đầy đủ) về đúng thứ UI cần."""
     vid = e.get("id") or ""
-    url = e.get("url") or e.get("webpage_url") or fallback_url
+    # Ưu tiên webpage_url: với link 1 video, yt-dlp trả info đầy đủ và 'url' khi đó
+    # là link CDN có CHỮ KÝ HẾT HẠN (googlevideo.com...), không tải lại được sau này.
+    url = e.get("webpage_url") or e.get("url") or fallback_url
     # extract_flat trả 'url' là id trần với vài extractor -> dựng lại link đầy đủ.
     if url and not url.startswith("http"):
-        url = e.get("webpage_url") or f"https://www.youtube.com/watch?v={vid}"
+        url = f"https://www.youtube.com/watch?v={vid}"
     return {
         "id": vid,
         "url": url,

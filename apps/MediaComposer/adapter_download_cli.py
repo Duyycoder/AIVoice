@@ -40,17 +40,13 @@ def slugify(text: str, max_len: int = 48) -> str:
 
 
 def probe_meta(path: str) -> dict:
-    """W/H/thời lượng bằng moviepy — máy đích KHÔNG có ffprobe (CB5)."""
-    try:
-        from moviepy.video.io.VideoFileClip import VideoFileClip
-        clip = VideoFileClip(path)
-        w, h = clip.size
-        dur = float(clip.duration or 0)
-        clip.close()
-        return {"width": int(w), "height": int(h), "duration": round(dur, 2)}
-    except Exception as e:
-        log_json("download_warning", {"message": f"Không đọc được thông số video ({e})."})
+    """W/H/thời lượng đọc từ ffmpeg — máy đích KHÔNG có ffprobe (CB5)."""
+    from app.utils import utils
+    info = utils.probe_media_info(path)
+    if not info:
+        log_json("download_warning", {"message": f"Không đọc được thông số video: {path}"})
         return {"width": 0, "height": 0, "duration": 0}
+    return {"width": info["width"], "height": info["height"], "duration": info["duration"]}
 
 
 def read_urls(args) -> list:
@@ -98,7 +94,14 @@ def main():
     p.add_argument("--skip-existing", action="store_true", default=False, help="Bỏ qua video đã có trong thư viện")
     p.add_argument("--stop-on-error", action="store_true", default=False, help="Dừng cả lô khi một video lỗi")
     p.add_argument("--probe-only", action="store_true", default=False, help="Chỉ liệt kê video, không tải")
+    p.add_argument("--probe-file", default="", help="Chỉ đọc thông số một file video có sẵn rồi thoát")
     args = p.parse_args()
+
+    # Chế độ đọc thông số file cục bộ: orchestrator gọi khi người dùng nhập video
+    # có sẵn vào thư viện (nó không được phép tự import ffmpeg/torch).
+    if args.probe_file:
+        log_json("probe_file_done", probe_meta(args.probe_file))
+        sys.exit(0)
 
     urls = read_urls(args)
     if not urls:

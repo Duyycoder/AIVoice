@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import hashlib
 import json
@@ -107,3 +108,47 @@ def to_json(obj) -> str:
         return f"<Serialization failed: {e}>"
 
 
+
+
+# ---- Doc thong so video khong can ffprobe ---------------------------------
+# May dich chi co ffmpeg.exe cua imageio-ffmpeg (khong kem ffprobe), con moviepy
+# thi bo cuoc voi ffmpeg moi: no chay `ffmpeg -i <file>` roi coi ma thoat != 0 la
+# loi, trong khi day chinh la cach ffmpeg in metadata ra stderr. Tu doc lay.
+
+_RE_DURATION = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+_RE_VIDEO_SIZE = re.compile(r"Stream #\d+:\d+.*?Video:.*?(\d{2,5})x(\d{2,5})", re.DOTALL)
+_RE_AUDIO = re.compile(r"Stream #\d+:\d+.*?Audio:")
+
+
+def probe_media_info(path: str, timeout: float = 60.0) -> dict:
+    """{width, height, duration, has_audio} cua mot file video.
+
+    Tra ve dict rong neu khong chay duoc ffmpeg. Cac truong khong doc duoc thi
+    bang 0/None de ben goi tu quyet dinh (vd: khong ro co audio -> dung coi la
+    khong co, se tat nham long tieng).
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [get_ffmpeg_binary(), "-hide_banner", "-i", os.path.abspath(path)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        return {}
+
+    # `ffmpeg -i` khong co output file -> luon thoat khac 0, metadata nam o stderr.
+    text = (proc.stderr or "") + (proc.stdout or "")
+    if "Invalid data found" in text or "No such file" in text:
+        return {}
+
+    info = {"width": 0, "height": 0, "duration": 0.0, "has_audio": None}
+    m = _RE_DURATION.search(text)
+    if m:
+        info["duration"] = round(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)), 2)
+    m = _RE_VIDEO_SIZE.search(text)
+    if m:
+        info["width"], info["height"] = int(m.group(1)), int(m.group(2))
+    info["has_audio"] = bool(_RE_AUDIO.search(text))
+    return info
