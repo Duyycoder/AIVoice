@@ -258,7 +258,7 @@ if not "!TORCH_INDEX!"=="" (
     if !errorlevel! neq 0 (
         echo [INFO] Cai dat PyTorch !TORCH_INDEX! - torch/torchvision/torchaudio dong bo...
         ".venv\Scripts\python.exe" -m pip uninstall -y torch torchvision torchaudio >nul 2>&1
-        ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
+        ".venv\Scripts\python.exe" -m pip --isolated install --default-timeout=1000 torch torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
         if !errorlevel! neq 0 (
             echo [WARNING] Cai dat PyTorch !TORCH_INDEX! that bai. He thong se thu cai ban mac dinh tu requirements.
         ) else (
@@ -271,7 +271,7 @@ if not "!TORCH_INDEX!"=="" (
         if !errorlevel! neq 0 (
             echo [INFO] Dong bo hoa torchvision va torchaudio theo !TORCH_INDEX!...
             ".venv\Scripts\python.exe" -m pip uninstall -y torchvision torchaudio >nul 2>&1
-            ".venv\Scripts\python.exe" -m pip install --default-timeout=1000 torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
+            ".venv\Scripts\python.exe" -m pip --isolated install --default-timeout=1000 torchvision torchaudio --index-url https://download.pytorch.org/whl/!TORCH_INDEX!
         ) else (
             echo [INFO] PyTorch, torchvision va torchaudio da dong bo - bo qua buoc cai lai.
         )
