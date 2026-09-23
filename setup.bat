@@ -403,10 +403,9 @@ if !DOWNLOAD_MC_MODELS! equ 1 (
         echo [WARNING] Mot so model tai that bai - ung dung se tu dong tai lai khi can - can mang.
     )
 ) else (
-    ".venv\Scripts\python.exe" apps\MediaComposer\app\services\model_downloader.py --check-only
-    if !errorlevel! neq 0 (
-        echo [WARNING] Mot so model Storytelling chua co - ung dung se tu dong tai khi can.
-    )
+    rem --skip-models = bo qua HAN, khong kiem nua: cong cu video khong dung cac model
+    rem nay, dong WARNING "chua co model" chi lam nguoi dung may moi tuong cai hong.
+    echo [INFO] Bo qua mo hinh Storytelling theo --skip-models.
 )
 echo.
 
