@@ -334,7 +334,7 @@ if !GIT_OK! equ 1 (
         cd third_party\Kokoro-Vietnamese
         "..\..\.venv\Scripts\pip" install --default-timeout=1000 -e .
         if !errorlevel! neq 0 (
-            echo [WARNING] Cấu hình Kokoro-Vietnamese thất bại.
+            echo [WARNING] Cau hinh Kokoro-Vietnamese that bai.
         ) else (
             echo [INFO] Cai dat Kokoro-Vietnamese thanh cong.
         )
@@ -394,6 +394,12 @@ echo [INFO] Dang tien hanh chan doan GPU CUDA...
 echo ----------------------------------------------------------------------
 .venv\Scripts\python.exe src\check_gpu.py
 echo.
+
+:: Duoc setup.bat cua repo tong goi (NON_INTERACTIVE=1) thi quay ve ngay:
+:: - khong dung lai cho bam phim giua chung qua trinh cai;
+:: - khong in huong dan chay src\main.py - do la app AIVoice doc lap, nguoi
+::   dung cong cu video doc vao se chay nham.
+if "%NON_INTERACTIVE%"=="1" exit /b 0
 
 echo ======================================================================
 echo THIET LAP THANH CONG! AIVoice da san sang hoat dong.
