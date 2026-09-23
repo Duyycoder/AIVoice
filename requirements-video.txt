@@ -1,0 +1,42 @@
+# Thu vien LOI cho cong cu Cao & Dich Video (repo tong, nhanh feat/video-only).
+#
+# Lap bang cach lan theo import tu adapter_download_cli.py + adapter_autosub_cli.py
+# (ca import nam trong ham) va cac engine TTS ma dubbing goi toi.
+#
+# KHONG gom luong ve truyen tranh (diffusers, insightface, rembg, compel, basicsr,
+# realesrgan, streamlit, datasets, sentence-transformers...): cong cu video khong
+# dung, va chinh dong do lam pip giai phu thuoc bi ket hang gio tren may moi.
+#
+# Cac engine hay vo khi cai (can trinh bien dich C++, chi muc rieng, Git) nam o
+# buoc "tuy chon" trong setup.bat cua repo tong - hong mot cai khong keo ca buoi
+# cai dat chet theo.
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+torch>=2.1.1
+torchaudio>=2.1.1
+numpy>=2.0.2
+
+# Tai video tu link
+yt-dlp
+
+# Nghe loi thoai + dich (API kieu OpenAI: Ollama / Gemini)
+faster-whisper==1.2.1
+openai
+httpx
+
+# Xu ly video / am thanh
+moviepy==2.2.1
+imageio-ffmpeg
+pillow
+soundfile>=0.12.1
+
+# Long tieng mac dinh (Edge-TTS, chay online, khong can model)
+edge-tts>=7.2.8
+
+# Tien ich chung
+loguru
+pydantic
+toml
+requests
+tqdm
+num2words

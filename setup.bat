@@ -28,6 +28,11 @@ set DOWNLOAD_MC_MODELS=1
 if /i "%~1"=="--skip-models" set DOWNLOAD_MC_MODELS=0
 if /i "%~2"=="--skip-models" set DOWNLOAD_MC_MODELS=0
 
+rem File thu vien se cai. Repo tong (cong cu video) dat san la requirements-video.txt:
+rem bo day du requirements.txt keo theo ca luong ve truyen tranh va lam pip giai
+rem phu thuoc bi ket hang gio tren may moi. Chay AIVoice doc lap thi van dung ban day du.
+if not defined AIVOICE_REQUIREMENTS set "AIVOICE_REQUIREMENTS=requirements.txt"
+
 echo ======================================================================
 echo          AIVoice Auto-Setup Tool for Windows (Python 3.11)
 echo ======================================================================
@@ -285,9 +290,9 @@ if "!TORCH_INDEX!"=="cu128" (
 
 echo.
 echo ----------------------------------------------------------------------
-echo [INFO] Dang cai dat cac thu vien Python (requirements.txt)...
+echo [INFO] Dang cai dat cac thu vien Python - !AIVOICE_REQUIREMENTS!...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe -m pip install --default-timeout=1000 -r requirements.txt --prefer-binary
+.venv\Scripts\python.exe -m pip install --default-timeout=1000 -r "!AIVOICE_REQUIREMENTS!" --prefer-binary
 if !errorlevel! neq 0 (
     echo [ERROR] Cai dat thu vien that bai.
     pause
@@ -299,14 +304,18 @@ echo.
 :: 5a2. Patch basicsr 1.4.2 tuong thich torchvision moi
 ::      (torchvision >=0.17 da xoa module functional_tensor -> basicsr import loi,
 ::       khien RealESRGAN am tham fallback ve PIL resize, giam chat luong upscale)
-echo ----------------------------------------------------------------------
-echo [INFO] Dang patch basicsr tuong thich torchvision moi...
-echo ----------------------------------------------------------------------
-".venv\Scripts\python.exe" -c "import os,io; p=os.path.join('.venv','Lib','site-packages','basicsr','data','degradations.py'); s=io.open(p,encoding='utf-8').read(); n=s.replace('from torchvision.transforms.functional_tensor import rgb_to_grayscale','from torchvision.transforms.functional import rgb_to_grayscale'); io.open(p,'w',encoding='utf-8').write(n); print('[INFO] basicsr da duoc patch.' if not n==s else '[INFO] basicsr da patch san - bo qua.')"
-if !errorlevel! neq 0 (
-    echo [WARNING] Patch basicsr that bai - RealESRGAN co the khong hoat dong.
+::      Chi patch khi basicsr CO duoc cai: ban cho cong cu video (requirements-video.txt)
+::      khong co basicsr, chay patch se bao "that bai" gia lam nguoi dung hoang.
+if exist ".venv\Lib\site-packages\basicsr\data\degradations.py" (
+    echo ----------------------------------------------------------------------
+    echo [INFO] Dang patch basicsr tuong thich torchvision moi...
+    echo ----------------------------------------------------------------------
+    ".venv\Scripts\python.exe" -c "import os,io; p=os.path.join('.venv','Lib','site-packages','basicsr','data','degradations.py'); s=io.open(p,encoding='utf-8').read(); n=s.replace('from torchvision.transforms.functional_tensor import rgb_to_grayscale','from torchvision.transforms.functional import rgb_to_grayscale'); io.open(p,'w',encoding='utf-8').write(n); print('[INFO] basicsr da duoc patch.' if not n==s else '[INFO] basicsr da patch san - bo qua.')"
+    if !errorlevel! neq 0 (
+        echo [WARNING] Patch basicsr that bai - RealESRGAN co the khong hoat dong.
+    )
+    echo.
 )
-echo.
 
 
 
