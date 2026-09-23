@@ -50,17 +50,35 @@ def probe_meta(path: str) -> dict:
 
 
 def read_urls(args) -> list:
+    """[(link, số thứ tự trong lô)] — giữ thứ tự người dùng nhập, bỏ link trùng.
+
+    Số thứ tự đi KÈM từng link (cờ `--batch-index` lặp lại, khớp 1-1 với `--url`):
+    bỏ link trùng mà không bỏ kèm số của nó là cả lô lệch chỗ khi ghép.
+    """
     urls = list(args.url or [])
+    indexes = list(getattr(args, "batch_index", None) or [])
     if args.urls_file and os.path.exists(args.urls_file):
         with open(args.urls_file, encoding="utf-8-sig") as fh:
             urls += [ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")]
-    # Giữ thứ tự người dùng nhập, bỏ trùng.
     seen, out = set(), []
-    for u in urls:
-        if u not in seen:
-            seen.add(u)
-            out.append(u)
+    for i, u in enumerate(urls):
+        if u in seen:
+            continue
+        seen.add(u)
+        out.append((u, indexes[i] if i < len(indexes) else float(i + 1)))
     return out
+
+
+def batch_indexes(base_index: float, count: int) -> list:
+    """Số thứ tự trong lô cho các video giải ra từ MỘT link đứng ở chỗ `base_index`.
+
+    Một link ra đúng một video thì giữ nguyên số của nó; playlist ra m video thì
+    video con thứ j nhận `base + j/1000` — nhờ vậy cả playlist nằm gọn đúng chỗ
+    người dùng đã đặt link, không đẩy lệch các mục đứng sau trong lô.
+    """
+    if count <= 1:
+        return [base_index]
+    return [base_index + (j + 1) / 1000.0 for j in range(count)]
 
 
 def existing_ids(library_dir: str) -> dict:
@@ -95,6 +113,9 @@ def main():
     p.add_argument("--stop-on-error", action="store_true", default=False, help="Dừng cả lô khi một video lỗi")
     p.add_argument("--probe-only", action="store_true", default=False, help="Chỉ liệt kê video, không tải")
     p.add_argument("--probe-file", default="", help="Chỉ đọc thông số một file video có sẵn rồi thoát")
+    p.add_argument("--batch-id", default="", help="Mã lô, ghi vào video.json để bước ghép biết thứ tự")
+    p.add_argument("--batch-index", action="append", type=float, default=[],
+                   help="Số thứ tự trong lô của từng --url (lặp lại, khớp 1-1 theo thứ tự)")
     args = p.parse_args()
 
     # Chế độ đọc thông số file cục bộ: orchestrator gọi khi người dùng nhập video
@@ -107,6 +128,9 @@ def main():
     if not urls:
         log_json("batch_failed", {"error": "Chưa có link nào để tải."})
         sys.exit(1)
+    if args.batch_index and len(args.batch_index) != len(args.url):
+        log_json("download_warning", {"message": "Số --batch-index không khớp số --url — "
+                                                 "lô có thể bị ghép sai thứ tự."})
 
     from app.services.video_downloader import probe_entries, download_video
 
@@ -115,7 +139,7 @@ def main():
     # 1) Giải mọi link thành danh sách video phẳng
     entries, probe_errors = [], []
     seen_urls = set()
-    for u in urls:
+    for u, base_index in urls:
         try:
             found = probe_entries(u, args.platform, cookies, args.max_items)
         except Exception as e:
@@ -125,9 +149,12 @@ def main():
                 log_json("batch_failed", {"error": str(e)})
                 sys.exit(1)
             continue
-        for e in found:
+        idxs = batch_indexes(base_index, len(found))
+        for j, e in enumerate(found):
             if e["url"] and e["url"] not in seen_urls:
                 seen_urls.add(e["url"])
+                e["batch_index"] = idxs[j]
+                e["index"] = len(entries) + 1
                 entries.append(e)
 
     if args.probe_only:
@@ -179,6 +206,8 @@ def main():
                 "size": os.path.getsize(final_path),
                 "source": "download",
                 "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+                "batch_id": args.batch_id,
+                "batch_index": entry.get("batch_index", float(idx)),
             }
             meta.update(probe_meta(final_path))
             with open(os.path.join(entry_dir, "video.json"), "w", encoding="utf-8") as fh:
