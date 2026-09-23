@@ -96,7 +96,7 @@ def test_ui_style_values_all_map_to_real_presets():
 
     for select_id in ("s3Style", "cfgVideoStyle"):
         block = re.search(
-            rf'<select id="{select_id}">(.*?)</select>', html, re.DOTALL)
+            rf'<select id="{select_id}"[^>]*>(.*?)</select>', html, re.DOTALL)
         assert block, f"không tìm thấy <select id={select_id}>"
         values = re.findall(r'<option value="([^"]+)"', block.group(1))
         assert values, f"{select_id} không có option nào"

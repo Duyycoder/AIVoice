@@ -100,7 +100,7 @@ class StoryContext:
         if not self._style_prompt_path:
             return ""
         try:
-            with open(self._style_prompt_path, "r", encoding="utf-8") as f:
+            with open(self._style_prompt_path, "r", encoding="utf-8-sig") as f:
                 content = f.read()
             base = content.split("---")[0].strip()
             additions = " ".join(self.learned_corrections.prompt_additions)
@@ -112,7 +112,7 @@ class StoryContext:
         if not self._style_prompt_path:
             return ""
         try:
-            with open(self._style_prompt_path, "r", encoding="utf-8") as f:
+            with open(self._style_prompt_path, "r", encoding="utf-8-sig") as f:
                 content = f.read()
             parts = content.split("---")
             base = parts[1].strip() if len(parts) > 1 else ""

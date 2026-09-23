@@ -48,7 +48,7 @@ class ContextManager:
             _MC_ROOT, "resource", "image_presets",
             f"{self.DEFAULT_STYLE_PRESET}.txt")
         try:
-            with open(preset_path, "r", encoding="utf-8") as f:
+            with open(preset_path, "r", encoding="utf-8-sig") as f:
                 return f.read()
         except OSError:
             return self._FALLBACK_STYLE
@@ -72,7 +72,7 @@ class ContextManager:
                 f"[Context] Không có preset '{preset_name}' — giữ style hiện tại.")
             return False
         try:
-            with open(preset_path, "r", encoding="utf-8") as src:
+            with open(preset_path, "r", encoding="utf-8-sig") as src:
                 content = src.read()
             os.makedirs(self.context_dir, exist_ok=True)
             with open(self.style_file, "w", encoding="utf-8") as dst:

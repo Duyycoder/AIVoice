@@ -129,7 +129,7 @@ class PromptTranslator:
             return "", ""
             
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, "r", encoding="utf-8-sig") as f:
                 content = f.read()
             parts = content.split("---")
             pos = parts[0].strip()
@@ -193,10 +193,10 @@ class PromptTranslator:
         if "anything-v5" not in ckpt_lower:
             pos = re.sub(r',\s*Anything V5(:1\.1)?', '', pos, flags=re.IGNORECASE)
             pos = re.sub(r'Anything V5(:1\.1)?\s*,?', '', pos, flags=re.IGNORECASE)
-            # Thêm tên model đang chạy nếu cần định hình rõ hơn cho CLIP
-            model_short = checkpoint.split("/")[-1].replace("-", " ").title()
-            if model_short:
-                pos = f"({model_short}), {pos}".strip(", ")
+            pos = pos.strip(", ")
+            # Trước đây chỗ này chèn tên checkpoint vào đầu prompt — "(Dreamshaper 8),
+            # ...". CLIP không biết tên checkpoint, nó chỉ thấy vài token rác chiếm
+            # trọng số ngay vị trí mạnh nhất của prompt. Bỏ hẳn.
             
         # 2. Xử lý Negative: Nếu là model realistic/dreamshaper, loại bỏ cấm 'realistic/photorealistic' ở negative
         is_realistic = "realistic" in ckpt_lower or "cyberrealistic" in ckpt_lower or "dreamshaper" in ckpt_lower

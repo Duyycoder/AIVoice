@@ -167,11 +167,24 @@ class StorytellingPipeline:
         # "dreamshaper-8" bị gửi thẳng lên Hub như repo-id sai → lỗi 401/Not Found
         # dù model ĐÃ có sẵn trong cache cục bộ (models--lykon--dreamshaper-8).
         # Tên đã chứa "/" hoặc là đường dẫn cục bộ thì giữ nguyên.
+        # Dropdown WebUI có đủ 6 model nhưng bảng này từng chỉ có 2 — chọn 4 cái
+        # còn lại là chết ngay lúc nạp pipeline. Mỗi tên phải có repo diffusers thật.
         _CHECKPOINT_ALIASES = {
             "anything-v5": "stablediffusionapi/anything-v5",
             "dreamshaper-8": "lykon/dreamshaper-8",
+            "majicmix-realistic": "emilianJR/majicMIX_realistic_v6",
+            "cetus-mix": "stablediffusionapi/cetus-mix-v4",
+            "meinamix": "Meina/MeinaMix_V11",
         }
-        checkpoint = _CHECKPOINT_ALIASES.get(checkpoint, checkpoint)
+        if checkpoint in _CHECKPOINT_ALIASES:
+            checkpoint = _CHECKPOINT_ALIASES[checkpoint]
+        elif "/" not in checkpoint and not os.path.isdir(checkpoint):
+            # Tên rút gọn lạ: báo thẳng ở đây, đừng để Hub trả 401 khó hiểu.
+            raise ValueError(
+                f"Không nhận ra checkpoint '{checkpoint}'. Hãy chọn một trong "
+                f"{', '.join(sorted(_CHECKPOINT_ALIASES))}, hoặc nhập repo-id "
+                "HuggingFace đầy đủ (dạng 'tac-gia/ten-model') / đường dẫn thư mục cục bộ."
+            )
 
         # Tắt hf_transfer để tránh lỗi file lock khi download model
         os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
