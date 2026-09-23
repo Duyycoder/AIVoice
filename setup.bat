@@ -93,7 +93,9 @@ if %errorlevel% neq 0 (
 
 echo [INFO] Dang cai dat Python 3.11.9 chay ngam (Silent Mode)...
 echo Vui long cho 1-2 phut...
-start /wait python-3.11.9-amd64.exe /quiet PrependPath=1 Include_test=0
+:: Duong dan day du: may bat NoDefaultCurrentDirectoryInExePath thi cmd khong
+:: tim file o thu muc hien tai, goi ten tran se bao "not recognized".
+start "" /wait "%CD%\python-3.11.9-amd64.exe" /quiet PrependPath=1 Include_test=0
 del python-3.11.9-amd64.exe
 
 :: Verify silent install
