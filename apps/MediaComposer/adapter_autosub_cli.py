@@ -98,13 +98,15 @@ def main():
         
         task_dir = utils.task_dir(task_id)
 
-        # CB2: set key config.app["openai_*"] for translate_srt/dubbing (in-memory only)
+        # CB2: set key config.app["openai_*"] for translate_srt/dubbing (in-memory only).
+        # set_app_override chu khong gan thang: load_config() chay lai nhieu lan
+        # trong mot phien se ghi de gia tri rong tu config.toml.
         if args.llm_api_key:
-            config.app["openai_api_key"] = args.llm_api_key
+            config.set_app_override("openai_api_key", args.llm_api_key)
         if args.llm_base_url:
-            config.app["openai_base_url"] = args.llm_base_url
+            config.set_app_override("openai_base_url", args.llm_base_url)
         if args.llm_model:
-            config.app["openai_model"] = args.llm_model
+            config.set_app_override("openai_model", args.llm_model)
 
         source_srt = ""
         if args.sub_source == "ocr":
