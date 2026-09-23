@@ -128,7 +128,25 @@ class Config:
             "studio_unify_guidance": 5.0,
         }
         self.proxy = None
+        # Giá trị do tiến trình đặt tay (key LLM truyền qua CLI) — KHÔNG ghi ra
+        # config.toml nhưng phải sống sót qua mọi lần load_config().
+        self._app_overrides: dict = {}
+        self._app_disk_values: dict = {}
         self.load_config()
+
+    def set_app_override(self, key: str, value) -> None:
+        """Đặt một giá trị app chỉ trong bộ nhớ, bền qua các lần nạp lại config.
+
+        Gán thẳng `config.app[key]` là không đủ: `load_storytelling_config()` gọi
+        `load_config()` ở 19 chỗ trong luồng dựng video, mỗi lần lại `update()` đè
+        giá trị rỗng từ config.toml lên. Hậu quả là key LLM truyền qua CLI bị xoá
+        giữa chừng và toàn bộ lời gọi LLM sau đó chết với "Chưa cấu hình API Key".
+        """
+        if key not in self._app_overrides:
+            # Giữ giá trị gốc trên đĩa để save_config() không ghi key ra config.toml.
+            self._app_disk_values[key] = self.app.get(key, "")
+        self._app_overrides[key] = value
+        self.app[key] = value
 
     def load_config(self):
         if os.path.exists(self.config_file):
@@ -142,10 +160,18 @@ class Config:
                     self.storytelling.update(data["storytelling"])
                 if "proxy" in data:
                     self.proxy = data["proxy"]
+        # Override đặt tay luôn thắng giá trị trên đĩa.
+        if self._app_overrides:
+            self.app.update(self._app_overrides)
 
     def save_config(self):
+        # Override sống trong bộ nhớ — ghi lại giá trị gốc để key LLM truyền qua
+        # CLI không bao giờ rơi xuống config.toml.
+        app_data = dict(self.app)
+        for key, disk_value in self._app_disk_values.items():
+            app_data[key] = disk_value
         data = {
-            "app": self.app,
+            "app": app_data,
             "whisper": self.whisper,
             "storytelling": self.storytelling
         }

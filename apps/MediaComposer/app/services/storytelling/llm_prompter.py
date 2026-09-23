@@ -4,6 +4,10 @@ from loguru import logger
 from app.services.llm import get_llm_client
 from app.services.storytelling.models import Scene, StoryContext
 
+class AllPromptsFailedError(RuntimeError):
+    """Không một cảnh nào lấy được prompt từ LLM — render tiếp là vô nghĩa."""
+
+
 def _call_llm(messages: List[dict], max_tokens: int = 800) -> str:
     try:
         client, model = get_llm_client()
@@ -278,21 +282,45 @@ def generate_prompts_batch(
     from concurrent.futures import ThreadPoolExecutor, as_completed
     
     total_scenes = len(scenes)
+    failed_scenes = 0
     for i in range(0, total_scenes, batch_size):
         batch = scenes[i:i + batch_size]
         logger.info(f"Processing LLM prompt for batch {i//batch_size + 1}, scenes {i} to {min(i+batch_size, total_scenes)-1} (Sequential/Local)")
-        
+
         # Đặt max_workers=4 theo yêu cầu của user để test
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = []
             for scene in batch:
                 note = director_notes.get(str(scene.scene_id), "")
                 futures.append(executor.submit(_process_scene_with_retry, scene, system_prompt, context, 1, note))
-                
+
+            # Trước đây chỗ này là `pass`: kết quả của mọi cảnh bị vứt đi, nên
+            # LLM chết sạch mà pipeline vẫn báo "Kịch bản đã sẵn sàng" rồi render
+            # hàng chục phút ra ảnh không dính dáng gì tới truyện.
             for future in as_completed(futures):
-                pass  # Wait for all to finish
-            
+                try:
+                    if not future.result():
+                        failed_scenes += 1
+                except Exception as e:
+                    logger.error(f"Lỗi sinh prompt cho một cảnh: {e}")
+                    failed_scenes += 1
+
         if on_batch_complete:
             on_batch_complete(scenes)
-            
+
+    if failed_scenes:
+        logger.error(
+            f"[Prompt] {failed_scenes}/{total_scenes} cảnh không lấy được prompt từ "
+            "LLM — đang dùng prompt dự phòng (chỉ có style, không có nội dung cảnh).")
+
+    if total_scenes and failed_scenes == total_scenes:
+        # Không cảnh nào có nội dung: mọi ảnh sẽ giống hệt nhau và không liên quan
+        # tới chương truyện. Dừng ở đây còn hơn đốt cả chục phút GPU ra rác.
+        raise AllPromptsFailedError(
+            f"Toàn bộ {total_scenes} cảnh đều không sinh được prompt từ LLM nên ảnh "
+            "sẽ không liên quan gì tới nội dung truyện. Kiểm tra engine LLM ở Bước 3: "
+            "model có đang chạy không, tên model có đúng không, và model suy luận "
+            "(vd qwen3) thường quá chậm nên bị timeout — hãy đổi sang model instruct."
+        )
+
     return scenes

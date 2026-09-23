@@ -74,13 +74,16 @@ def main():
         config.storytelling["render_mode"] = args.render_mode
         config.save_config()
 
-        # In-memory overrides for LLM (not persisted to config.toml)
+        # In-memory overrides for LLM (not persisted to config.toml).
+        # PHAI dung set_app_override: gan thang config.app[...] se bi
+        # load_storytelling_config() -> load_config() ghi de bang gia tri rong
+        # trong config.toml ngay giua chung, lam chet moi loi goi LLM sau do.
         if args.llm_api_key:
-            config.app["llm_api_key"] = args.llm_api_key
+            config.set_app_override("llm_api_key", args.llm_api_key)
         if args.llm_base_url:
-            config.app["llm_base_url"] = args.llm_base_url
+            config.set_app_override("llm_base_url", args.llm_base_url)
         if args.llm_model:
-            config.app["llm_model"] = args.llm_model
+            config.set_app_override("llm_model", args.llm_model)
 
         from app.services.storytelling.context_manager import _STORAGE_ENV
         log_json("video_init", {
@@ -90,6 +93,39 @@ def main():
             "output_dir": args.output_dir,
             "storage_env": _STORAGE_ENV
         })
+
+        # Kiem tra dau vao TRUOC khi tai model va tao context. Truoc day cho
+        # nay nam sau ca hai: truyen chua co chuong nao van phai cho tai 7 model
+        # + tao context rong roi moi bao loi.
+        items = scan_batch_dir(args.input_dir)
+        if not items:
+            # Thoát 0 ở đây là nói dối: chuỗi tự động sẽ chạy tiếp sang bước ghép
+            # video và chết ở đó với thông báo không liên quan, che mất lỗi thật.
+            #
+            # Đổ lỗi cho Bước 2 khi thư mục RỖNG HOÀN TOÀN cũng là nói dối kiểu
+            # khác: lúc đó chưa hề có chương nào, lỗi nằm ở Bước 1. Phân biệt ba
+            # trường hợp để người dùng biết phải quay lại bước nào.
+            try:
+                entries = os.listdir(args.input_dir)
+            except OSError:
+                entries = []
+            has_md = any(f.lower().endswith(".md") for f in entries)
+
+            if not os.path.isdir(args.input_dir):
+                reason = (f"Không tìm thấy thư mục {args.input_dir}. "
+                          "Bước 1 (cào/nhập truyện) chưa chạy cho truyện này.")
+            elif not entries:
+                reason = (f"Thư mục {args.input_dir} rỗng — chưa có chương nào. "
+                          "Hãy chạy Bước 1 (cào/nhập truyện) trước, rồi Bước 2 (lồng tiếng).")
+            elif not has_md:
+                reason = (f"Trong {args.input_dir} không có tệp .md nào (chỉ có "
+                          f"{len(entries)} tệp khác). Bước 1 chưa tạo được kịch bản.")
+            else:
+                reason = (f"Có tệp .md nhưng không ghép được với audio trong "
+                          f"{args.input_dir}. Thường là Bước 2 (lồng tiếng) chưa chạy xong, "
+                          "hoặc tên tệp audio không trùng tên tệp .md.")
+            log_json("video_error", {"message": reason})
+            sys.exit(1)
 
         # Thieu trong so o day KHONG lam pipeline chet: RealESRGAN am tham
         # fallback ve PIL resize (anh mo han) va IP-Adapter mat kha nang giu
@@ -130,18 +166,6 @@ def main():
         if ctx_mgr.apply_style_preset(args.style):
             log_json("style_applied", {"style": args.style})
         ctx_mgr.save_context(context)
-
-        # Scan input directory for batch items (md + audio)
-        items = scan_batch_dir(args.input_dir)
-        if not items:
-            # Thoát 0 ở đây là nói dối: chuỗi tự động sẽ chạy tiếp sang bước ghép
-            # video và chết ở đó với thông báo không liên quan, che mất lỗi thật.
-            log_json("video_error", {"message": (
-                f"Không có cặp (.md + audio) nào trong {args.input_dir}. "
-                "Thường là Bước 2 (lồng tiếng) chưa chạy xong, hoặc tên tệp audio "
-                "không trùng tên tệp .md."
-            )})
-            sys.exit(1)
 
         # Extract characters if none exist and enabled
         if args.extract_characters and not context.characters:
