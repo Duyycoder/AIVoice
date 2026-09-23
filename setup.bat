@@ -343,7 +343,14 @@ if !GIT_OK! equ 1 (
     )
     if exist "third_party\Kokoro-Vietnamese" (
         cd third_party\Kokoro-Vietnamese
-        "..\..\.venv\Scripts\pip" install --default-timeout=1000 -e .
+        rem Kokoro khai bao gradio bat buoc nhung chi giao dien demo gradio_app.py
+        rem dung toi - thu vien loi kokoro_vietnamese khong import no. Cai kem gradio
+        rem lam pip lui phien ban gradio/fastapi rat lau tren may moi, con co the da
+        rem fastapi cua orchestrator. Nen cai --no-deps roi tu cai phan phu thuoc that.
+        "..\..\.venv\Scripts\python.exe" -m pip install --default-timeout=1000 --no-deps -e .
+        if !errorlevel! equ 0 (
+            "..\..\.venv\Scripts\python.exe" -m pip install --default-timeout=1000 --prefer-binary attrs huggingface_hub loguru numpy packaging soundfile "transformers>=4.48,<5" "vig2p>=0.1.0"
+        )
         if !errorlevel! neq 0 (
             echo [WARNING] Cau hinh Kokoro-Vietnamese that bai.
         ) else (
@@ -373,10 +380,14 @@ if not exist "apps\MediaComposer\config.toml" (
 )
 
 :: 7. Download model weights
+::    Repo tong (cong cu video) dat AIVOICE_MODEL_ENGINES=piper: mo hinh XTTSv2 nang
+::    ~5.2 GB, chi can khi nhai giong - bat may moi tai no la chan ca buoi cai hang
+::    gio tren mang cham. Engine XTTS se bao ro lenh tai khi nguoi dung chon no.
+if not defined AIVOICE_MODEL_ENGINES set "AIVOICE_MODEL_ENGINES=all"
 echo ----------------------------------------------------------------------
-echo [INFO] Dang tai trong so mo hinh AI (Piper ^& XTTSv2)...
+echo [INFO] Dang tai trong so mo hinh AI - !AIVOICE_MODEL_ENGINES!...
 echo ----------------------------------------------------------------------
-.venv\Scripts\python.exe src\download_models.py --engine all
+.venv\Scripts\python.exe src\download_models.py --engine !AIVOICE_MODEL_ENGINES!
 if %errorlevel% neq 0 (
     echo [WARNING] Qua trinh tai mo hinh bi gian doan.
 )

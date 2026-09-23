@@ -22,9 +22,16 @@ class CloneEngine(BaseTTSEngine):
     def generate(self, text: str, output_path: str, **kwargs) -> bool:
         # Check model path override, initialization path, or default path
         model_p = kwargs.get("model") or self.model_path or os.path.join("models", "xtts_v2")
-        
-        if not os.path.exists(model_p):
-            raise FileNotFoundError(f"XTTSv2 model directory not found at: {model_p}")
+
+        # Thu muc co the ton tai ma thieu model.pth (tai do dang, chi co config/vocab)
+        # -> kiem luon file trong so, bao ro cach tai thay vi de loi kho hieu luc load.
+        # Ban cai cho cong cu video KHONG tu tai file nay (~5.2 GB) vi chi can khi nhai giong.
+        weights = os.path.join(model_p, "model.pth") if os.path.isdir(model_p) else model_p
+        if not os.path.exists(weights):
+            raise FileNotFoundError(
+                f"Chua co mo hinh XTTSv2 ({weights}, ~5.2 GB - setup khong tu tai). "
+                "Tai bang lenh (chay trong thu muc AIVoice): "
+                ".venv\\Scripts\\python.exe src\\download_models.py --engine clone")
             
         # Check device override ("cpu" vs "cuda")
         device_opt = kwargs.get("device") or "cuda"
