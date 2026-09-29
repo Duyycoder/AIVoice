@@ -64,6 +64,13 @@ def create_subtitle(audio_file, subtitle_file: str = "", language: str = None):
         if segment.words:
             is_segmented = False
             for word in segment.words:
+                # Model không sinh dấu câu (PhoWhisper…) → không có chỗ tách, cả đoạn 25 s thành MỘT câu phụ đề.
+                # Tách thêm khi ngắt hơi ≥ 0,5 s trước từ này, hoặc câu đang dài ≥ 5 s / ≥ 14 từ.
+                if is_segmented and seg_text.strip() and (
+                        word.start - seg_end >= 0.5 or seg_end - seg_start >= 5.0 or len(seg_text.split()) >= 14):
+                    recognized(seg_text, seg_start, seg_end)
+                    is_segmented = False
+                    seg_text = ""
                 if not is_segmented:
                     seg_start = word.start
                     is_segmented = True
@@ -86,7 +93,12 @@ def create_subtitle(audio_file, subtitle_file: str = "", language: str = None):
                 words_idx += 1
 
         if seg_text:
-            recognized(seg_text, seg_start, seg_end)
+            # Mẩu cuối đoạn ≤ 2 từ sát câu trước (vd "độ" 0,2 s ở ranh giới đoạn Whisper) → gộp vào câu trước, đừng hiện câu vụn.
+            if subtitles and len(seg_text.split()) <= 2 and seg_start - subtitles[-1]["end_time"] < 0.3:
+                subtitles[-1]["msg"] += " " + seg_text.strip()
+                subtitles[-1]["end_time"] = seg_end
+            else:
+                recognized(seg_text, seg_start, seg_end)
 
     end = timer()
     logger.info(f"Transcription complete, elapsed: {end - start:.2f} s")

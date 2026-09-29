@@ -16,8 +16,13 @@ class CloneEngine(BaseTTSEngine):
         # This keeps imports lazy at module level but provides prompt error handling.
         try:
             import TTS
-        except ImportError:
-            raise ImportError("coqui-tts is not installed. Please run `pip install TTS`.")
+        except ImportError as e:
+            # Gói TTS có thể ĐÃ cài nhưng import hỏng vì thiếu phụ thuộc (PyTorch ≥ 2.9 bắt buộc torchcodec) —
+            # giữ lý do thật thay vì luôn báo "chưa cài".
+            if "torchcodec" in str(e):
+                raise ImportError("Clone giọng cần gói torchcodec (PyTorch 2.9+) nhưng máy chưa có — "
+                                  "cài bằng: pip install \"coqui-tts[codec]\" trong AIVoice\\.venv, hoặc chọn giọng khác.") from e
+            raise ImportError(f"Không nạp được coqui-tts (Clone giọng): {e}") from e
 
     def generate(self, text: str, output_path: str, **kwargs) -> bool:
         # Check model path override, initialization path, or default path

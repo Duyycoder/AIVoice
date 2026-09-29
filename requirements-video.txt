@@ -16,8 +16,12 @@ torch>=2.1.1
 torchaudio>=2.1.1
 numpy>=2.0.2
 
-# Tai video tu link
-yt-dlp
+# Tai video tu link. Ban cu (vd 2026.07.04) khong doc duoc trang TikTok nua ->
+# "Unexpected response from webpage request"; chay lai setup de len ban moi.
+yt-dlp>=2026.8.19
+# JS runtime cho yt-dlp giai thu thach chu ky cua YouTube — thieu thi YouTube tra 403.
+# Goi pip ship san deno.exe vao .venv\Scripts (video_downloader.js_runtimes() tro toi do).
+deno
 
 # Nghe loi thoai + dich (API kieu OpenAI: Ollama / Gemini)
 faster-whisper==1.2.1

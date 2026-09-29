@@ -91,12 +91,37 @@ def _tiktok_drama_name(url: str, cookiefile: str = None):
         return None
 
 
+def js_runtimes() -> dict:
+    """JS runtime cho yt-dlp giải thử thách chữ ký của YouTube (thiếu thì YouTube trả 403).
+
+    deno cài bằng pip vào venv nằm cạnh python.exe (.venv/Scripts/deno.exe) — thư mục đó
+    KHÔNG nằm trên PATH khi app gọi thẳng .venv\\Scripts\\python.exe, nên phải chỉ đường
+    dẫn tường minh. Không có thì để yt-dlp tự tìm deno trên PATH như mặc định.
+    """
+    ten = "deno.exe" if os.name == "nt" else "deno"
+    path = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), ten)
+    return {"deno": {"path": path}} if os.path.isfile(path) else {"deno": {}}
+
+
+def _is_youtube(url: str) -> bool:
+    u = (url or "").lower()
+    return "youtube.com" in u or "youtu.be" in u
+
+
 def diagnose_download_failure(url: str, platform: str, err, cookiefile: str = None) -> str:
     """Dịch lỗi thô của yt-dlp thành câu nói rõ nguyên nhân + cách xử lý."""
     msg = str(err)
     low = msg.lower()
 
-    if "403" in low and "forbidden" in low:
+    if "403" in low and "forbidden" in low and _is_youtube(url):
+        # YouTube 403 lúc tải dữ liệu video: yt-dlp không giải được thử thách chữ ký vì
+        # thiếu JS runtime (deno) — không liên quan cookie như TikTok.
+        return ("YouTube từ chối tải (403). yt-dlp bản mới cần JS runtime (deno) để giải thử thách "
+                "chữ ký của YouTube — máy chưa có thì link tải bị chặn. Cách sửa: cài deno "
+                "(pip install deno vào AIVoice\\.venv, hoặc cài deno vào PATH) rồi tải lại; nếu vẫn 403 "
+                f"thì cập nhật yt-dlp. (lỗi gốc: {msg})")
+
+    if "403" in low and "forbidden" in low and _is_tiktok(url, platform):
         return ("TikTok trả 403 ngay ở bước tải trang — gần như luôn do cookie WAF (_waftokenid) "
                 "trong file cookies. Bản mới đã tự lọc cookie này; nếu vẫn 403 thì export lại "
                 "cookies: đăng nhập TikTok, mở cửa sổ ẩn danh, export, rồi đóng cửa sổ đó ngay.")
@@ -220,6 +245,7 @@ def download_video(url: str, output_dir: str, platform: str = "generic", progres
         o = {
             'merge_output_format': 'mp4',
             'ffmpeg_location': ffmpeg_dir,
+            'js_runtimes': js_runtimes(),
             'noplaylist': True,
             'quiet': True,
             # Thanh tiến độ của yt-dlp in thẳng ra stdout, lẫn vào luồng JSON mà
@@ -367,6 +393,7 @@ def probe_entries(url: str, platform: str = "generic", cookies_file: str = None,
         'skip_download': True,
         'socket_timeout': 30,
         'retries': 2,
+        'js_runtimes': js_runtimes(),
     }
     if max_items and max_items > 0:
         opts['playlistend'] = int(max_items)

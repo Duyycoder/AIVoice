@@ -132,21 +132,22 @@ class Config:
         # config.toml nhưng phải sống sót qua mọi lần load_config().
         self._app_overrides: dict = {}
         self._app_disk_values: dict = {}
+        self._whisper_overrides: dict = {}
+        self._whisper_disk_values: dict = {}
         self.load_config()
 
     def set_app_override(self, key: str, value) -> None:
-        """Đặt một giá trị app chỉ trong bộ nhớ, bền qua các lần nạp lại config.
-
-        Gán thẳng `config.app[key]` là không đủ: `load_storytelling_config()` gọi
-        `load_config()` ở 19 chỗ trong luồng dựng video, mỗi lần lại `update()` đè
-        giá trị rỗng từ config.toml lên. Hậu quả là key LLM truyền qua CLI bị xoá
-        giữa chừng và toàn bộ lời gọi LLM sau đó chết với "Chưa cấu hình API Key".
-        """
+        """Đặt một giá trị app chỉ trong bộ nhớ, bền qua các lần nạp lại config."""
         if key not in self._app_overrides:
-            # Giữ giá trị gốc trên đĩa để save_config() không ghi key ra config.toml.
             self._app_disk_values[key] = self.app.get(key, "")
         self._app_overrides[key] = value
         self.app[key] = value
+
+    def set_whisper_override(self, key: str, value) -> None:
+        if key not in self._whisper_overrides:
+            self._whisper_disk_values[key] = self.whisper.get(key, "")
+        self._whisper_overrides[key] = value
+        self.whisper[key] = value
 
     def load_config(self):
         if os.path.exists(self.config_file):
@@ -163,6 +164,8 @@ class Config:
         # Override đặt tay luôn thắng giá trị trên đĩa.
         if self._app_overrides:
             self.app.update(self._app_overrides)
+        if hasattr(self, '_whisper_overrides') and self._whisper_overrides:
+            self.whisper.update(self._whisper_overrides)
 
     def save_config(self):
         # Override sống trong bộ nhớ — ghi lại giá trị gốc để key LLM truyền qua
@@ -170,9 +173,15 @@ class Config:
         app_data = dict(self.app)
         for key, disk_value in self._app_disk_values.items():
             app_data[key] = disk_value
+            
+        whisper_data = dict(self.whisper)
+        if hasattr(self, '_whisper_disk_values'):
+            for key, disk_value in self._whisper_disk_values.items():
+                whisper_data[key] = disk_value
+                
         data = {
             "app": app_data,
-            "whisper": self.whisper,
+            "whisper": whisper_data,
             "storytelling": self.storytelling
         }
         if self.proxy is not None:

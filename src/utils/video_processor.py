@@ -160,20 +160,15 @@ def apply_upscale_with_vram_cleanup(input_frame_dir: str, output_frame_dir: str,
 def merge_video_and_audio(input_frame_dir: str, audio_path: str, output_video_path: str, fps: str = "30", resolution: str = "Gốc", direct_video_path: str = None, fast_sharpen: bool = False) -> bool:
     """Merges frames and audio into an MP4 using H.264 NVENC GPU acceleration."""
     # Build FFmpeg command to use NVIDIA GPU encoding
-    if resolution == "720p (HD)":
-        box = "1280:720"
-    elif resolution == "1080p (Full HD)":
-        box = "1920:1080"
-    elif resolution == "1440p (2K)":
-        box = "2560:1440"
-    elif resolution == "2160p (4K)":
-        box = "3840:2160"
+    # Mức độ phân giải = CẠNH NGẮN (video dọc 1080×1920 là "1080p"). Khung cố định kiểu 1920:1080 làm video dọc bị
+    # co còn 608×1080. "Gốc": giữ cỡ khung đang có, chỉ co nếu vượt 4096 (giới hạn NVENC) — không phóng to.
+    canh_ngan = {"720p (HD)": 720, "1080p (Full HD)": 1080, "1440p (2K)": 1440, "2160p (4K)": 2160}.get(resolution)
+    if canh_ngan:
+        scale = f"scale='if(gt(iw,ih),-2,{canh_ngan})':'if(gt(iw,ih),{canh_ngan},-2)'"
     else:
-        box = "4096:4096" # H.264 NVENC max limit
-    if fast_sharpen:
-        vf_args = ["-vf", f"scale={box}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,cas=0.8"]
-    else:
-        vf_args = ["-vf", f"scale={box}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2"]
+        scale = "scale='min(iw,4096)':'min(ih,4096)':force_original_aspect_ratio=decrease"
+    vf = f"{scale},scale=trunc(iw/2)*2:trunc(ih/2)*2"
+    vf_args = ["-vf", vf + (",cas=0.8" if fast_sharpen else "")]
 
     if direct_video_path:
         input_args = ["-i", direct_video_path]
@@ -239,7 +234,8 @@ def process_animation_video(input_path: str, output_path: str, temp_dir: str, us
         else:
             print(msg)
             
-    audio_temp_path = os.path.join(temp_dir, "temp_audio.m4a")
+    # .mka nhận mọi codec: -acodec copy vào .m4a hỏng khi âm thanh gốc là mp3 (video TikTok) → mất tiếng.
+    audio_temp_path = os.path.join(temp_dir, "temp_audio.mka")
     audio_clean_path = os.path.join(temp_dir, "temp_audio_clean.wav")
     frames_original_dir = os.path.join(temp_dir, "frames_original")
     frames_upscaled_dir = os.path.join(temp_dir, "frames_upscaled")

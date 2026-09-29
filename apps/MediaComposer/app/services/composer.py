@@ -295,9 +295,14 @@ class ComposerWorkflow:
         custom_position: float = None,
         target_lang: str = "Vietnamese",
         translate_only: bool = False,
-        skip_translate: bool = False
+        skip_translate: bool = False,
+        voiceover_only: bool = False
     ) -> str:
         """
+        `voiceover_only=True` (editor): lồng tiếng xong thì trả file GIỌNG RIÊNG
+        (vietnamese_voiceover_track.wav) — không trộn, không ghi phụ đề vào video;
+        editor tự đặt nó lên track A2 và giảm nhạc nền lúc xuất.
+
         Orchestrates the automatic translation and subtitling workflow:
         1. Extract audio from video.
         2. Transcribe audio to source SRT (using Whisper) in the source language.
@@ -452,7 +457,15 @@ class ComposerWorkflow:
                 ducking_ratio=ducking_ratio,
                 auto_clone=auto_clone
             )
-            
+            if voiceover_only:
+                track = os.path.join(task_dir, "vietnamese_voiceover_track.wav")
+                if not os.path.exists(track):
+                    raise RuntimeError("Lồng tiếng xong nhưng không thấy file giọng vietnamese_voiceover_track.wav.")
+                logger.info("voiceover_only=True — trả file giọng riêng, không ghi vào video.")
+                return track
+        elif voiceover_only:
+            raise RuntimeError("Không lồng tiếng được: video gốc không có âm thanh để căn thời gian/giảm nhạc nền.")
+
         # 6. Burn subtitles into video
         final_video_path = os.path.join(task_dir, "translated_video.mp4")
         
