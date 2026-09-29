@@ -212,6 +212,20 @@ def cua_so_cau(moc: list, i: int, het_video: float) -> float:
 
 
 TUA_TOI_DA = 1.7       # atempo > ~1,7 nghe méo; vẫn dài hơn thì cắt đuôi (fade) — KHÔNG chồng lên câu sau
+TRE_TOI_DA = 0.8       # giây một câu được đọc lấn sang chỗ câu sau (câu sau lùi theo) trước khi phải cắt đuôi
+
+
+def xep_loi(cac_cau: list, tre_toi_da: float = TRE_TOI_DA) -> list:
+    """[(bắt_đầu, hết_chỗ, dài)] (giây, theo thứ tự) → [(đặt_lúc, giữ_dài)]. Không bao giờ chồng 2 giọng; câu dài được lấn
+    tối đa `tre_toi_da` s sang chỗ câu sau (câu sau lùi theo, bắt kịp lại ở khoảng nghỉ). Thoại dày (video game, đo 29/09):
+    chỉ cắt đuôi ở cửa sổ gốc thì 17/25 câu mất chữ."""
+    kq, con_tro = [], 0.0
+    for bat_dau, het_cho, dai in cac_cau:
+        dat = max(bat_dau, con_tro)
+        giu = max(0.0, min(dai, het_cho + tre_toi_da - dat))
+        kq.append((dat, giu))
+        con_tro = dat + giu
+    return kq
 
 
 def generate_dubbed_audio(
@@ -334,6 +348,12 @@ def generate_dubbed_audio(
     # 5. Generate TTS for each segment and apply alignment rules
     logger.info(f"Generating TTS speech for {len(segments)} segments...")
     for idx, seg in enumerate(segments):
+        if idx % 10 == 0 or idx == len(segments) - 1:
+            percent = 10 + int((idx / max(1, len(segments) - 1)) * 80)
+            # KHÔNG import json/sys cục bộ ở đây: hàm đã dùng sys.path phía trên → UnboundLocalError (agy lượt 24).
+            print(json.dumps({"event": "autosub_progress", "message": f"Đang đọc câu {idx + 1}/{len(segments)}", "percent": percent}, ensure_ascii=False))
+            sys.stdout.flush()
+            
         start_time, end_time = moc[idx]
         # Được đọc tới lúc câu sau bắt đầu: trước 29/09 chỉ tính tới lúc phụ đề tắt → tua nhanh cả câu vẫn còn chỗ.
         target_dur = cua_so_cau(moc, idx, video_duration)
@@ -443,23 +463,27 @@ def generate_dubbed_audio(
     total_samples = int(sample_rate * video_duration)
     voiceover_array = np.zeros(total_samples, dtype=np.float32)
     
+    cac_loi = []
     for item in temp_wavs:
         data, sr = sf.read(item["file_path"])
         # Downmix to mono if stereo
         if len(data.shape) > 1:
             data = np.mean(data, axis=1)
-            
+
         if sr != sample_rate:
             # Engine khác tần số mẫu (vd Clone 24k vs 22,05k): đặt sai tần số làm câu lệch dần về cuối video.
             data = np.interp(np.linspace(0, len(data), int(len(data) * sample_rate / sr), endpoint=False),
                              np.arange(len(data)), data)
+        cac_loi.append(data)
+    vi_tri = xep_loi([(it["start_time"], it["start_time"] + it["duration"], len(d) / sample_rate)
+                      for it, d in zip(temp_wavs, cac_loi)])
 
-        # Left-aligned starting offset in samples
-        start_sample = int(item["start_time"] * sample_rate)
-        # Không cho lời tràn sang câu sau (trước đây CỘNG chồng → 2 giọng cùng lúc): cắt đuôi + fade 80 ms.
-        toi_da = int(item["duration"] * sample_rate)
-        if toi_da > 0 and len(data) > toi_da:
-            data = data[:toi_da].copy()
+    for item, data, (dat_luc, giu_dai) in zip(temp_wavs, cac_loi, vi_tri):
+        start_sample = int(dat_luc * sample_rate)
+        # Không cho lời tràn sang câu sau (trước đây CỘNG chồng → 2 giọng cùng lúc): quá chỗ cho phép thì cắt đuôi + fade 80 ms.
+        toi_da = int(giu_dai * sample_rate)
+        if len(data) > toi_da:
+            data = data[:max(1, toi_da)].copy()
             fade = min(len(data), int(0.08 * sample_rate))
             data[-fade:] *= np.linspace(1.0, 0.0, fade)
             so_cau_cat += 1
@@ -473,7 +497,7 @@ def generate_dubbed_audio(
         voiceover_array[start_sample:end_sample] += data
         
     if so_cau_cat:
-        logger.warning(f"{so_cau_cat}/{len(temp_wavs)} câu đọc không kịp dù tua {TUA_TOI_DA}x — đã cắt đuôi. "
+        logger.warning(f"{so_cau_cat}/{len(temp_wavs)} câu đọc không kịp dù tua {TUA_TOI_DA}x + lấn {TRE_TOI_DA}s — đã cắt đuôi. "
                        "Rút gọn các câu này trong phụ đề hoặc tăng tốc độ giọng.")
 
     # Save final assembled voiceover track
