@@ -57,6 +57,16 @@ def _doc_srt_don_gian(path):
     return ds
 
 
+def tinh_tham_so_edge(speed: float, pitch: int) -> dict:
+    """Hàm thuần quy đổi tốc độ/cao độ sang tham số Edge."""
+    res = {}
+    if speed != 1.0:
+        pct = int(round((speed - 1.0) * 100))
+        res["rate"] = f"+{pct}%" if pct >= 0 else f"{pct}%"
+    if pitch != 0:
+        hz = int(pitch * 25)
+        res["pitch"] = f"+{hz}Hz" if hz > 0 else f"{hz}Hz"
+    return res
 def main():
     parser = argparse.ArgumentParser(description="CLI Adapter for MediaComposer Autosub & Dubbing Workflows")
     parser.add_argument("--video-path", default="", help="Path to local video file")
@@ -97,6 +107,8 @@ def main():
     parser.add_argument("--audio-out-dir", default="", help="Thư mục chép file giọng lồng tiếng (mặc định = --output-dir)")
     parser.add_argument("--tts-engine", default="edge", help="TTS Engine (edge|piper|kokoro|vieneu|clone)")
     parser.add_argument("--tts-voice", default="", help="TTS voice name or key")
+    parser.add_argument("--tts-speed", type=float, default=1.0, help="TTS speed factor (default 1.0)")
+    parser.add_argument("--tts-pitch", type=int, default=0, help="TTS pitch semitones (default 0)")
     parser.add_argument("--auto-clone", action="store_true", default=False, help="Enable auto voice cloning for clone engine")
     parser.add_argument("--ducking-ratio", type=float, default=90.0, help="Audio ducking ratio (0-100)")
     parser.add_argument("--llm-api-key", default="", help="API Key for translation LLM")
@@ -133,6 +145,52 @@ def main():
     parser.add_argument("--anh-seed", type=int, default=-1, help="Seed")
 
     args = parser.parse_args()
+
+    # Monkey patch edge_tts.Communicate để nhận pitch từ args
+    try:
+        import edge_tts
+        _orig_Communicate = edge_tts.Communicate
+        class PatchedCommunicate(_orig_Communicate):
+            def __init__(self, text, voice, **kwargs):
+                speed = getattr(args, "tts_speed", 1.0)
+                pitch = getattr(args, "tts_pitch", 0)
+                edge_params = tinh_tham_so_edge(speed, pitch)
+                if "rate" in edge_params: kwargs["rate"] = edge_params["rate"]
+                if "pitch" in edge_params: kwargs["pitch"] = edge_params["pitch"]
+                super().__init__(text, voice, **kwargs)
+        edge_tts.Communicate = PatchedCommunicate
+    except Exception:
+        pass
+
+    # Monkey patch các engine để log warning
+    import importlib
+    for eng_module, eng_class in [
+        ("src.engines.piper", "PiperEngine"),
+        ("src.engines.kokoro", "KokoroEngine"),
+        ("src.engines.vieneu", "VieNeuEngine"),
+        ("src.engines.clone", "CloneEngine")
+    ]:
+        try:
+            mod = importlib.import_module(eng_module)
+            cls = getattr(mod, eng_class)
+            orig_gen = getattr(cls, "generate", None)
+            if orig_gen:
+                def make_patched_gen(orig, cls_name):
+                    def patched_gen(self, text, out_path, **kwargs):
+                        if getattr(args, "tts_speed", 1.0) != 1.0:
+                            kwargs["speed"] = args.tts_speed
+                            if cls_name not in ["EdgeEngine", "PiperEngine", "CloneEngine"]:
+                                log_json("autosub_warn", {"message": f"Engine {cls_name} không hỗ trợ chỉnh tốc độ."})
+                        if getattr(args, "tts_pitch", 0) != 0:
+                            kwargs["pitch"] = args.tts_pitch
+                            if cls_name not in ["EdgeEngine"]:
+                                log_json("autosub_warn", {"message": f"Engine {cls_name} không hỗ trợ chỉnh cao độ."})
+                        return orig(self, text, out_path, **kwargs)
+                    return patched_gen
+                
+                setattr(cls, "generate", make_patched_gen(orig_gen, eng_class))
+        except Exception:
+            pass
     
     video_path = args.video_path
 
@@ -605,6 +663,7 @@ def main():
             sys.exit(0)
 
         # Run translation workflow
+        
         from app.services.composer import composer
         
         log_json("autosub_progress", {"message": "Bắt đầu chạy workflow tạo phụ đề và lồng tiếng...", "percent": 10})
@@ -733,3 +792,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
