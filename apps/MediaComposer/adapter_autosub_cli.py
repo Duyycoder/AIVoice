@@ -128,6 +128,8 @@ def main():
     parser.add_argument("--custom-position", type=float, default=None, help="Custom Y ratio (0-100 from top)")
     parser.add_argument("--cookies-file", default=None, help="Path to cookies file for video downloader")
     parser.add_argument("--use-gpu", action="store_true", default=False, help="Use GPU for PaddleOCR")
+    parser.add_argument("--ocr-fps", type=float, default=10.0, help="Số khung OCR mỗi giây video")
+    parser.add_argument("--ocr-model", default="medium", choices=["medium", "small", "tiny"], help="Cỡ model PP-OCRv6")
     parser.add_argument("--tach-giong-only", action="store_true", default=False, help="Chỉ tách giọng thành giong/nhac.wav")
     parser.add_argument("--lam-net-only", action="store_true", default=False, help="Chỉ làm nét bằng RealESRGAN")
     parser.add_argument("--lam-net-kieu", default="nhanh", choices=["nhanh", "ai", "ai_video"], help="Thuật toán làm nét")
@@ -179,7 +181,7 @@ def main():
                     def patched_gen(self, text, out_path, **kwargs):
                         if getattr(args, "tts_speed", 1.0) != 1.0:
                             kwargs["speed"] = args.tts_speed
-                            if cls_name not in ["EdgeEngine", "PiperEngine", "CloneEngine"]:
+                            if cls_name not in ["EdgeEngine", "PiperEngine", "CloneEngine", "KokoroEngine"]:
                                 log_json("autosub_warn", {"message": f"Engine {cls_name} không hỗ trợ chỉnh tốc độ."})
                         if getattr(args, "tts_pitch", 0) != 0:
                             kwargs["pitch"] = args.tts_pitch
@@ -501,6 +503,7 @@ def main():
                 ])
             if args.use_gpu:
                 cmd_ocr.append("--use-gpu")
+            cmd_ocr += ["--ocr-fps", str(args.ocr_fps), "--ocr-model", args.ocr_model]
                 
             # Setup environment with PYTHONPATH containing MediaComposer roots
             env = os.environ.copy()

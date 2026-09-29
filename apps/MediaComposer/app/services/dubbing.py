@@ -191,6 +191,29 @@ Chỉ trả về câu đã rút gọn, không thêm bất kỳ giải thích nà
         logger.error(f"Failed to shorten text via Gemini: {e}")
         return text
 
+def cat_khoang_lang(path: str, nguong: float = 0.01, chua_ms: int = 40) -> None:
+    """Cắt lặng đầu/cuối file TTS (Edge/Kokoro thêm ~0,1–0,4 s) — lời bắt đầu đúng lúc phụ đề hiện, đo thời lượng thật."""
+    data, sr = sf.read(path)
+    mono = np.abs(data if data.ndim == 1 else data.mean(axis=1))
+    co_tieng = np.nonzero(mono > nguong)[0]
+    if not len(co_tieng):
+        return
+    chua = int(sr * chua_ms / 1000)
+    dau, cuoi = max(0, co_tieng[0] - chua), min(len(data), co_tieng[-1] + chua)
+    if dau > 0 or cuoi < len(data):
+        sf.write(path, data[dau:cuoi], sr)
+
+
+def cua_so_cau(moc: list, i: int, het_video: float) -> float:
+    """Thời gian câu i được phép đọc: tới lúc câu SAU bắt đầu (không chỉ tới lúc phụ đề câu này tắt)."""
+    bat_dau, ket_thuc = moc[i]
+    sau = moc[i + 1][0] if i + 1 < len(moc) else het_video
+    return max(ket_thuc, sau) - bat_dau
+
+
+TUA_TOI_DA = 1.7       # atempo > ~1,7 nghe méo; vẫn dài hơn thì cắt đuôi (fade) — KHÔNG chồng lên câu sau
+
+
 def generate_dubbed_audio(
     task_id: str,
     video_path: str,
@@ -302,14 +325,18 @@ def generate_dubbed_audio(
             return 0.0
             
     temp_wavs = []
-    
+    moc = []
+    for seg in segments:
+        ts_parts = seg["timestamp"].split("-->")
+        moc.append((timestamp_to_seconds(ts_parts[0].strip()), timestamp_to_seconds(ts_parts[1].strip())))
+    so_cau_cat = 0
+
     # 5. Generate TTS for each segment and apply alignment rules
     logger.info(f"Generating TTS speech for {len(segments)} segments...")
     for idx, seg in enumerate(segments):
-        ts_parts = seg["timestamp"].split("-->")
-        start_time = timestamp_to_seconds(ts_parts[0].strip())
-        end_time = timestamp_to_seconds(ts_parts[1].strip())
-        target_dur = end_time - start_time
+        start_time, end_time = moc[idx]
+        # Được đọc tới lúc câu sau bắt đầu: trước 29/09 chỉ tính tới lúc phụ đề tắt → tua nhanh cả câu vẫn còn chỗ.
+        target_dur = cua_so_cau(moc, idx, video_duration)
         
         raw_text = seg["text"].strip()
         if not raw_text:
@@ -347,19 +374,23 @@ def generate_dubbed_audio(
         if not os.path.exists(temp_seg_raw) or os.path.getsize(temp_seg_raw) == 0:
             logger.warning(f"Failed to generate TTS for segment {idx}. Skipping.")
             continue
-            
+
+        try:
+            cat_khoang_lang(temp_seg_raw)
+        except Exception as e:
+            logger.warning(f"Segment {idx}: không cắt được khoảng lặng: {e}")
         actual_dur = get_audio_duration(temp_seg_raw)
         logger.info(f"Segment {idx}: Target duration = {target_dur:.2f}s, TTS actual = {actual_dur:.2f}s")
         
         # Rule 1 (Gemini text-shortening) ĐÃ BỎ: giữ lời thoại khớp nguyên văn phụ đề để
         # audio không lệch chữ so với sub (dubbing chỉ đọc đúng câu đang hiển thị).
         # Việc fit thời lượng do Rule 2 (tua tốc độ) đảm nhiệm — không đổi chữ.
-        tolerance = 0.3
+        tolerance = 0.05     # cửa sổ đã tính tới câu sau → không cần nới thêm (0,3 cũ làm lời tràn sang câu sau)
 
         # Rule 2: Time-stretching/Speeding up if it still exceeds target by more than the tolerance
         if target_dur > 0 and actual_dur > target_dur + tolerance:
             factor = actual_dur / target_dur
-            factor = min(factor, 1.4)  # Safety limit
+            factor = min(factor, TUA_TOI_DA)
             logger.info(f"Segment {idx}: Speeding up by {factor:.2f}x to fit target duration...")
             
             # FFmpeg atempo speedup without changing pitch
@@ -418,10 +449,22 @@ def generate_dubbed_audio(
         if len(data.shape) > 1:
             data = np.mean(data, axis=1)
             
+        if sr != sample_rate:
+            # Engine khác tần số mẫu (vd Clone 24k vs 22,05k): đặt sai tần số làm câu lệch dần về cuối video.
+            data = np.interp(np.linspace(0, len(data), int(len(data) * sample_rate / sr), endpoint=False),
+                             np.arange(len(data)), data)
+
         # Left-aligned starting offset in samples
         start_sample = int(item["start_time"] * sample_rate)
+        # Không cho lời tràn sang câu sau (trước đây CỘNG chồng → 2 giọng cùng lúc): cắt đuôi + fade 80 ms.
+        toi_da = int(item["duration"] * sample_rate)
+        if toi_da > 0 and len(data) > toi_da:
+            data = data[:toi_da].copy()
+            fade = min(len(data), int(0.08 * sample_rate))
+            data[-fade:] *= np.linspace(1.0, 0.0, fade)
+            so_cau_cat += 1
         end_sample = start_sample + len(data)
-        
+
         if end_sample > total_samples:
             end_sample = total_samples
             data = data[:end_sample - start_sample]
@@ -429,6 +472,10 @@ def generate_dubbed_audio(
         # Add audio samples onto the timeline
         voiceover_array[start_sample:end_sample] += data
         
+    if so_cau_cat:
+        logger.warning(f"{so_cau_cat}/{len(temp_wavs)} câu đọc không kịp dù tua {TUA_TOI_DA}x — đã cắt đuôi. "
+                       "Rút gọn các câu này trong phụ đề hoặc tăng tốc độ giọng.")
+
     # Save final assembled voiceover track
     voiceover_track_path = os.path.join(task_dir, "vietnamese_voiceover_track.wav")
     sf.write(voiceover_track_path, voiceover_array, sample_rate)

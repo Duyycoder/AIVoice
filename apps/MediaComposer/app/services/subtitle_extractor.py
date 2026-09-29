@@ -120,6 +120,128 @@ def grab_preview_frame(video_path: str, out_image: str, at_seconds: float = None
         "duration": dur
     }
 
+def _chon_model_ocr(kich_co: str) -> None:
+    """videocr tạo PaddleOCR không tên model → thư viện lấy PP-OCRv6_medium. Chọn bộ nhỏ hơn bằng cách bọc hàm tạo."""
+    if kich_co not in ("small", "tiny"):
+        return
+    import videocr.video as vv
+    goc = getattr(vv.PaddleOCR, "_goc", vv.PaddleOCR)
+
+    def tao(*a, **kw):
+        if not kw.get("text_detection_model_name"):
+            kw["text_detection_model_name"] = f"PP-OCRv6_{kich_co}_det"
+        if not kw.get("text_recognition_model_name"):
+            kw["text_recognition_model_name"] = "PP-OCRv6_small_rec"     # không có tiny_rec
+        return goc(*a, **kw)
+    tao._goc = goc
+    vv.PaddleOCR = tao
+
+
+def _doc_khung_ffmpeg(path: str, vung: tuple, ocr_fps: float, bat_dau: float, thoi_luong: float, dung_gpu: bool):
+    """Sinh (k, ảnh BGR) — ffmpeg giải mã (NVDEC nếu có), lọc còn `ocr_fps` khung/s và cắt sẵn vùng phụ đề.
+    videocr dùng OpenCV giải mã MỌI khung 1080p bằng CPU (kể cả khung bỏ qua): ~170 ms/khung trong khi OCR chỉ 34 ms (đo 29/09)."""
+    import numpy as np
+    x, y, w, h = vung
+    w, h = w - w % 2, h - h % 2
+    lenh = [utils.get_ffmpeg_binary(), "-hide_banner", "-loglevel", "error"]
+    if dung_gpu:
+        lenh += ["-hwaccel", "cuda"]
+    if bat_dau > 0:
+        lenh += ["-ss", f"{bat_dau:.3f}"]
+    lenh += ["-i", path]
+    if thoi_luong > 0:
+        lenh += ["-t", f"{thoi_luong:.3f}"]
+    lenh += ["-an", "-vf", f"fps={ocr_fps:g},crop={w}:{h}:{x}:{y}", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+    p = subprocess.Popen(lenh, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=w * h * 3 * 4)
+    co, k = w * h * 3, 0
+    try:
+        while True:
+            buf = p.stdout.read(co)
+            if len(buf) < co:
+                break
+            yield k, np.frombuffer(buf, np.uint8).reshape(h, w, 3).copy()   # copy: frombuffer chỉ đọc
+            k += 1
+    finally:
+        p.stdout.close()
+        loi = p.stderr.read().decode("utf-8", "replace")
+        p.wait()
+    if k == 0:
+        raise RuntimeError(f"ffmpeg không đọc được khung nào: {loi[-300:]}")
+
+
+def _va_doc_bang_ffmpeg(ocr_fps: float) -> None:
+    """Thay vòng đọc khung của videocr (Video.run_ocr) bằng ffmpeg; giữ nguyên OCR, lọc khung giống nhau và gộp câu.
+    Mỗi khung OCR phủ luôn các khung nằm giữa 2 lần đọc — videocr chỉ gộp 2 khung cách ≤ 0,09 s, đọc thưa mà không phủ
+    thì 1 câu thành 5 câu dài 0,016 s (đo 29/09)."""
+    import inspect
+    import cv2
+    import numpy as np
+    import videocr.video as vv
+    from videocr.models import PredictedFrames
+    from videocr import utils as vutils
+    goc = getattr(vv.Video.run_ocr, "_goc", vv.Video.run_ocr)
+    chu_ky = inspect.signature(goc)
+
+    def run_ocr(self, *a, **kw):
+        t = chu_ky.bind(self, *a, **kw).arguments
+        self.lang, self.use_fullframe, self.pred_frames = t["lang"], t["use_fullframe"], []
+        ocr = vv.PaddleOCR(lang=self.lang, use_doc_orientation_classify=False, use_doc_unwarping=False,
+                           use_textline_orientation=False, device="gpu" if t["use_gpu"] else "cpu")
+        if self.use_fullframe:
+            vung = (0, 0, self.width, self.height)
+        elif t["crop_width"] and t["crop_height"]:
+            cx, cy = max(0, int(t["crop_x"] or 0)), max(0, int(t["crop_y"] or 0))
+            vung = (cx, cy, min(int(t["crop_width"]), self.width - cx), min(int(t["crop_height"]), self.height - cy))
+        else:
+            vung = (0, 2 * self.height // 3, self.width, self.height - 2 * self.height // 3)   # như videocr: 1/3 dưới
+        dau = vutils.get_frame_index(t["time_start"], self.fps) if t["time_start"] else 0
+        cuoi = vutils.get_frame_index(t["time_end"], self.fps) if t["time_end"] else self.num_frames
+        buoc = self.fps / ocr_fps                  # số khung gốc giữa 2 lần đọc
+        tong = max(1, int((cuoi - dau) / buoc))
+        nguong_sang, nguong_giong, nguong_diem = t["brightness_threshold"], t["similar_image_threshold"], t["similar_pixel_threshold"]
+        conf = float(t["conf_threshold"]) / 100
+        truoc, khung_cuoi = None, None
+
+        def cac_khung():
+            doc = lambda gpu: _doc_khung_ffmpeg(self.path, vung, ocr_fps, dau / self.fps,
+                                                (cuoi - dau) / self.fps if t["time_end"] else 0, gpu)
+            if not t["use_gpu"]:
+                yield from doc(False)
+                return
+            da_co = False
+            try:
+                for x in doc(True):
+                    da_co = True
+                    yield x
+            except RuntimeError as e:
+                if da_co:
+                    raise
+                log_json("ocr_progress", {"message": f"Không giải mã GPU được ({e}) — chuyển sang CPU"})
+                yield from doc(False)
+
+        for k, anh in cac_khung():
+            i = dau + int(round(k * buoc))
+            phu = i + max(0, int(round(buoc)) - 1)
+            if nguong_sang:
+                anh = cv2.bitwise_and(anh, anh, mask=cv2.inRange(anh, (nguong_sang,) * 3, (255, 255, 255)))
+            if nguong_giong:
+                xam = cv2.cvtColor(anh, cv2.COLOR_BGR2GRAY)
+                if truoc is not None and khung_cuoi is not None:
+                    _, khac = cv2.threshold(cv2.absdiff(truoc, xam), nguong_diem, 255, cv2.THRESH_BINARY)
+                    if np.count_nonzero(khac) < nguong_giong:
+                        khung_cuoi.end_index = phu
+                        truoc = xam
+                        continue
+                truoc = xam
+            khung_cuoi = PredictedFrames(i, ocr.ocr(anh), conf)
+            khung_cuoi.end_index = phu
+            self.pred_frames.append(khung_cuoi)
+            if k % 50 == 0:
+                log_json("ocr_progress", {"message": f"OCR {min(k, tong)}/{tong} khung", "percent": round(min(k, tong) / tong * 100, 1)})
+    run_ocr._goc = goc
+    vv.Video.run_ocr = run_ocr
+
+
 def extract_hardsub_ocr_srt(
     video_path: str,
     output_srt: str,
@@ -129,12 +251,20 @@ def extract_hardsub_ocr_srt(
     time_end: str = "",
     conf_threshold: int = 75,
     sim_threshold: int = 80,
-    frames_to_skip: int = 1,
+    frames_to_skip: int = None,
     use_gpu: bool = False,
-    progress_cb=None
+    progress_cb=None,
+    ocr_fps: float = 10.0,           # số khung OCR mỗi giây video (phụ đề hiện ≥ ~1 s nên 10 là đủ)
+    ocr_model: str = "medium",       # PP-OCRv6: medium (mặc định thư viện) | small (nhanh hơn)
 ) -> str:
     """Gọi videocr-PaddleOCR: save_subtitles_to_file."""
     log_json("ocr_start", {"video_path": video_path, "output_srt": output_srt, "lang": lang})
+
+    # Trước 29/09 videocr OCR mọi khung thứ 2 (60fps = 30 khung/s) và giải mã mọi khung bằng CPU: 1 phút video ~220 s.
+    ocr_fps = max(1.0, float(ocr_fps))
+    _chon_model_ocr(ocr_model)
+    _va_doc_bang_ffmpeg(ocr_fps)
+    log_json("ocr_progress", {"message": f"OCR {ocr_fps:g} khung/giây, model {ocr_model}, giải mã {'GPU' if use_gpu else 'CPU'}"})
     
     try:
         from videocr import save_subtitles_to_file
@@ -171,7 +301,8 @@ def extract_hardsub_ocr_srt(
             "conf_threshold": conf_threshold,
             "sim_threshold": sim_threshold,
             "use_fullframe": use_fullframe,
-            "use_gpu": use_gpu
+            "use_gpu": use_gpu,
+            "frames_to_skip": frames_to_skip
         }
         
         if not use_fullframe:
@@ -221,6 +352,8 @@ if __name__ == "__main__":
     parser.add_argument("--crop-w", type=int, default=-1)
     parser.add_argument("--crop-h", type=int, default=-1)
     parser.add_argument("--use-gpu", action="store_true")
+    parser.add_argument("--ocr-fps", type=float, default=10.0)
+    parser.add_argument("--ocr-model", default="medium", choices=["medium", "small", "tiny"])
     args = parser.parse_args()
 
     crop = None
@@ -233,7 +366,9 @@ if __name__ == "__main__":
             output_srt=args.output_srt,
             lang=args.lang,
             crop=crop,
-            use_gpu=args.use_gpu
+            use_gpu=args.use_gpu,
+            ocr_fps=args.ocr_fps,
+            ocr_model=args.ocr_model
         )
     except Exception as e:
         import traceback

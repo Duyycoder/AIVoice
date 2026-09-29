@@ -51,7 +51,7 @@ class KokoroEngine(BaseTTSEngine):
                 self.current_voice = voice
                 
             # Synthesize
-            audio, phonemes = self.tts.synthesize(text)
+            audio, phonemes = self.tts.synthesize(text, speed=float(kwargs.get("speed") or 1.0))
             
             # Save audio (Kokoro-Vietnamese outputs mono at 24000Hz)
             sf.write(output_path, audio, 24000)
