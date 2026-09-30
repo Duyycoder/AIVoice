@@ -44,7 +44,7 @@ def test_moi_canh_hong_thi_nem_loi(monkeypatch):
 
 def test_mot_so_canh_hong_van_chay_tiep(monkeypatch):
     """Hỏng một phần là chuyện bình thường — chỉ cảnh báo, không được dừng."""
-    def gia_lap(messages, max_tokens=800):
+    def gia_lap(messages, max_tokens=800, timeout_sec=None):
         noi_dung = messages[-1]["content"]
         if not noi_dung.startswith("Scene text:"):
             return ""  # lời gọi Story Director

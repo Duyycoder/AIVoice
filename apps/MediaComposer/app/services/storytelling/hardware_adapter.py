@@ -36,7 +36,15 @@ def get_hardware_config() -> dict:
     }
     
     if not cuda_available:
-        logger.info("Không phát hiện GPU CUDA khả dụng. Sử dụng cấu hình chạy CPU.")
+        import os
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if visible and profile != "cpu":
+            # Chi so GPU sai (vd "cuda:1" tren may 1 GPU) an het GPU -> SD chay CPU fp32
+            # cham ~30 lan ma khong bao loi. Dung han thay vi lang le chay CPU.
+            raise RuntimeError(
+                f"CUDA_VISIBLE_DEVICES={visible!r} không khớp GPU nào trên máy nên torch không thấy GPU. "
+                "Sửa mục 'Thiết bị' của bước Video về 'auto' hoặc 'cuda:0'.")
+        logger.warning("Không phát hiện GPU CUDA khả dụng — MỌI bước AI sẽ chạy CPU (rất chậm).")
         return config
 
     # Phân giải chế độ "auto" dựa trên dung lượng VRAM thực tế
@@ -70,9 +78,9 @@ def get_hardware_config() -> dict:
         config.update({
             "device": "cuda",
             "sd_device": "cuda",
-            "face_device": "cpu",       # InsightFace chạy CPU để tránh tranh chấp VRAM khi vẽ ảnh
+            "face_device": "cuda",      # buffalo_l ~0.5GB, SD offload chi dinh ~2GB -> du cho
             "esrgan_device": "cuda",
-            "whisper_device": "cpu",    # Whisper chạy trên CPU để chừa VRAM cho SD / RealESRGAN
+            "whisper_device": "cuda",
             "enable_cpu_offload": True,  # Bật CPU Offload cho Stable Diffusion để tránh tràn VRAM OOM
             "use_fp16": True,
             "profile_name": "Tiết kiệm VRAM (GPU <= 6GB VRAM)"

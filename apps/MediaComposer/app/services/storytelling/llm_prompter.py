@@ -8,9 +8,16 @@ class AllPromptsFailedError(RuntimeError):
     """Không một cảnh nào lấy được prompt từ LLM — render tiếp là vô nghĩa."""
 
 
-def _call_llm(messages: List[dict], max_tokens: int = 800) -> str:
+def _call_llm(messages: List[dict], max_tokens: int = 800,
+              timeout_sec: Optional[float] = None) -> str:
+    """timeout_sec: lời gọi dài (Story Director) — chờ tới khi xong, không retry.
+    Mặc định giữ 60s + 2 retry của client cho lời gọi từng cảnh."""
     try:
         client, model = get_llm_client()
+        if timeout_sec:
+            import httpx
+            client = client.with_options(
+                timeout=httpx.Timeout(timeout_sec, connect=10.0), max_retries=0)
     except Exception as e:
         logger.error(f"LLM chưa sẵn sàng (kiểm tra API Key trong Global Settings): {e}")
         return ""
@@ -224,43 +231,81 @@ def generate_storyboard_context(scenes: List[Scene], context: StoryContext) -> d
         return {}
         
     logger.info("Bước 1: Chạy Story Director để phân tích bối cảnh và hành động (Tiền xử lý)...")
-    
-    # Gộp toàn bộ văn bản
-    full_script = ""
-    for s in scenes:
-        full_script += f"Scene {s.scene_id}: {s.text_vi}\n"
-        
+
     genre = context.genre or "default"
     genre_rules = GENRE_SPECIFIC_RULES.get(genre, GENRE_SPECIFIC_RULES["default"])
-    
+
     system_prompt = f"""You are a Storyboard Director for a cinematic movie.
 IMPORTANT: You are a TEXT-ONLY AI. DO NOT generate images.
-Read the following script and provide a brief 1-sentence visual direction (Director's Note) for each Scene.
+Read the following script and provide a brief 1-sentence visual direction (Director's Note, max 20 words) for each Scene.
 Make sure the visual style matches the genre: {genre}.
 
 {genre_rules}
 
 Focus ONLY on: Who is in the frame, what are they doing, and where are they? Ensure continuity between scenes (if Scene 1 is in a courtyard, Scene 2 is likely still there unless stated otherwise).
-Output ONLY a valid JSON dictionary mapping scene ID (as string) to the director's note.
+Output ONLY a valid JSON dictionary mapping scene ID (as string) to the director's note, one entry for EVERY scene given.
 Example: {{"0": "Dịch Phong is sitting in his wooden shop, looking bored.", "1": "Lạc Lan Tuyết walks into the shop, looking coldly at him."}}"""
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": full_script}
-    ]
-    
-    content = _call_llm(messages, max_tokens=3000)
-    if not content:
+    # Cả chương 1 lời gọi (52 cảnh, max_tokens=3000) vượt ngữ cảnh 4096 của Ollama
+    # -> timeout 60s x 3 lần, mất 3 phút mà không có gì. Chia nhóm vừa ngữ cảnh;
+    # ghi chú cuối nhóm trước làm cầu nối liền mạch.
+    notes: dict = {}
+    groups = _director_groups(scenes)
+    for gi, group in enumerate(groups):
+        script = "".join(f"Scene {s.scene_id}: {s.text_vi}\n" for s in group)
+        prev_note = notes.get(str(groups[gi - 1][-1].scene_id)) if gi else ""
+        if prev_note:
+            script = f"(Previous scene's note: {prev_note})\n\n" + script
+        messages = [{"role": "system", "content": system_prompt},
+                    {"role": "user", "content": script}]
+        content = _call_llm(messages, max_tokens=DIRECTOR_TOKENS_PER_SCENE * len(group) + 100,
+                            timeout_sec=DIRECTOR_TIMEOUT_SEC)
+        parsed = _parse_director_notes(content)
+        if not parsed:
+            logger.warning(f"Story Director nhóm {gi + 1}/{len(groups)} không trả về kết quả dùng được.")
+        ids = {str(s.scene_id) for s in group}
+        notes.update({k: v for k, v in parsed.items() if k in ids})
+
+    if not notes:
         logger.warning("Story Director không trả về kết quả.")
+    else:
+        logger.info(f"Story Director: {len(notes)}/{len(scenes)} cảnh có ghi chú ({len(groups)} lời gọi).")
+    return notes
+
+
+# Story Director: mỗi nhóm <= ~900 từ (~1.500 token) + system ~500 + trả lời
+# (~45 token/cảnh x <= 12 cảnh) -> dưới ngữ cảnh 4096 của Ollama.
+DIRECTOR_GROUP_WORDS = 900
+DIRECTOR_GROUP_MAX_SCENES = 12
+DIRECTOR_TOKENS_PER_SCENE = 60
+DIRECTOR_TIMEOUT_SEC = 600.0
+
+
+def _director_groups(scenes: List[Scene]) -> List[List[Scene]]:
+    groups, cur, words = [], [], 0
+    for s in scenes:
+        w = len((s.text_vi or "").split())
+        if cur and (words + w > DIRECTOR_GROUP_WORDS or len(cur) >= DIRECTOR_GROUP_MAX_SCENES):
+            groups.append(cur)
+            cur, words = [], 0
+        cur.append(s)
+        words += w
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def _parse_director_notes(content: str) -> dict:
+    if not content:
         return {}
-        
     try:
         cleaned = content.strip()
         start_idx = cleaned.find('{')
         end_idx = cleaned.rfind('}')
         if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
-            cleaned = cleaned[start_idx:end_idx+1]
-        return json.loads(cleaned)
+            cleaned = cleaned[start_idx:end_idx + 1]
+        data = json.loads(cleaned)
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
     except Exception as e:
         logger.warning(f"Lỗi parse JSON từ Story Director: {e}")
         return {}

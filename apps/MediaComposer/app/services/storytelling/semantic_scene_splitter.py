@@ -1,14 +1,41 @@
 # -*- coding: utf-8 -*-
-"""Tách cảnh ngữ nghĩa bằng LLM — fallback None nếu LLM fail.
+"""Tách cảnh ngữ nghĩa: LLM chỉ đánh dấu ĐIỂM BẮT ĐẦU cảnh, code dựng + cân độ dài.
 
-Gọi LLM để chia kịch bản thành các cảnh 8-15 giây theo ngữ cảnh.
-Luôn có fallback: trả None để caller dùng md_parser cũ.
+Bản cũ bắt LLM viết lại cả danh sách cảnh (paragraphs/summary/action...) cho cả
+chương trong 1 lời gọi: đề bài ~2.900 token + trả lời ~3.850 token > ngữ cảnh 4096
+của Ollama -> Ollama xoá bớt đầu ngữ cảnh (chính là truyện) khi đang viết -> cảnh
+sau bịa, số đoạn vượt chương, JSON cụt; lại chờ 60s x 3 lần rồi rơi về md_parser.
+
+Bây giờ:
+- Chia chương thành phần ~SPLIT_CHUNK_WORDS từ; mỗi lời gọi chỉ trả mốc bắt đầu
+  + địa điểm/thời gian/nhân vật/hành động ngắn -> đề + trả lời vừa ~3.200 token.
+- Code bỏ mốc sai, gộp cảnh cùng địa điểm, gộp cảnh ngắn, ép tổng số cảnh
+  (~30-60s/cảnh), cắt cảnh quá dài.
+- LLM hỏng phần nào thì phần đó chia thuần bằng code (vẫn ra ~12 cảnh/chương,
+  không đẩy 50-70 cảnh sang bước vẽ ảnh). Chỉ trả None khi kịch bản rỗng.
 """
 import json
+import math
 import os
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+import httpx
 from loguru import logger
+
+# Mỗi phần ~1.100 từ ≈ 1.800 token tiếng Việt (Qwen) + system ~400 + trả lời
+# SPLIT_MAX_TOKENS -> dưới 4096 (num_ctx mặc định của Ollama).
+SPLIT_CHUNK_WORDS = 1100
+SPLIT_MAX_TOKENS = 1000
+# Trần cho 1 lời gọi, chỉ để không treo vĩnh viễn khi Ollama chết. Không retry:
+# retry cùng đề chỉ đốt thêm thời gian như lần đầu.
+SPLIT_LLM_TIMEOUT_SEC = 600.0
+
+# Độ dài cảnh mong muốn (giây, ước theo tỷ lệ số từ trên thời lượng audio).
+SCENE_MIN_SEC = 20.0
+SCENE_TARGET_SEC = 40.0
+SCENE_MAX_SEC = 60.0
 
 
 @dataclass
@@ -26,27 +53,22 @@ class SemanticScene:
 def split_scenes_semantic(
     md_text: str,
     total_audio_duration: float,
-    min_scene_sec: float = 8.0,
-    max_scene_sec: float = 15.0,
+    min_scene_sec: float = SCENE_MIN_SEC,
+    max_scene_sec: float = SCENE_MAX_SEC,
 ) -> Optional[List[SemanticScene]]:
-    """Tách cảnh ngữ nghĩa. Trả None nếu LLM fail → caller fallback."""
+    """Tách cảnh. Trả None chỉ khi không có đoạn nào (caller fallback md_parser)."""
     paragraphs = _extract_paragraphs(md_text)
     if not paragraphs:
         return None
 
-    raw_scenes = _call_llm_split(paragraphs, total_audio_duration)
-    if raw_scenes is None:
-        return None
-
-    if not _validate_scene_coverage(raw_scenes, len(paragraphs)):
-        return None
-
-    scenes = _build_scenes(raw_scenes, paragraphs)
-
-    total_words = sum(len(p.split()) for p in paragraphs)
-    scenes = _enforce_duration_bounds(
-        scenes, total_words, total_audio_duration, min_scene_sec, max_scene_sec
-    )
+    boundaries = _call_llm_boundaries(paragraphs, total_audio_duration)
+    ranges = _boundaries_to_ranges(boundaries, len(paragraphs))
+    words = [len(p.split()) for p in paragraphs]
+    ranges = _normalize_ranges(ranges, words, total_audio_duration,
+                               min_scene_sec, max_scene_sec)
+    scenes = _build_scenes(ranges, paragraphs)
+    logger.info(f"[SemanticSplit] {len(paragraphs)} đoạn → {len(scenes)} cảnh "
+                f"(~{total_audio_duration / max(len(scenes), 1):.0f}s/cảnh)")
     return scenes
 
 
@@ -85,13 +107,12 @@ def _extract_paragraphs(md_text: str) -> List[str]:
     # (~35 từ/cụm). File .md ít xuống dòng (truyện convert: cả chương = 1-2 khối)
     # sẽ chỉ có 1-2 "đoạn" khổng lồ → LLM chỉ được ghép ĐOẠN LIỀN KỀ thành cảnh
     # nên không thể chia mịn hơn đơn vị đoạn → cả video chỉ 2 cảnh.
-    import re as _re
     units = []
     for p in merged:
         if len(p.split()) <= 60:
             units.append(p)
             continue
-        sentences = [s.strip() for s in _re.split(r'(?<=[\.\!\?\…;])\s+', p) if s.strip()]
+        sentences = [s.strip() for s in re.split(r'(?<=[\.\!\?\…;])\s+', p) if s.strip()]
         buf = ""
         for s in sentences:
             candidate = (buf + " " + s).strip()
@@ -108,119 +129,123 @@ def _extract_paragraphs(md_text: str) -> List[str]:
     return units
 
 
-def _call_llm_split(paragraphs: List[str],
-                     total_duration: float) -> Optional[list]:
-    """Gọi LLM để chia cảnh. Chunk 6000 từ nếu kịch bản dài."""
-    try:
-        from app.services.llm import get_llm_client
-    except Exception:
-        logger.warning("[SemanticSplit] LLM client not available")
-        return None
+# ----------------------------------------------------------------------
+# LLM: chỉ lấy mốc bắt đầu cảnh
+# ----------------------------------------------------------------------
 
-    numbered = []
-    for i, p in enumerate(paragraphs):
-        numbered.append(f"[{i}] {p}")
-    full_text = "\n\n".join(numbered)
-    total_words = sum(len(p.split()) for p in paragraphs)
+def _chunk_ranges(words: List[int], chunk_words: int) -> List[tuple]:
+    """Chia chỉ số đoạn thành các khoảng [lo, hi) mỗi khoảng <= chunk_words từ."""
+    chunks, lo, acc = [], 0, 0
+    for i, w in enumerate(words):
+        if acc and acc + w > chunk_words:
+            chunks.append((lo, i))
+            lo, acc = i, 0
+        acc += w
+    chunks.append((lo, len(words)))
+    return chunks
 
-    system_prompt = (
-        f"Bạn là chuyên gia tách cảnh cho video truyện kể.\n\n"
-        f"Được cho kịch bản đánh số đoạn [0], [1], [2]... "
-        f"và tổng thời lượng audio {total_duration:.0f} giây.\n\n"
-        f"Hãy chia thành các cảnh sao cho:\n"
-        f"- MỤC TIÊU: khoảng 10-14 cảnh cho cả chương (ưu tiên GỘP mạnh các đoạn cùng "
-        f"bối cảnh để mỗi cảnh dài, giàu chi tiết và render NHANH hơn — ít cảnh hơn = "
-        f"ít lần vẽ ảnh hơn)\n"
-        f"- Mỗi cảnh ước tính kéo dài 30-50 giây "
-        f"(dựa tỷ lệ số từ / tổng từ × {total_duration:.0f}s)\n"
-        f"- Ranh giới cảnh = đổi địa điểm, đổi nhóm nhân vật, "
-        f"đổi hành động chính, hoặc chuyển thời gian\n"
-        f"- Mỗi cảnh là dãy đoạn LIÊN TIẾP, không bỏ sót, không chồng lấn\n\n"
-        f"Output JSON (KHÔNG text ngoài JSON):\n"
-        "{\n"
-        '  "scenes": [\n'
-        "    {\n"
-        '      "paragraphs": [0, 1, 2],\n'
-        '      "location": "mô tả ngắn địa điểm",\n'
-        '      "characters": ["Tên nhân vật 1"],\n'
-        '      "time_of_day": "day/night/dawn/dusk",\n'
-        '      "action": "mô tả hành động chính",\n'
-        '      "summary": "tóm tắt cảnh 1 câu"\n'
-        "    }\n"
-        "  ]\n"
-        "}"
+
+def _build_split_prompt(first: int, last: int, part_sec: float, prev_location: str) -> str:
+    want = max(1, round(part_sec / SCENE_TARGET_SEC))
+    prev = (f"Cảnh ngay trước phần này diễn ra ở: {prev_location}. Nếu đoạn [{first}] "
+            f"vẫn ở đó thì vẫn ghi start {first} với cùng địa điểm.\n" if prev_location else "")
+    return (
+        "Bạn chia cảnh cho video truyện kể. Người dùng gửi một phần chương truyện, "
+        f"mỗi đoạn có số [{first}]..[{last}].\n"
+        "Hãy chỉ ra các đoạn MỞ ĐẦU một cảnh mới. Chỉ mở cảnh mới khi đổi địa điểm, "
+        "đổi thời gian, hoặc hành động chính thay đổi hẳn. Hội thoại liên tục ở cùng "
+        "chỗ là CÙNG MỘT cảnh.\n"
+        f"Phần này dài khoảng {part_sec:.0f} giây, cần khoảng {want} cảnh "
+        f"(mỗi cảnh 30-50 giây). Cảnh đầu tiên luôn bắt đầu ở đoạn {first}. "
+        f"Chỉ dùng số đoạn từ {first} đến {last}.\n"
+        f"{prev}"
+        # qwen2.5 hay tự chuyển sang tiếng Trung (杜大壮 thay cho Đỗ Đại Tráng) ->
+        # tên không khớp danh sách nhân vật, cảnh mất identity.
+        "Viết location/characters/action bằng TIẾNG VIỆT; tên nhân vật chép NGUYÊN VĂN "
+        "như trong truyện, không dịch sang chữ Hán.\n"
+        "Trả về JSON, không viết gì khác:\n"
+        '{"scenes": [{"start": <số đoạn>, "location": "địa điểm ngắn", '
+        '"time_of_day": "day|night|dawn|dusk", "characters": ["Tên nhân vật"], '
+        '"action": "hành động chính, tối đa 10 từ"}]}'
     )
 
-    CHUNK_WORD_LIMIT = 6000
-    if total_words <= CHUNK_WORD_LIMIT:
-        chunks = [full_text]
-    else:
-        chunks = _split_into_chunks(numbered, CHUNK_WORD_LIMIT)
 
-    all_scenes = []
-    prev_context = ""
-    for chunk_idx, chunk_text in enumerate(chunks):
-        user_msg = chunk_text
-        if prev_context:
-            user_msg = (
-                f"Ngữ cảnh nối (2 cảnh cuối chunk trước):\n"
-                f"{prev_context}\n\n---\n\n{chunk_text}"
-            )
+# Nhắc lại NGAY SAU truyện: đặt trong system prompt thì qwen2.5 vẫn trả chữ Hán
+# (đo thật 01/10: 3/3 lần). Ví dụ tiếng Việt kéo câu trả lời về đúng ngôn ngữ.
+SPLIT_USER_TAIL = (
+    "\n\n---\nTrả lời JSON bằng TIẾNG VIỆT, tên nhân vật chép nguyên văn như trong "
+    'truyện. Ví dụ: {"scenes": [{"start": 0, "location": "sân trước võ quán", '
+    '"time_of_day": "day", "characters": ["Lý Mộ Sinh"], "action": "khiêng bàn ra hậu viện"}]}'
+)
 
+
+def _call_llm_boundaries(paragraphs: List[str], total_duration: float) -> List[dict]:
+    """Mốc cảnh từ LLM theo từng phần. Phần nào LLM hỏng thì mọi đoạn của phần đó
+    thành mốc (không metadata) để _normalize_ranges gộp bằng code."""
+    words = [len(p.split()) for p in paragraphs]
+    total_words = sum(words) or 1
+    chunks = _chunk_ranges(words, SPLIT_CHUNK_WORDS)
+
+    try:
+        from app.services.llm import get_llm_client
+        client, model = get_llm_client()
+        client = client.with_options(
+            timeout=httpx.Timeout(SPLIT_LLM_TIMEOUT_SEC, connect=10.0), max_retries=0)
+    except Exception as e:
+        logger.warning(f"[SemanticSplit] Không có LLM ({e}) — chia cảnh bằng code.")
+        return [{"start": i} for i in range(len(paragraphs))]
+
+    boundaries: List[dict] = []
+    prev_location = ""
+    for ci, (lo, hi) in enumerate(chunks):
+        part_sec = sum(words[lo:hi]) / total_words * total_duration
+        system_prompt = _build_split_prompt(lo, hi - 1, part_sec, prev_location)
+        user_msg = "\n\n".join(f"[{i}] {paragraphs[i]}" for i in range(lo, hi)) + SPLIT_USER_TAIL
+        got = None
         try:
-            client, model = get_llm_client()
             response = client.chat.completions.create(
                 model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.3,
-                max_tokens=4000,
+                messages=[{"role": "system", "content": system_prompt},
+                          {"role": "user", "content": user_msg}],
+                temperature=0.2,
+                max_tokens=SPLIT_MAX_TOKENS,
                 response_format={"type": "json_object"},
             )
-            content = response.choices[0].message.content.strip()
+            content = (response.choices[0].message.content or "").strip()
+            parsed = _parse_json_response(content)
+            if parsed is None:
+                _log_llm_error(f"chunk_{ci}_parse", content)
+            else:
+                got = []
+                for b in parsed.get("scenes", []):
+                    s = _as_int(b.get("start")) if isinstance(b, dict) else None
+                    if s is not None and lo <= s < hi:
+                        got.append(dict(b, start=s))
         except Exception as e:
-            logger.error(f"[SemanticSplit] LLM error chunk {chunk_idx}: {e}")
-            _log_llm_error(f"chunk_{chunk_idx}", str(e))
-            return None
+            logger.error(f"[SemanticSplit] LLM error phần {ci + 1}/{len(chunks)}: {e}")
+            _log_llm_error(f"chunk_{ci}", str(e))
 
-        parsed = _parse_json_response(content)
-        if parsed is None:
-            _log_llm_error(f"chunk_{chunk_idx}_parse", content)
-            return None
-
-        scenes_data = parsed.get("scenes", [])
-        if not scenes_data:
-            return None
-
-        all_scenes.extend(scenes_data)
-
-        if len(scenes_data) >= 2:
-            prev_context = json.dumps(scenes_data[-2:], ensure_ascii=False)
-        elif scenes_data:
-            prev_context = json.dumps(scenes_data[-1:], ensure_ascii=False)
-
-    return all_scenes
+        if not got:
+            logger.warning(f"[SemanticSplit] Phần {ci + 1}/{len(chunks)} (đoạn {lo}-{hi - 1}): "
+                           "LLM không dùng được — chia bằng code.")
+            got = [{"start": i} for i in range(lo, hi)]
+        boundaries.extend(got)
+        prev_location = next((b.get("location", "") for b in reversed(got)
+                              if b.get("location")), "")
+    return boundaries
 
 
-def _split_into_chunks(numbered_paragraphs: List[str],
-                       word_limit: int) -> List[str]:
-    """Chia danh sách paragraph đã đánh số thành chunks theo giới hạn từ."""
-    chunks = []
-    current_chunk = []
-    current_words = 0
-    for para in numbered_paragraphs:
-        words = len(para.split())
-        if current_words + words > word_limit and current_chunk:
-            chunks.append("\n\n".join(current_chunk))
-            current_chunk = []
-            current_words = 0
-        current_chunk.append(para)
-        current_words += words
-    if current_chunk:
-        chunks.append("\n\n".join(current_chunk))
-    return chunks
+def _as_int(v) -> Optional[int]:
+    """LLM hay trả số đoạn dạng "5" hoặc 5.0."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    try:
+        f = float(str(v).strip().strip("[]"))
+        return int(f) if f.is_integer() else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_json_response(content: str) -> Optional[dict]:
@@ -230,138 +255,130 @@ def _parse_json_response(content: str) -> Optional[dict]:
         end = content.rfind('}')
         if start == -1 or end == -1 or end < start:
             return None
-        return json.loads(content[start:end + 1])
+        parsed = json.loads(content[start:end + 1])
+        return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         return None
 
 
-def _validate_scene_coverage(raw_scenes: list, n_paragraphs: int) -> bool:
-    """Mọi paragraph index xuất hiện đúng 1 lần, liên tiếp, phủ kín 0..N-1."""
-    if not raw_scenes:
-        return False
+# ----------------------------------------------------------------------
+# Code: mốc -> khoảng đoạn -> cân độ dài
+# ----------------------------------------------------------------------
 
-    all_indices = []
-    for scene in raw_scenes:
-        paras = scene.get("paragraphs", [])
-        if not paras:
-            logger.warning("[SemanticSplit] Validation fail: cảnh không có paragraphs")
-            return False
-        all_indices.extend(paras)
-
-    expected = list(range(n_paragraphs))
-    if sorted(all_indices) != expected:
-        logger.warning(
-            f"[SemanticSplit] Validation fail: "
-            f"indices {sorted(all_indices)} != expected {expected}"
-        )
-        return False
-
-    for scene in raw_scenes:
-        paras = scene["paragraphs"]
-        if paras != list(range(min(paras), max(paras) + 1)):
-            logger.warning(
-                f"[SemanticSplit] Validation fail: "
-                f"paragraphs not contiguous: {paras}"
-            )
-            return False
-
-    prev_max = -1
-    for scene in raw_scenes:
-        paras = scene["paragraphs"]
-        if min(paras) <= prev_max:
-            logger.warning("[SemanticSplit] Validation fail: overlapping scenes")
-            return False
-        prev_max = max(paras)
-
-    return True
+def _clean_meta(b: dict) -> dict:
+    chars = b.get("characters") or []
+    if not isinstance(chars, list):
+        chars = [chars]
+    return {
+        "location": str(b.get("location") or "").strip(),
+        "time_of_day": str(b.get("time_of_day") or "").strip(),
+        "characters": [str(c).strip() for c in chars if str(c).strip()],
+        "action": str(b.get("action") or "").strip(),
+    }
 
 
-def _build_scenes(raw_scenes: list,
-                  paragraphs: List[str]) -> List[SemanticScene]:
-    """Chuyển raw JSON scenes thành SemanticScene list."""
+def _boundaries_to_ranges(boundaries: List[dict], n: int) -> List[dict]:
+    """Mốc (có thể trùng/lộn xộn/vượt chương) -> các khoảng [start, end) phủ kín 0..n-1."""
+    meta_by_start = {}
+    for b in boundaries:
+        s = b.get("start")
+        if isinstance(s, int) and 0 <= s < n and s not in meta_by_start:
+            meta_by_start[s] = _clean_meta(b)
+    meta_by_start.setdefault(0, _clean_meta({}))
+    starts = sorted(meta_by_start)
+    return [dict(start=s, end=(starts[k + 1] if k + 1 < len(starts) else n), **meta_by_start[s])
+            for k, s in enumerate(starts)]
+
+
+def _same_place(a: dict, b: dict) -> bool:
+    la, lb = a["location"].lower(), b["location"].lower()
+    return bool(la) and la == lb and (a["time_of_day"] or "") == (b["time_of_day"] or "")
+
+
+def _merge_pair(ranges: List[dict], i: int) -> None:
+    """Gộp ranges[i+1] vào ranges[i] (tại chỗ)."""
+    a, b = ranges[i], ranges.pop(i + 1)
+    a["end"] = b["end"]
+    a["location"] = a["location"] or b["location"]
+    a["time_of_day"] = a["time_of_day"] or b["time_of_day"]
+    a["characters"] = list(dict.fromkeys(a["characters"] + b["characters"]))
+    if b["action"] and b["action"] != a["action"]:
+        a["action"] = f"{a['action']}; {b['action']}" if a["action"] else b["action"]
+
+
+def _normalize_ranges(ranges: List[dict], words: List[int], total_duration: float,
+                      min_sec: float = SCENE_MIN_SEC,
+                      max_sec: float = SCENE_MAX_SEC) -> List[dict]:
+    """Gộp cảnh cùng chỗ / quá ngắn, ép tổng số cảnh, cắt cảnh quá dài."""
+    total_words = sum(words) or 1
+    ranges = [dict(r) for r in ranges]
+
+    def dur(r):
+        return sum(words[r["start"]:r["end"]]) / total_words * total_duration
+
+    # 1. Cảnh liền nhau cùng địa điểm + thời gian -> một cảnh (nếu không quá dài)
+    i = 0
+    while i + 1 < len(ranges):
+        a, b = ranges[i], ranges[i + 1]
+        if _same_place(a, b) and dur(a) + dur(b) <= max_sec:
+            _merge_pair(ranges, i)
+        else:
+            i += 1
+
+    def merge_cost(i):
+        # Ưu tiên gộp cặp cùng chỗ, rồi cặp ngắn nhất
+        a, b = ranges[i], ranges[i + 1]
+        return (0 if _same_place(a, b) else 1, dur(a) + dur(b))
+
+    # 2. Cảnh quá ngắn -> gộp vào hàng xóm rẻ hơn
+    while len(ranges) > 1:
+        shortest = min(range(len(ranges)), key=lambda k: dur(ranges[k]))
+        if dur(ranges[shortest]) >= min_sec:
+            break
+        cands = [k for k in (shortest - 1, shortest) if 0 <= k < len(ranges) - 1]
+        _merge_pair(ranges, min(cands, key=merge_cost))
+
+    # 3. Trần số cảnh: trung bình không dưới ~30s/cảnh
+    max_count = max(1, math.ceil(total_duration / 30.0))
+    while len(ranges) > max_count:
+        _merge_pair(ranges, min(range(len(ranges) - 1), key=merge_cost))
+
+    # 4. Cảnh quá dài (>max_sec, >= 2 đoạn) -> cắt ở đoạn gần giữa số từ
+    out = []
+    stack = list(reversed(ranges))
+    while stack:
+        r = stack.pop()
+        if dur(r) <= max_sec or r["end"] - r["start"] < 2:
+            out.append(r)
+            continue
+        half, acc, cut = sum(words[r["start"]:r["end"]]) / 2, 0, r["start"] + 1
+        for k in range(r["start"], r["end"] - 1):
+            acc += words[k]
+            cut = k + 1
+            if acc >= half:
+                break
+        first = dict(r, end=cut)
+        cont = r["action"] if not r["action"] or r["action"].endswith("(tiếp)") else r["action"] + " (tiếp)"
+        second = dict(r, start=cut, action=cont)
+        stack.extend([second, first])
+    return out
+
+
+def _build_scenes(ranges: List[dict], paragraphs: List[str]) -> List[SemanticScene]:
     scenes = []
-    for idx, raw in enumerate(raw_scenes):
-        para_indices = raw.get("paragraphs", [])
-        text_parts = [paragraphs[i] for i in para_indices if i < len(paragraphs)]
+    for idx, r in enumerate(ranges):
+        indices = list(range(r["start"], r["end"]))
         scenes.append(SemanticScene(
             scene_index=idx,
-            text_vi="\n\n".join(text_parts),
-            summary_vi=raw.get("summary", ""),
-            location=raw.get("location", ""),
-            characters=raw.get("characters", []),
-            time_of_day=raw.get("time_of_day", ""),
-            action=raw.get("action", ""),
-            paragraph_indices=para_indices,
+            text_vi="\n\n".join(paragraphs[i] for i in indices),
+            summary_vi=r["action"],
+            location=r["location"],
+            characters=list(r["characters"]),
+            time_of_day=r["time_of_day"],
+            action=r["action"],
+            paragraph_indices=indices,
         ))
     return scenes
-
-
-def _enforce_duration_bounds(
-    scenes: List[SemanticScene],
-    total_words: int,
-    total_duration: float,
-    min_sec: float,
-    max_sec: float,
-) -> List[SemanticScene]:
-    """Post-rules: gộp cảnh quá ngắn, cắt cảnh quá dài."""
-    if not scenes or total_words == 0:
-        return scenes
-
-    def est_duration(scene):
-        words = len(scene.text_vi.split())
-        return (words / total_words) * total_duration if total_words > 0 else 0
-
-    # Gộp cảnh quá ngắn
-    merged = []
-    for scene in scenes:
-        dur = est_duration(scene)
-        if dur < min_sec and merged:
-            prev = merged[-1]
-            prev.text_vi += "\n\n" + scene.text_vi
-            prev.paragraph_indices.extend(scene.paragraph_indices)
-            prev.characters = list(set(prev.characters + scene.characters))
-            if scene.action:
-                prev.action += "; " + scene.action
-        else:
-            merged.append(scene)
-
-    # Cắt cảnh quá dài (> max × 1.8)
-    final = []
-    for scene in merged:
-        dur = est_duration(scene)
-        if dur > max_sec * 1.8 and len(scene.paragraph_indices) >= 2:
-            paras = scene.paragraph_indices
-            mid = len(paras) // 2
-
-            text_parts = scene.text_vi.split("\n\n")
-            first_texts = text_parts[:mid]
-            second_texts = text_parts[mid:]
-
-            final.append(SemanticScene(
-                scene_index=len(final),
-                text_vi="\n\n".join(first_texts),
-                summary_vi=scene.summary_vi,
-                location=scene.location,
-                characters=scene.characters,
-                time_of_day=scene.time_of_day,
-                action=scene.action,
-                paragraph_indices=paras[:mid],
-            ))
-            final.append(SemanticScene(
-                scene_index=len(final),
-                text_vi="\n\n".join(second_texts),
-                summary_vi=scene.summary_vi,
-                location=scene.location,
-                characters=scene.characters,
-                time_of_day=scene.time_of_day,
-                action=scene.action + " (tiếp)",
-                paragraph_indices=paras[mid:],
-            ))
-        else:
-            scene.scene_index = len(final)
-            final.append(scene)
-
-    return final
 
 
 def _log_llm_error(tag: str, content: str):
