@@ -17,29 +17,50 @@ _repo_root = os.path.abspath(os.path.join(mc_root, "..", "..", ".."))
 if _repo_root not in sys.path:
     sys.path.append(_repo_root)
 
-from app.services.storytelling.context_manager import ContextManager  # noqa: E402
-from app.services.storytelling.batch_video_runner import run_batch, scan_batch_dir  # noqa: E402
-
 def pin_nvidia_dlls() -> list:
-    """Ghim DLL của driver NVIDIA để Windows không gỡ nó khỏi tiến trình.
+    """Nạp sẵn + ghim DLL của driver NVIDIA để Windows không gỡ nó khỏi tiến trình.
 
-    Bước 3 từng chết 0xC0000005 với module lỗi `nvdxgdmal64.dll_unloaded`
-    (driver 566.07, laptop Optimus): DLL bị gỡ trong khi driver vẫn còn
-    callback trỏ vào nó. Ghim (GET_MODULE_HANDLE_EX_FLAG_PIN) thì DLL ở lại
-    tới khi tiến trình thoát. Phải gọi SAU khi CUDA đã khởi tạo (lúc đó DLL
-    mới được nạp). Không phải Windows / không có DLL -> bỏ qua.
+    Bước 3 chết 0xC0000005 với module lỗi `nvdxgdmal64.dll_unloaded` (driver 566.07,
+    laptop Optimus): CUDA dò card qua DXCore, DXCore đăng ký callback báo đổi trạng
+    thái card nằm trong nvdxgdmal64, rồi DLL bị gỡ; khi card NVIDIA ngủ/thức (Ollama
+    nạp model lúc gọi LLM) callback nhảy vào vùng nhớ đã gỡ. Chỉ ghim SAU khi CUDA
+    khởi tạo là không đủ — có lần DLL đã bị gỡ trước đó. Vì vậy phải tự nạp từ kho
+    driver và ghim (GET_MODULE_HANDLE_EX_FLAG_PIN) TRƯỚC khi import torch.
+    Không phải Windows / không có DLL -> bỏ qua.
     """
     if os.name != "nt":
         return []
     import ctypes
+    import glob
     from ctypes import wintypes
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LoadLibraryW.restype = wintypes.HMODULE
+    kho = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                       "System32", "DriverStore", "FileRepository")
     pinned = []
     for name in ("nvdxgdmal64.dll", "nvapi64.dll"):
         handle = wintypes.HMODULE()
+        if not kernel32.GetModuleHandleExW(0, name, ctypes.byref(handle)):
+            # Chưa nạp: tìm trong kho driver NVIDIA (bản mới nhất) rồi tự nạp.
+            ung_vien = sorted(glob.glob(os.path.join(kho, "nv*", name)),
+                              key=os.path.getmtime, reverse=True)
+            da_nap = bool(ung_vien and kernel32.LoadLibraryW(ung_vien[0]))
+            if not da_nap and not kernel32.LoadLibraryW(name):
+                continue
         if kernel32.GetModuleHandleExW(0x1, name, ctypes.byref(handle)):
             pinned.append(name)
     return pinned
+
+
+# Chạy TRƯỚC khi import app.* (kéo theo torch -> khởi tạo CUDA/DXCore).
+_PINNED_DLLS = pin_nvidia_dlls()
+
+# Crash native thì in stack Python của mọi luồng ra stderr (đã gộp vào log bước).
+import faulthandler  # noqa: E402
+faulthandler.enable(all_threads=True)
+
+from app.services.storytelling.context_manager import ContextManager  # noqa: E402
+from app.services.storytelling.batch_video_runner import run_batch, scan_batch_dir  # noqa: E402
 
 def log_json(event: str, data: dict):
     """Outputs progress log as a JSON string to stdout."""
@@ -106,8 +127,8 @@ def main():
         if args.llm_model:
             config.set_app_override("llm_model", args.llm_model)
 
-        # app.config đã gọi torch.cuda.is_available() -> DLL driver đã nạp.
-        pinned = pin_nvidia_dlls()
+        # Ghim thêm lần nữa sau khi CUDA khởi tạo (phòng DLL mới được nạp).
+        pinned = sorted(set(_PINNED_DLLS) | set(pin_nvidia_dlls()))
         if pinned:
             log_json("nvidia_dll_pinned", {"dlls": pinned})
 
