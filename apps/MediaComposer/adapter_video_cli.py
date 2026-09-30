@@ -20,6 +20,27 @@ if _repo_root not in sys.path:
 from app.services.storytelling.context_manager import ContextManager  # noqa: E402
 from app.services.storytelling.batch_video_runner import run_batch, scan_batch_dir  # noqa: E402
 
+def pin_nvidia_dlls() -> list:
+    """Ghim DLL của driver NVIDIA để Windows không gỡ nó khỏi tiến trình.
+
+    Bước 3 từng chết 0xC0000005 với module lỗi `nvdxgdmal64.dll_unloaded`
+    (driver 566.07, laptop Optimus): DLL bị gỡ trong khi driver vẫn còn
+    callback trỏ vào nó. Ghim (GET_MODULE_HANDLE_EX_FLAG_PIN) thì DLL ở lại
+    tới khi tiến trình thoát. Phải gọi SAU khi CUDA đã khởi tạo (lúc đó DLL
+    mới được nạp). Không phải Windows / không có DLL -> bỏ qua.
+    """
+    if os.name != "nt":
+        return []
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    pinned = []
+    for name in ("nvdxgdmal64.dll", "nvapi64.dll"):
+        handle = wintypes.HMODULE()
+        if kernel32.GetModuleHandleExW(0x1, name, ctypes.byref(handle)):
+            pinned.append(name)
+    return pinned
+
 def log_json(event: str, data: dict):
     """Outputs progress log as a JSON string to stdout."""
     print(json.dumps({"event": event, **data}, ensure_ascii=False))
@@ -84,6 +105,11 @@ def main():
             config.set_app_override("llm_base_url", args.llm_base_url)
         if args.llm_model:
             config.set_app_override("llm_model", args.llm_model)
+
+        # app.config đã gọi torch.cuda.is_available() -> DLL driver đã nạp.
+        pinned = pin_nvidia_dlls()
+        if pinned:
+            log_json("nvidia_dll_pinned", {"dlls": pinned})
 
         from app.services.storytelling.context_manager import _STORAGE_ENV
         log_json("video_init", {
